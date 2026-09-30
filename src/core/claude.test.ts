@@ -74,7 +74,7 @@ describe('claude launch', () => {
     expect(readFileSync(files.prompt, 'utf8')).toMatch(/crew-2/);
 
     expect(launchArgs(agent, DEFAULT_CONFIG, files, { resume: false })).toEqual([
-      '--session-id', 's-crew-2', '--model', 'sonnet', '--permission-mode', 'acceptEdits',
+      '--session-id', 's-crew-2', '--model', 'sonnet', '--permission-mode', 'auto',
       '--mcp-config', files.mcp, '--settings', files.settings, '--append-system-prompt-file', files.prompt, '--name', 'muster crew-2',
     ]);
     const resumed = launchArgs(agent, DEFAULT_CONFIG, files, { resume: true, inlinePrompt: 'be nice' });

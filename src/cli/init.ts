@@ -43,13 +43,27 @@ export function initMuster(cwd: string): InitResult {
     created.push('.muster/config.json');
   }
 
-  const gi = join(root, '.gitignore');
-  const existing = existsSync(gi) ? readFileSync(gi, 'utf8') : '';
-  const ignored = existing.split(/\r?\n/).some((l) => /^\/?\.muster\/?\s*$/.test(l.trim()));
-  if (!ignored) {
-    const sep = existing && !existing.endsWith('\n') ? (existing.includes('\r\n') ? '\r\n' : '\n') : '';
-    writeFileSync(gi, existing + sep + '.muster/\n');
-    created.push(existing ? '.gitignore (added .muster/)' : '.gitignore');
+  // Ignore .muster/ through .git/info/exclude rather than .gitignore: editing a tracked file would
+  // leave the main checkout dirty, and `muster merge` needs a clean tree.
+  if (!isIgnored(root, '.gitignore')) {
+    const commonDir = gitOk(root, ['rev-parse', '--path-format=absolute', '--git-common-dir']) ?? join(root, '.git');
+    const exclude = join(commonDir, 'info', 'exclude');
+    mkdirSync(join(commonDir, 'info'), { recursive: true });
+    const existing = existsSync(exclude) ? readFileSync(exclude, 'utf8') : '';
+    if (!isIgnoredIn(existing)) {
+      const sep = existing && !existing.endsWith('\n') ? '\n' : '';
+      writeFileSync(exclude, existing + sep + '.muster/\n');
+      created.push('.git/info/exclude (added .muster/)');
+    }
   }
   return { root, created };
+}
+
+function isIgnoredIn(text: string): boolean {
+  return text.split(/\r?\n/).some((l) => /^\/?\.muster\/?\s*$/.test(l.trim()));
+}
+
+function isIgnored(root: string, file: string): boolean {
+  const p = join(root, file);
+  return existsSync(p) && isIgnoredIn(readFileSync(p, 'utf8'));
 }

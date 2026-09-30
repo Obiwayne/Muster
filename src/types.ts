@@ -24,6 +24,7 @@ export interface Agent {
   pid?: number;
   startedAt: string; // ISO time
   lastActivityAt: string; // ISO time of last PTY output or hook event
+  lastPromptAt?: string; // ISO time of the last UserPromptSubmit hook
   costUsd: number; // latest cost.total_cost_usd reported by this agent's status line
 }
 
@@ -145,7 +146,7 @@ export interface MusterConfig {
   defaultStations: string[]; // default ["build", "review"]
   testCommand: string; // default "npm test"
   baseBranch: string; // default "main"
-  permissionMode: string; // claude --permission-mode for crew; default "acceptEdits"
+  permissionMode: string; // claude --permission-mode for every agent; default "auto" (handles prompts unattended; the worktree guard hook still applies)
   claudePath?: string; // absolute path to claude executable; auto-detected when missing
   vellum?: { command: string; args: string[]; env?: Record<string, string> }; // MCP server for the design crew
   notify: boolean; // default true: Windows toast when a branch is ready or the Captain escalates
@@ -192,7 +193,7 @@ export const DEFAULT_CONFIG: MusterConfig = {
   defaultStations: ['build', 'review'],
   testCommand: 'npm test',
   baseBranch: 'main',
-  permissionMode: 'acceptEdits',
+  permissionMode: 'auto',
   notify: true,
   allowedTools: [
     'Bash(npm *)',

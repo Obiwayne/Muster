@@ -19,6 +19,8 @@ export interface Timings {
   firstPromptFallbackMs: number; // type the first prompt anyway if SessionStart never arrives
   idleShutdownMs: number;
   nudgeDebounceMs: number;
+  quietMs: number; // terminal silence after which the watchdog reads the screen
+  submitCheckMs: number; // after typing a line, how long to wait for the prompt hook before pressing Enter again
 }
 
 export const DEFAULT_TIMINGS: Timings = {
@@ -27,6 +29,8 @@ export const DEFAULT_TIMINGS: Timings = {
   firstPromptFallbackMs: 45_000,
   idleShutdownMs: 5 * 60_000,
   nudgeDebounceMs: 300,
+  quietMs: 8000,
+  submitCheckMs: 4000,
 };
 
 export interface AgentManagerOptions {
@@ -56,6 +60,7 @@ interface Runtime {
   permissionNoteId?: string;
   idleSince?: number;
   nudgedAt?: number;
+  lastOutputAt?: number;
   typing: Promise<void>;
 }
 
@@ -78,6 +83,7 @@ export class AgentManager {
   private timings: Timings;
   private nudgeTimer?: NodeJS.Timeout;
   private idleTimer: NodeJS.Timeout;
+  private watchdogTimer: NodeJS.Timeout;
   private inlinePrompt = false; // set if this claude build rejects --append-system-prompt-file
   private log: (msg: string) => void;
 
@@ -86,6 +92,7 @@ export class AgentManager {
     this.log = o.log ?? (() => {});
     o.store.on('change', () => this.scheduleNudges());
     this.idleTimer = setInterval(() => this.shutdownIdleCrew(), Math.min(30_000, this.timings.idleShutdownMs)).unref();
+    this.watchdogTimer = setInterval(() => this.watchQuietTerminals(), Math.max(1000, this.timings.quietMs / 2)).unref();
   }
 
   private get state() {
@@ -207,6 +214,10 @@ export class AgentManager {
     });
     agent.pid = p.pid;
     agent.status = 'starting';
+    // A permission prompt from the previous process is gone with it.
+    for (const n of this.state.notes) {
+      if (n.from === agent.id && n.type === 'stuck' && n.text.startsWith('Waiting for permission')) closeNoteIfOpen(n);
+    }
     agent.lastActivityAt = nowIso();
     feedEvent(this.state, SYSTEM, `${agent.id} started${launch.resume ? ' (resumed)' : ''}`);
     this.o.store.commit();
@@ -219,6 +230,7 @@ export class AgentManager {
     for (const l of rt.listeners) l(data);
     const agent = findAgent(this.state, id);
     if (agent) agent.lastActivityAt = nowIso();
+    rt.lastOutputAt = Date.now();
     if (rt.trustAnswered || rt.startOutput.length >= START_OUTPUT_MAX || Date.now() - rt.spawnedAt > 120_000) return;
     const keys = trustPromptKeys(stripAnsi(rt.startOutput));
     if (!keys) return;
@@ -386,9 +398,28 @@ export class AgentManager {
       if (submit) {
         await sleep(this.timings.enterDelayMs);
         rt.pty.write('\r');
+        if (line) this.confirmSubmitted(id, rt, line);
       }
     });
     return rt.typing;
+  }
+
+  /**
+   * A one-time notice or dialog can swallow the Enter, leaving the line sitting in the input box.
+   * If no prompt hook has arrived and the line is still on screen, press Enter again (twice at most).
+   */
+  private confirmSubmitted(id: string, rt: Runtime, line: string, attempt = 1): void {
+    const since = Date.now();
+    setTimeout(() => {
+      const agent = findAgent(this.state, id);
+      if (!agent || this.runtimes.get(id) !== rt || agent.status === 'working') return;
+      if (Date.parse(agent.lastPromptAt ?? '') >= since) return;
+      const screen = stripAnsi(lastLines(rt.buffer.text(), 8)).replace(/\s+/g, ' ');
+      if (!screen.includes(line.slice(0, 40).replace(/\s+/g, ' '))) return;
+      this.log(`${id}: typed line was not submitted; pressing Enter again`);
+      rt.pty.write('\r');
+      if (attempt < 2) this.confirmSubmitted(id, rt, line, attempt + 1);
+    }, this.timings.submitCheckMs).unref();
   }
 
   write(id: string, data: string): void {
@@ -445,6 +476,7 @@ export class AgentManager {
       case 'prompt':
         this.clearPermissionWait(agent, rt);
         agent.status = 'working';
+        agent.lastPromptAt = nowIso();
         if (rt) rt.nudgedAt = undefined;
         writeFileSync(this.resumableMarker(id), agent.sessionId);
         break;
@@ -523,8 +555,31 @@ export class AgentManager {
     }
   }
 
+  /**
+   * Claude fires no hook when a turn is interrupted (e.g. a permission prompt answered "No"),
+   * so an agent can sit at its input box while we still think it is working or stuck.
+   * When a terminal has been quiet for a while, read the screen and settle the status.
+   */
+  watchQuietTerminals(): void {
+    let changed = false;
+    for (const agent of this.state.agents) {
+      const rt = this.runtimes.get(agent.id);
+      if (!rt || (agent.status !== 'working' && !rt.permissionNoteId)) continue;
+      if (!rt.lastOutputAt || Date.now() - rt.lastOutputAt < this.timings.quietMs) continue;
+      const screen = stripAnsi(lastLines(rt.buffer.text(), 30));
+      if (/Do you want to (proceed|make this edit|create)/i.test(screen)) continue; // still waiting for an answer
+      if (!/Interrupted|What should Claude do instead/i.test(screen)) continue;
+      this.log(`${agent.id}: turn was interrupted; marking it resting`);
+      this.clearPermissionWait(agent, rt);
+      this.setResting(agent, rt);
+      changed = true;
+    }
+    if (changed) this.o.store.commit();
+  }
+
   dispose(): void {
     clearInterval(this.idleTimer);
+    clearInterval(this.watchdogTimer);
     clearTimeout(this.nudgeTimer);
   }
 }

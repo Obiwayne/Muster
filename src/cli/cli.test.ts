@@ -55,21 +55,22 @@ describe('muster init', () => {
     expect(r.created).toContain('.muster/config.json');
     for (const sub of ['logs', 'agents', 'worktrees']) expect(existsSync(join(d, '.muster', sub))).toBe(true);
     expect(JSON.parse(readFileSync(join(d, '.muster', 'config.json'), 'utf8'))).toEqual({});
-    expect(readFileSync(join(d, '.gitignore'), 'utf8')).toBe('node_modules\n.muster/\n');
+    expect(readFileSync(join(d, '.gitignore'), 'utf8')).toBe('node_modules'); // tracked files stay untouched
+    expect(readFileSync(join(d, '.git', 'info', 'exclude'), 'utf8')).toContain('.muster/');
     expect(initMuster(d).created).toEqual([]);
-    expect(readFileSync(join(d, '.gitignore'), 'utf8')).toBe('node_modules\n.muster/\n');
     // .muster/ is ignored by git
     expect(execFileSync('git', ['status', '--porcelain'], { cwd: d, encoding: 'utf8' })).not.toContain('.muster');
   });
 
-  it('creates .gitignore when missing and records a non-main base branch', () => {
+  it('leaves the tree clean and records a non-main base branch', () => {
     const d = tmp();
     git(d, 'init', '-q', '-b', 'master');
     writeFileSync(join(d, 'a.txt'), 'a');
     git(d, 'add', '.');
     git(d, 'commit', '-q', '-m', 'init');
     initMuster(d);
-    expect(readFileSync(join(d, '.gitignore'), 'utf8')).toBe('.muster/\n');
+    expect(existsSync(join(d, '.gitignore'))).toBe(false);
+    expect(execFileSync('git', ['status', '--porcelain'], { cwd: d, encoding: 'utf8' })).toBe('');
     expect(JSON.parse(readFileSync(join(d, '.muster', 'config.json'), 'utf8'))).toEqual({ baseBranch: 'master' });
   });
 
@@ -291,7 +292,7 @@ describe('muster up / down', () => {
     expect(text).toMatch(/Dashboard: http:\/\/127\.0\.0\.1:\d+\//);
     expect(text).toContain('Captain: captain · idle · main');
     expect(opened[0]).toMatch(/^http:\/\/127\.0\.0\.1:\d+\/$/);
-    expect(readFileSync(join(d, '.gitignore'), 'utf8')).toContain('.muster/');
+    expect(readFileSync(join(d, '.git', 'info', 'exclude'), 'utf8')).toContain('.muster/');
     expect(readFileSync(join(d, '.muster', 'logs', 'orchestrator.log'), 'utf8')).toContain('fake orchestrator for');
 
     out = [];
