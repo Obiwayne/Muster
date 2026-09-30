@@ -70,6 +70,13 @@ const START_OUTPUT_MAX = 64 * 1024;
 const ID_PATTERN = /^[a-z0-9][a-z0-9_-]{0,39}$/i;
 const sleep = (ms: number) => new Promise((r) => setTimeout(r, ms));
 
+/** Index of the last match of a global regex, or -1. */
+function lastMatch(text: string, re: RegExp): number {
+  let last = -1;
+  for (const m of text.matchAll(re)) last = m.index ?? last;
+  return last;
+}
+
 export interface CreateAgentInput {
   name?: string;
   role?: Role;
@@ -566,9 +573,10 @@ export class AgentManager {
       const rt = this.runtimes.get(agent.id);
       if (!rt || (agent.status !== 'working' && !rt.permissionNoteId)) continue;
       if (!rt.lastOutputAt || Date.now() - rt.lastOutputAt < this.timings.quietMs) continue;
-      const screen = stripAnsi(lastLines(rt.buffer.text(), 30));
-      if (/Do you want to (proceed|make this edit|create)/i.test(screen)) continue; // still waiting for an answer
-      if (!/Interrupted|What should Claude do instead/i.test(screen)) continue;
+      // The raw stream keeps the old dialog text after it is dismissed, so compare which came last.
+      const screen = stripAnsi(lastLines(rt.buffer.text(), 40));
+      const interrupted = lastMatch(screen, /Interrupted|What should Claude do instead/gi);
+      if (interrupted < 0 || interrupted < lastMatch(screen, /Do you want to (proceed|make this edit|create)/gi)) continue;
       this.log(`${agent.id}: turn was interrupted; marking it resting`);
       this.clearPermissionWait(agent, rt);
       this.setResting(agent, rt);

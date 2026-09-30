@@ -67,4 +67,46 @@ describe('AgentManager', () => {
     await until(() => store.state.agents[0].status === 'stopped', 3000);
     expect(store.state.feed.some((f) => f.text === 'crew-2 stopped: idle with no task')).toBe(true);
   });
+
+  // A fake PTY whose screen the test controls, recording everything written to it.
+  function screenPty() {
+    const written: string[] = [];
+    let emit: (d: string) => void = () => {};
+    const launcher: PtyLauncher = () => ({ pid: 1, onData: (cb) => (emit = cb), onExit() {}, write: (d) => written.push(d), resize() {}, kill() {} });
+    return { launcher, written, show: (text: string) => emit(text) };
+  }
+
+  it('settles an interrupted turn: no Stop hook, but the screen says Interrupted', async () => {
+    const pty = screenPty();
+    const { store, agents } = setup(pty.launcher, { quietMs: 60 });
+    await agents.create({ role: 'crew', actor: 'muster' });
+    agents.handleEvent('crew-2', 'notification', 'Claude needs your permission', 'permission_prompt');
+    const note = store.state.notes.at(-1)!;
+    expect(store.state.agents[0].status).toBe('stuck');
+    pty.show('Do you want to proceed?\r\n 1. Yes\r\n 3. No\r\n');
+    await new Promise((r) => setTimeout(r, 150));
+    agents.watchQuietTerminals();
+    expect(store.state.agents[0].status).toBe('stuck'); // the prompt is still on screen
+    pty.show('\x1b[2J  ⎿  Interrupted · What should Claude do instead?\r\n❯ ');
+    await new Promise((r) => setTimeout(r, 150));
+    agents.watchQuietTerminals();
+    expect(store.state.agents[0].status).toBe('idle');
+    expect(note.open).toBe(false);
+  });
+
+  it('presses Enter again when a typed line was swallowed', async () => {
+    const pty = screenPty();
+    const { agents } = setup(pty.launcher, { enterDelayMs: 1, submitCheckMs: 40 });
+    await agents.create({ role: 'crew', actor: 'muster' });
+    agents.handleEvent('crew-2', 'stop');
+    await agents.type('crew-2', '[muster] You have 1 new item. Call read_inbox.');
+    pty.show('❯ [muster] You have 1 new item. Call read_inbox.');
+    await until(() => pty.written.filter((w) => w === '\r').length >= 2, 2000);
+
+    // Once the prompt hook arrives, no more Enters.
+    agents.handleEvent('crew-2', 'prompt');
+    const enters = pty.written.filter((w) => w === '\r').length;
+    await new Promise((r) => setTimeout(r, 150));
+    expect(pty.written.filter((w) => w === '\r').length).toBe(enters);
+  });
 });
