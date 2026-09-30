@@ -234,6 +234,12 @@ export function handoffTask(state: MusterState, taskId: string, actor: string, t
     addInbox(state, { agentId: receiver.id, from: actor, kind: 'handoff', taskId: task.id, text: `${actor} handed you ${task.id} ${task.title} (${station}): ${noteText}` });
   } else {
     task.status = 'ready';
+    // Tell free agents of the next station's role, so the task doesn't wait for the Captain to route it.
+    const role = stationRole(station);
+    for (const a of state.agents) {
+      if (a.id === actor || a.role !== role || a.status === 'stopped' || a.taskId) continue;
+      addInbox(state, { agentId: a.id, from: actor, kind: 'handoff', taskId: task.id, text: `${task.id} ${task.title} is ready at the ${station} station: call claim_task` });
+    }
   }
   addFeed(state, { kind: 'event', from: actor, to: receiver?.id, taskId: task.id, text: `handed ${task.id} to ${receiver?.id ?? 'the ' + station + ' station'}: ${noteText}` });
   return { task, fromBranch, receiver };
@@ -244,11 +250,17 @@ export function doneTask(state: MusterState, taskId: string, actor: string, summ
   const task = requireTask(state, taskId);
   requireHolder(state, task, actor);
   if (task.status !== 'in_progress') throw conflict(`${task.id} is ${task.status}, not in progress`);
+  const text = summary?.trim() || 'Done';
+  // "Done" finishes this station, not the whole line: with stations still to go (e.g. test, design),
+  // the task goes on to the next one rather than jumping straight to the Captain.
+  if (task.stations[task.stationIndex + 1] !== 'review' && task.stationIndex < task.stations.length - 1) {
+    postNote(state, { actor, type: 'done', taskId: task.id, text: `${task.id} ${task.title} (${currentStation(task)}): ${text}` });
+    return handoffTask(state, taskId, actor, undefined, text, from).task;
+  }
   if (from) {
     task.branch = from.branch;
     closeMergeConflicts(state, task);
   }
-  const text = summary?.trim() || 'Done';
   event(task, actor, 'done', text);
   postNote(state, { actor, type: 'done', taskId: task.id, text: `${task.id} ${task.title}: ${text}` });
   toReview(state, task, actor, `${actor} finished ${task.id} ${task.title}: ${text}`);

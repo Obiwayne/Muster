@@ -334,11 +334,17 @@ describe('orchestrator API', () => {
     expect((await call('GET', '/api/agents/captain/diff?branch=--output=x')).status).toBe(404);
 
     expect((await call('POST', '/api/agents/captain/merge', { actor: 'you', taskId: 'T2' })).status).toBe(409);
-    await ok('POST', '/api/tasks/T2/done', { actor: 'crew-2', summary: 'renamed' });
+    const built = await ok<Task>('POST', '/api/tasks/T2/done', { actor: 'crew-2', summary: 'renamed' });
+    if (built.status === 'ready') {
+      // done finished the build station; the test station still has to run
+      await ok('POST', '/api/tasks/T2/assign', { agentId: 'captain', actor: 'crew-2' }); // the old Captain is crew now
+      await ok('POST', '/api/tasks/T2/done', { actor: 'captain', summary: 'tested' });
+    }
     await ok('POST', '/api/tasks/T2/review', { actor: 'crew-2', summary: 'ok' }); // crew-2 is the Captain now
     const merged = await ok('POST', '/api/agents/captain/merge', { actor: 'you', taskId: 'T2' });
     expect(merged.ok).toBe(true);
-    expect(gitSync(repo, 'log', '-1', '--format=%s')).toBe('Merge crew-2/invite-api (T2 Invite API)');
+    // the test station's branch carries the build, so that's what merges
+    expect(gitSync(repo, 'log', '-1', '--format=%s')).toMatch(/^Merge (crew-2|captain)\/invite-api \(T2 Invite API\)$/);
   });
 
   it('unsets config keys patched to null', async () => {

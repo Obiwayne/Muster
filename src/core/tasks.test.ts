@@ -86,14 +86,18 @@ describe('tasks', () => {
     expect(() => handoffTask(s, t.id, 'crew-3', undefined, 'mine now')).toThrow(/held by crew-2/);
   });
 
-  it('done jumps to review and posts a Done note', () => {
+  it('done finishes the current station: on to the next one, then to review, with a Done note each time', () => {
     const t = createTask(s, config, { title: 'X', stations: ['build', 'test'], actor: 'captain' });
     claimTask(s, 'crew-2');
-    doneTask(s, t.id, 'crew-2', 'all green');
+    doneTask(s, t.id, 'crew-2', 'built');
+    expect(t).toMatchObject({ status: 'ready', assignee: undefined, stationIndex: 1 });
+    expect(s.inbox.some((i) => i.agentId === 'crew-3' && i.taskId === t.id && /test station/.test(i.text))).toBe(true);
+    expect(claimTask(s, 'crew-3')?.id).toBe(t.id);
+    doneTask(s, t.id, 'crew-3', 'all green');
     expect(t).toMatchObject({ status: 'review', assignee: 'captain', stationIndex: 2 });
     const done = listNotes(s, { type: 'done' });
-    expect(done).toHaveLength(1);
-    expect(done[0]).toMatchObject({ from: 'crew-2', open: false, taskId: t.id });
+    expect(done).toHaveLength(2);
+    expect(done[0]).toMatchObject({ open: false, taskId: t.id });
   });
 
   it('review is Captain-only and opens a Needs-you note', () => {
