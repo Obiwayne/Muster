@@ -67,7 +67,8 @@ export function repoRoot(ctx: Ctx): string {
 export interface ServerFile {
   port: number;
   pid: number;
-  token: string;
+  /** Only in server.json files from before 0.1.1; the human token now lives outside the repo (core/tokens.ts). */
+  token?: string;
   startedAt: string;
 }
 

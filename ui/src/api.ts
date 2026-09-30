@@ -68,7 +68,9 @@ export const api = {
     return req<DiffResult>('GET', `/api/agents/${enc(id)}/diff${p.size ? '?' + p : ''}`);
   },
   runTests: (id: string) => req<TestResult>('POST', `/api/agents/${enc(id)}/tests`),
-  merge: (id: string, force = false) => req<{ ok: boolean; output: string }>('POST', `/api/agents/${enc(id)}/merge`, { force, actor: YOU }),
+  /** `taskId` names the task to merge (its reviewed commit), so the agent's current branch doesn't matter. */
+  merge: (id: string, taskId?: string, force = false) =>
+    req<{ ok: boolean; output: string }>('POST', `/api/agents/${enc(id)}/merge`, { force, actor: YOU, ...(taskId ? { taskId } : {}) }),
 
   ask: (text: string) => req<{ ok: boolean }>('POST', '/api/ask', { text }),
 

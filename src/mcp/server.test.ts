@@ -96,6 +96,20 @@ describe('muster-mcp calls', () => {
     const r = await call('ask_captain', { question: 'Which API version?' });
     expect(r.text).toBe('crew-3 answered N7: Use v2');
   });
+  it('ask_captain marks the answered reply read so it is not nudged or listed again', async () => {
+    const { call, calls } = await connect('crew', (c) => {
+      if (c.path === '/api/notes') return { id: 'N7', type: 'question', from: 'crew-2', text: 'q', open: true, replies: [] };
+      if (c.path.startsWith('/api/notes?')) return [{ id: 'N7', open: true, from: 'crew-2', replies: [{ from: 'captain', text: 'Yes', at: '' }] }];
+      if (c.path === '/api/inbox/crew-2?unread=1')
+        return [
+          { id: 'I4', kind: 'reply', noteId: 'N7', text: 'reply from captain on N7: Yes' },
+          { id: 'I5', kind: 'message', text: 'message from crew-3: hi' },
+        ];
+      return { ok: true };
+    }, { pollMs: 5 });
+    expect((await call('ask_captain', { question: 'Ship it?' })).text).toBe('captain answered N7: Yes');
+    expect(calls.at(-1)).toEqual({ path: '/api/inbox/crew-2/read', method: 'POST', body: { ids: ['I4'] } });
+  });
   it('ask_captain times out politely', async () => {
     const { call } = await connect(
       'crew',

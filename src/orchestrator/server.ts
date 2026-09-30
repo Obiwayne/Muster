@@ -1,5 +1,4 @@
 // The orchestrator process: HTTP API, WebSockets, static dashboard, and wiring of store + agents.
-import { randomBytes } from 'node:crypto';
 import { existsSync, readFileSync, rmSync, statSync, writeFileSync } from 'node:fs';
 import { createServer, type IncomingMessage, type Server, type ServerResponse } from 'node:http';
 import { extname, join, resolve, sep } from 'node:path';
@@ -7,13 +6,15 @@ import { WebSocketServer, type WebSocket } from 'ws';
 import type { MusterConfig, MusterEvent, TermClientMessage } from '../types.js';
 import { resolveClaudePath } from '../core/claude.js';
 import { loadConfig, saveConfig, type ConfigPatch } from '../core/config.js';
-import { cleanMergedWorktrees } from '../core/git.js';
 import { notify } from '../core/notify.js';
 import { ensureDirs, MUSTER_HOME, musterPaths } from '../core/paths.js';
 import { Store } from '../core/store.js';
+import { newSecret, removeHumanToken, writeHumanToken } from '../core/tokens.js';
+import { installRefGuard } from '../core/refguard.js';
 import { refreshGuard } from '../core/usage.js';
 import { AgentManager, type Timings } from './agents.js';
 import { createApi, sendJson } from './api.js';
+import { TokenBook, type Caller } from './auth.js';
 import { nodePtyLauncher, type PtyLauncher } from './terminal.js';
 
 export interface OrchestratorOptions {
@@ -33,7 +34,9 @@ export interface OrchestratorOptions {
 export interface Orchestrator {
   url: string;
   port: number;
+  /** The human token ("you"). Agents get their own tokens, see `agentToken`. */
   token: string;
+  agentToken(id: string): string;
   store: Store;
   agents: AgentManager;
   shutdown(clean?: boolean): Promise<void>;
@@ -86,7 +89,10 @@ export async function startOrchestrator(opts: OrchestratorOptions): Promise<Orch
   const log = opts.log ?? ((msg: string) => console.log(`${new Date().toISOString()} ${msg}`));
   let config = loadConfig(paths);
   const store = new Store(paths);
-  const token = randomBytes(16).toString('hex');
+  const token = newSecret(); // the human token
+  // Agent tokens are derived from a second secret that never leaves this process (see core/tokens.ts).
+  const agentSecret = newSecret();
+  const tokens = new TokenBook(token, agentSecret);
   const uiDir = resolve(opts.uiDir ?? join(MUSTER_HOME, 'dist', 'ui'));
   let port = 0;
   let claudePath: string | undefined;
@@ -95,7 +101,8 @@ export async function startOrchestrator(opts: OrchestratorOptions): Promise<Orch
     store,
     paths,
     config: () => config,
-    server: () => ({ url: `http://127.0.0.1:${port}`, token }),
+    // `token` here is the secret each agent's own token is derived from (claude.ts agentEnv), never the human token.
+    server: () => ({ url: `http://127.0.0.1:${port}`, token: agentSecret }),
     launcher: opts.launcher ?? nodePtyLauncher,
     claudePath: () => (claudePath ??= resolveClaudePath(config)),
     log,
@@ -126,11 +133,12 @@ export async function startOrchestrator(opts: OrchestratorOptions): Promise<Orch
       agents.dispose();
       await agents.stopAll();
       if (clean) {
-        const removed = await cleanMergedWorktrees(paths.root, paths.worktrees, config.baseBranch).catch((e) => (log(`clean failed: ${e}`), []));
+        const removed = await agents.cleanMerged().catch((e) => (log(`clean failed: ${e}`), [] as string[]));
         if (removed.length) log(`removed merged worktrees: ${removed.join(', ')}`);
       }
       store.save();
       rmSync(paths.server, { force: true });
+      removeHumanToken(paths.root, token);
       for (const ws of [...eventClients, ...termWss.clients]) ws.terminate();
       await new Promise<void>((r) => server.close(() => r()));
       server.closeAllConnections?.();
@@ -155,7 +163,13 @@ export async function startOrchestrator(opts: OrchestratorOptions): Promise<Orch
 
   const serveUi = (res: ServerResponse, pathname: string) => {
     const index = join(uiDir, 'index.html');
-    let file = pathname === '/' || pathname === '/index.html' ? index : resolve(uiDir, '.' + decodeURIComponent(pathname));
+    let decoded: string;
+    try {
+      decoded = decodeURIComponent(pathname);
+    } catch {
+      return sendJson(res, 400, { error: 'Bad path' });
+    }
+    let file = pathname === '/' || pathname === '/index.html' ? index : resolve(uiDir, '.' + decoded);
     if (file !== uiDir && !file.startsWith(uiDir + sep)) return sendJson(res, 404, { error: 'Not found' });
     if (!existsSync(file) || !statSync(file).isFile()) {
       if (pathname.startsWith('/assets/')) return sendJson(res, 404, { error: 'Not found' });
@@ -174,11 +188,18 @@ export async function startOrchestrator(opts: OrchestratorOptions): Promise<Orch
     res.end(readFileSync(file));
   };
 
+  // DNS rebinding: a page on evil.example resolving to 127.0.0.1 still sends Host: evil.example.
+  const hostOk = (req: IncomingMessage) => allowedHost(req.headers.host, port);
+  const caller = (t: string | string[] | undefined | null): Caller | null => tokens.resolve(t, store.state.agents);
+
   const server = createServer((req: IncomingMessage, res: ServerResponse) => {
+    if (!hostOk(req)) return sendJson(res, 421, { error: 'Unexpected Host header' });
     const url = new URL(req.url ?? '/', 'http://127.0.0.1');
     if (url.pathname.startsWith('/api/')) {
-      if (url.pathname !== '/api/health' && req.headers['x-muster-token'] !== token) return sendJson(res, 401, { error: 'Missing or wrong x-muster-token' });
-      return void api(req, res, url);
+      if (url.pathname === '/api/health' && req.method === 'GET') return void api(req, res, url, { actor: 'anonymous', human: false });
+      const who = caller(req.headers['x-muster-token']);
+      if (!who) return sendJson(res, 401, { error: 'Missing or wrong x-muster-token' });
+      return void api(req, res, url, who);
     }
     if (req.method !== 'GET' && req.method !== 'HEAD') return sendJson(res, 405, { error: 'Method not allowed' });
     serveUi(res, url.pathname);
@@ -190,7 +211,12 @@ export async function startOrchestrator(opts: OrchestratorOptions): Promise<Orch
   server.on('upgrade', (req, socket, head) => {
     const url = new URL(req.url ?? '/', 'http://127.0.0.1');
     const term = /^\/ws\/term\/([^/]+)$/.exec(url.pathname);
-    if (url.searchParams.get('token') !== token || (url.pathname !== '/ws/events' && !term)) {
+    if (!hostOk(req) || !allowedOrigin(req.headers.origin, port)) {
+      socket.write('HTTP/1.1 403 Forbidden\r\n\r\n');
+      return socket.destroy();
+    }
+    const who = caller(url.searchParams.get('token'));
+    if (!who || (url.pathname !== '/ws/events' && !term)) {
       socket.write('HTTP/1.1 401 Unauthorized\r\n\r\n');
       return socket.destroy();
     }
@@ -201,7 +227,13 @@ export async function startOrchestrator(opts: OrchestratorOptions): Promise<Orch
         ws.send(JSON.stringify(snapshot()));
       });
     }
-    const id = decodeURIComponent(term[1]);
+    let id: string;
+    try {
+      id = decodeURIComponent(term[1]);
+    } catch {
+      socket.write('HTTP/1.1 400 Bad Request\r\n\r\n');
+      return socket.destroy();
+    }
     termWss.handleUpgrade(req, socket, head, (ws) => {
       const backlog = agents.backlog(id);
       if (backlog) ws.send(backlog);
@@ -213,6 +245,7 @@ export async function startOrchestrator(opts: OrchestratorOptions): Promise<Orch
         } catch {
           return;
         }
+        if (!who.human) return; // agents may watch a terminal, never type into one
         if (msg.type === 'input' && typeof msg.data === 'string') agents.write(id, msg.data);
         else if (msg.type === 'resize') agents.resize(id, Number(msg.cols), Number(msg.rows));
       });
@@ -221,7 +254,15 @@ export async function startOrchestrator(opts: OrchestratorOptions): Promise<Orch
   });
 
   port = await listen(server, opts.port ?? config.port);
-  writeFileSync(paths.server, JSON.stringify({ port, pid: process.pid, token, startedAt: new Date().toISOString() }, null, 2));
+  // The human token lives outside the repo (agents can read .muster/server.json; their guard denies the token dir).
+  writeHumanToken(paths.root, token);
+  writeFileSync(paths.server, JSON.stringify({ port, pid: process.pid, startedAt: new Date().toISOString() }, null, 2));
+  try {
+    const r = installRefGuard(paths.root, { node: process.execPath, musterHome: MUSTER_HOME });
+    if (r.action !== 'current') log(`git ref guard ${r.action}: ${r.file}${r.chained ? ` (chains ${r.chained})` : ''}`);
+  } catch (e) {
+    log(`could not install the git ref guard: ${e instanceof Error ? e.message : e}`);
+  }
   log(`listening on http://127.0.0.1:${port} for ${paths.root}`);
 
   // A usage window whose reset time passes un-pauses without waiting for the next status line report.
@@ -233,5 +274,19 @@ export async function startOrchestrator(opts: OrchestratorOptions): Promise<Orch
 
   if (opts.autoStart !== false) await agents.resumeAll().catch((e) => log(`could not start agents: ${e instanceof Error ? e.message : e}`));
 
-  return { url: `http://127.0.0.1:${port}`, port, token, store, agents, shutdown };
+  return { url: `http://127.0.0.1:${port}`, port, token, agentToken: (id) => tokens.agentToken(id), store, agents, shutdown };
+}
+
+/** Host must name this server by loopback address: 127.0.0.1:<port> or localhost:<port>. */
+export function allowedHost(host: string | undefined, port: number): boolean {
+  if (!host) return false;
+  const h = host.toLowerCase();
+  return h === `127.0.0.1:${port}` || h === `localhost:${port}`;
+}
+
+/** WebSocket Origin: absent (CLI, node clients) or this server's own page. */
+export function allowedOrigin(origin: string | undefined, port: number): boolean {
+  if (origin === undefined) return true;
+  const o = origin.toLowerCase();
+  return o === `http://127.0.0.1:${port}` || o === `http://localhost:${port}`;
 }

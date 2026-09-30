@@ -1,5 +1,33 @@
 # Muster — Architecture (build contract)
 
+> **Changes after the first live run (30 Sep):**
+> - Agents default to `--permission-mode auto`; `acceptEdits` left crews stuck on shell-safety prompts overnight. The worktree guard hook applies in every mode.
+> - `muster init` ignores `.muster/` via `.git/info/exclude`, not `.gitignore`, so the main checkout stays clean for `muster merge`.
+> - The folder-trust dialog pre-selects "No, exit": the orchestrator moves to "Yes" with arrow keys, then presses Enter.
+> - Claude fires no hook when a turn is interrupted (e.g. a permission prompt answered "No"). A watchdog reads quiet terminals and settles the agent to resting when "Interrupted" is the latest thing on screen.
+> - A one-time notice can swallow the Enter after typed text; if no prompt hook arrives within 4 s and the line is still on screen, Enter is pressed again (max twice).
+> - Open "Waiting for permission" notes close when the agent's process restarts.
+> - `GET /api/agents/:id/diff` takes `?branch=`; `POST /api/agents/:id/merge` takes `branch` or `taskId`; `PATCH /api/config` treats `null` as unset.
+> - Agents get `MUSTER_BASE_BRANCH` in their environment; parent Claude Code session variables are stripped from it.
+
+> **Correctness changes (1 Oct), these override the sections below:**
+> - Tasks record `reviewedSha` when review is requested; `merge` (body normally `{ taskId }`) merges exactly that commit and returns 409 if the branch moved since ("ask the Captain to re-review"). Re-review is allowed from `ready_for_merge`.
+> - One branch per task: taking a task gives the agent a fresh `<id>/<slug>` from base (or renames an unused `<id>/work`); a dirty worktree refuses with 409. An agent holds one open task at a time (409 otherwise). `request_review` only from `in_progress`/`review`.
+> - Tasks record `inputs` (branches/commits they must contain: earlier stations, `ready_for_merge` dependencies, merged in when the task is taken). handoff/done/review return 409 naming any input that isn't an ancestor. A conflicting handoff merge keeps `task.branch` on the sender and posts a stuck note for the receiver.
+> - Nudges are confirmed by the next `prompt` hook; unconfirmed nudges repeat (20 s doubling to 5 min). Automated typing waits 5 s after a human keystroke. Typed text is sanitised (no control characters).
+> - Resumed agents holding a task get "[muster] You were restarted. Continue …". One failed start doesn't stop the others; a missing worktree is recreated. `down --clean` removes only worktrees (and records) of crew that aren't running, hold no task and whose branch is merged.
+> - State saves retry the rename on Windows file locks; handlers validate before mutating. Terminal listeners are per agent and survive restarts. Agent records are reserved before any await, so parallel spawns respect `maxCrew`.
+>
+> **Security changes (1 Oct), these override the sections below:**
+> - **Identities come from tokens.** The human token ("you") is written only to `%LOCALAPPDATA%/muster/<sha256(repo)[0:16]>/token` (posix `~/.muster/<hash>/token`; `MUSTER_SECRETS_DIR` overrides the base, for tests). `.muster/server.json` is `{ port, pid, startedAt }`. Each agent's `MUSTER_TOKEN` (PTY env and mcp.json) is `HMAC(agentSecret, id)`; the secret lives only in orchestrator memory. The server resolves the caller from the token and **overwrites `actor`** in every body (and `agentId` in `/api/usage` for agents) — see `src/orchestrator/auth.ts`.
+> - Agent tokens get 403 on: `PATCH /api/config`, `/api/shutdown`, `/api/ask`, `/role`, `DELETE /api/agents/:id`, `/input` (any agent), `/merge`, start/stop/event/inbox-read of *another* agent, `/tests` and `GET /output` of another agent unless Captain. Terminal WebSocket input from an agent token is ignored.
+> - `src/client.ts`: with `MUSTER_AGENT` set, only the env `MUSTER_URL`/`MUSTER_TOKEN` are used (never the human token); otherwise port from server.json + the human token file.
+> - HTTP requests need `Host: 127.0.0.1:<port>` or `localhost:<port>` (else 421); WebSocket upgrades also need no `Origin` or `http://127.0.0.1:<port>`/`http://localhost:<port>` (else 403). The Vite dev proxy (`npm run dev:ui`) sends its own Origin on `/ws` and is refused; use the built dashboard.
+> - **Git ref guard.** On start the orchestrator installs a `reference-transaction` hook (marked `muster-ref-guard`) in `git rev-parse --git-path hooks` (so `core.hooksPath` is respected; a foreign hook is renamed `reference-transaction.pre-muster` and chained). When `MUSTER_AGENT` is set it runs `dist/hooks/ref-hook.js`, which refuses updates to `refs/heads/<baseBranch>` and to `refs/heads/<other agent id>[/...]`. No-op for humans and the orchestrator (no `MUSTER_AGENT`).
+> - Guard hook (`PreToolUse` matcher `Edit|Write|MultiEdit|NotebookEdit|Bash|PowerShell|Read|Grep|Glob`): PowerShell gets the Bash rules; all agents are denied `--git-dir/--work-tree`, `GIT_DIR=`-style env, `-c core.hooksPath`, `update-ref`, `symbolic-ref`, `branch -f/-M/-C`, hooksPath/alias config, `push --no-verify`, `bash -c`/`sh -c`/`powershell -c`/`cmd /c` with git, `$(git …)`, changing `MUSTER_*` env, links/junctions, and any mention of the token folder or `.muster/agents`. Captain also: pull, reset, rebase, cherry-pick, am, revert, `checkout -B`, `switch -C`, branch delete/rename. Edits resolve junctions/symlinks (nearest existing ancestor) and deny `.git`, `.claude`, `.mcp.json`, `.muster` inside the worktree. Reads of the token folder and other agents' `.muster/agents/<id>` are denied.
+> - Agents launch with `--setting-sources user` (a worktree's `.claude/settings*.json` can't loosen them). `DEFAULT_CONFIG.allowedTools` no longer has `Bash(node *)`/`Bash(npx *)`.
+> - A `.cmd` claude path is resolved to the exe/script behind the npm shim; if that fails it runs through `cmd.exe /d /s /c "<quoted line>"` and the role prompt is never passed inline through cmd.
+
 Read `SPEC.md` for the product. This file is the **contract** between the parts. Shared types live in `src/types.ts`. If you need to change the contract, say so in your report instead of silently diverging.
 
 ## Platform

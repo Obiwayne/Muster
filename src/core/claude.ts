@@ -4,6 +4,7 @@ import { delimiter, dirname, join } from 'node:path';
 import { captainPrompt, crewPrompt, designPrompt, type PromptContext } from '../prompts/index.js';
 import type { Agent, MusterConfig, Role } from '../types.js';
 import { MUSTER_HOME, posix, type MusterPaths } from './paths.js';
+import { deriveAgentToken } from './tokens.js';
 
 const DEFAULT_VELLUM_ENTRY = 'F:/Vellum/mcp/dist/index.js';
 
@@ -32,9 +33,53 @@ export function resolveClaudePath(config: Pick<MusterConfig, 'claudePath'>, plat
   return onPath('claude.exe', pathEnv) ?? shim ?? 'claude';
 }
 
-/** node-pty spawns executables only; a .cmd/.bat shim has to go through cmd.exe. */
+/** What an npm .cmd shim runs: its exe, or node + a script. undefined when the shim can't be read. */
+export function shimTarget(shim: string): { exe: string } | { script: string } | undefined {
+  let text: string;
+  try {
+    text = readFileSync(shim, 'utf8');
+  } catch {
+    return undefined;
+  }
+  const exe = /"%~?dp0%?\\?([^"]+?\.exe)"/i.exec(text);
+  if (exe && !/(^|[\\/])node\.exe$/i.test(exe[1]) && existsSync(join(dirname(shim), exe[1]))) return { exe: join(dirname(shim), exe[1]) };
+  const script = /"%~?dp0%?\\?([^"]+?\.(?:c|m)?js)"/i.exec(text);
+  if (script && existsSync(join(dirname(shim), script[1]))) return { script: join(dirname(shim), script[1]) };
+  return undefined;
+}
+
+/** Quote one argument for cmd.exe (inside `/s /c "..."`). */
+function cmdQuote(a: string): string {
+  if (/["%^&|<>!\r\n]/.test(a)) throw new Error(`Cannot pass ${JSON.stringify(a.slice(0, 40))} through cmd.exe safely`);
+  return a === '' || /[\s,;=()]/.test(a) ? `"${a}"` : a;
+}
+
+/**
+ * node-pty spawns executables only. A .cmd/.bat shim is resolved to what it runs (claude.exe, or node +
+ * cli.js) when possible; otherwise it goes through `cmd.exe /d /s /c "<command line>"`. The whole command
+ * line is passed as one pre-quoted string (see ptyArgs), and the role prompt is never passed inline through
+ * cmd (only --append-system-prompt-file), since cmd would interpret its text.
+ */
 export function spawnCommand(claudePath: string, args: string[]): { file: string; args: string[] } {
-  return /\.(cmd|bat)$/i.test(claudePath) ? { file: 'cmd.exe', args: ['/d', '/s', '/c', claudePath, ...args] } : { file: claudePath, args };
+  if (!/\.(cmd|bat)$/i.test(claudePath)) return { file: claudePath, args };
+  const target = shimTarget(claudePath);
+  if (target && 'exe' in target) return { file: target.exe, args };
+  if (target) return { file: process.execPath, args: [target.script, ...args] };
+  const safe: string[] = [];
+  for (let i = 0; i < args.length; i++) {
+    if (args[i] === '--append-system-prompt') {
+      i++; // dropped: prompt text must not go through cmd.exe
+      continue;
+    }
+    safe.push(args[i]);
+  }
+  return { file: 'cmd.exe', args: ['/d', '/s', '/c', `"${[claudePath, ...safe].map(cmdQuote).join(' ')}"`] };
+}
+
+/** The args to hand node-pty: a cmd.exe `/s /c` line goes as one raw command-line string (node-pty would re-escape its quotes). */
+export function ptyArgs(file: string, args: string[]): string[] | string {
+  if (/(^|[\\/])cmd(\.exe)?$/i.test(file) && args.length === 4 && args[0] === '/d' && args[1] === '/s' && args[2] === '/c') return args.join(' ');
+  return args;
 }
 
 export function modelFor(role: Role, config: MusterConfig): string {
@@ -43,6 +88,7 @@ export function modelFor(role: Role, config: MusterConfig): string {
 
 export interface LaunchContext {
   url: string;
+  /** The orchestrator's agent secret: each agent gets deriveAgentToken(token, id), never this value. */
   token: string;
   repoRoot: string;
   config: MusterConfig;
@@ -51,7 +97,7 @@ export interface LaunchContext {
 export function agentEnv(agent: Agent, ctx: LaunchContext): Record<string, string> {
   return {
     MUSTER_URL: ctx.url,
-    MUSTER_TOKEN: ctx.token,
+    MUSTER_TOKEN: deriveAgentToken(ctx.token, agent.id),
     MUSTER_AGENT: agent.id,
     MUSTER_ROLE: agent.role,
     MUSTER_WORKTREE: agent.worktree,
@@ -99,6 +145,9 @@ export function mcpConfig(agent: Agent, ctx: LaunchContext): object {
   return { mcpServers: servers };
 }
 
+/** Tools the guard hook checks (hooks/guard.ts). PowerShell is Claude Code's Windows shell tool. */
+export const PRE_TOOL_MATCHER = 'Edit|Write|MultiEdit|NotebookEdit|Bash|PowerShell|Read|Grep|Glob';
+
 export function settingsConfig(config: MusterConfig): object {
   const node = `"${posix(process.execPath)}"`;
   const hook = (event: string) => [{ type: 'command', command: `${node} "${posix(MUSTER_HOME)}/dist/hooks/hook.js" ${event}` }];
@@ -106,7 +155,7 @@ export function settingsConfig(config: MusterConfig): object {
     permissions: { allow: config.allowedTools },
     statusLine: { type: 'command', command: `${node} "${posix(MUSTER_HOME)}/dist/usage/statusline.js"` },
     hooks: {
-      PreToolUse: [{ matcher: 'Edit|Write|MultiEdit|NotebookEdit|Bash', hooks: hook('pre-tool') }],
+      PreToolUse: [{ matcher: PRE_TOOL_MATCHER, hooks: hook('pre-tool') }],
       UserPromptSubmit: [{ hooks: hook('prompt') }],
       Stop: [{ hooks: hook('stop') }],
       Notification: [{ hooks: hook('notification') }],
@@ -166,6 +215,9 @@ export function launchArgs(agent: Agent, config: MusterConfig, files: AgentFiles
     '--permission-mode', config.permissionMode,
     '--mcp-config', files.mcp,
     '--settings', files.settings,
+    // Only user settings files (plus --settings above): a project's .claude/settings(.local).json in the
+    // worktree can't loosen the agent's permissions or drop its hooks.
+    '--setting-sources', 'user',
     ...(opts.inlinePrompt !== undefined ? ['--append-system-prompt', opts.inlinePrompt] : ['--append-system-prompt-file', files.prompt]),
     '--name', `muster ${agent.id}`,
   ];

@@ -62,7 +62,12 @@ async function until(check: () => boolean, ms = 3000): Promise<void> {
 let repo: string;
 let orch: Orchestrator;
 
-async function call<T = any>(method: string, path: string, body?: unknown, token: string | null = orch.token): Promise<{ status: number; data: T }> {
+/** The identity comes from the token: a body `actor` other than "you" is sent with that agent's own token. */
+const tokenFor = (body: unknown): string => {
+  const actor = body && typeof body === 'object' ? (body as { actor?: unknown }).actor : undefined;
+  return typeof actor === 'string' && actor !== 'you' ? orch.agentToken(actor) : orch.token;
+};
+async function call<T = any>(method: string, path: string, body?: unknown, token: string | null = tokenFor(body)): Promise<{ status: number; data: T }> {
   const res = await fetch(orch.url + path, {
     method,
     headers: { 'content-type': 'application/json', ...(token ? { 'x-muster-token': token } : {}) },
@@ -124,7 +129,7 @@ describe('orchestrator API', () => {
     expect(s.file).toBe('C:/fake/claude.exe');
     expect(s.cwd).toBe(orch.store.state.repoRoot);
     expect(s.args.slice(0, 4)).toEqual(['--session-id', captain.sessionId, '--model', 'opus']);
-    expect(s.env).toMatchObject({ MUSTER_AGENT: 'captain', MUSTER_ROLE: 'captain', MUSTER_TOKEN: orch.token, MUSTER_BASE_BRANCH: 'main', MUSTER_URL: orch.url });
+    expect(s.env).toMatchObject({ MUSTER_AGENT: 'captain', MUSTER_ROLE: 'captain', MUSTER_TOKEN: orch.agentToken('captain'), MUSTER_BASE_BRANCH: 'main', MUSTER_URL: orch.url });
     await ok('POST', '/api/agents/captain/event', { event: 'session-start' });
     expect((await agent('captain')).status).toBe('idle');
   });
@@ -140,7 +145,7 @@ describe('orchestrator API', () => {
   });
 
   it('spawns crew in a worktree and types its first prompt after SessionStart', async () => {
-    expect((await call('POST', '/api/agents', { actor: 'crew-9' })).status).toBe(403);
+    expect((await call('POST', '/api/agents', { actor: 'crew-9' })).status).toBe(401); // no such agent, so no valid token
     const crew = await ok<Agent>('POST', '/api/agents', { actor: 'you' });
     expect(crew).toMatchObject({ id: 'crew-2', role: 'crew', branch: 'crew-2/work', model: 'sonnet' });
     expect(existsSync(join(crew.worktree, 'README.md'))).toBe(true);
@@ -197,6 +202,7 @@ describe('orchestrator API', () => {
     expect((await ok<InboxItem[]>('GET', '/api/inbox/captain?unread=1')).map((i) => i.noteId)).toContain(note.id);
 
     const captainPty = ptyOf('captain');
+    await ok('POST', '/api/agents/captain/event', { event: 'prompt' }); // confirms the nudges typed so far
     captainPty.written = '';
     await ok('POST', '/api/agents/captain/event', { event: 'stop' });
     await until(() => captainPty.written.endsWith('\r'));
@@ -234,7 +240,7 @@ describe('orchestrator API', () => {
   it('hands a branch on to the next station and sends it back to the builder', async () => {
     await ok<Agent>('POST', '/api/agents', { actor: 'captain' }); // crew-3
     const t = await ok<Task>('POST', '/api/tasks', { title: 'Invite API', stations: ['build', 'test'], assignee: 'crew-2', actor: 'captain' });
-    expect(t).toMatchObject({ status: 'in_progress', assignee: 'crew-2', branch: 'crew-2/share-dialog' });
+    expect(t).toMatchObject({ status: 'in_progress', assignee: 'crew-2', branch: 'crew-2/invite-api' }); // a fresh branch: T1's is merged
     commitFile((await agent('crew-2')).worktree, 'invite.ts', 'export const invite = 1;\n');
 
     const handed = await ok<Task>('POST', `/api/tasks/${t.id}/handoff`, { actor: 'crew-2', to: 'crew-3', note: 'please test' });
@@ -300,10 +306,10 @@ describe('orchestrator API', () => {
     expect(existsSync(join(old.worktree, 'README.md'))).toBe(true);
     const restarted = spawned.slice(before);
     expect(restarted.map((s) => s.env.MUSTER_AGENT).sort()).toEqual(['captain', 'crew-2']);
-    // crew-2 had submitted a prompt, so its session resumes; the old captain never did
+    // both had submitted a prompt, so both sessions resume
     const argsOf = (id: string) => restarted.find((s) => s.env.MUSTER_AGENT === id)!.args;
     expect(argsOf('crew-2')[0]).toBe('--resume');
-    expect(argsOf('captain')[0]).toBe('--session-id');
+    expect(argsOf('captain')[0]).toBe('--resume');
     expect(restarted.find((s) => s.env.MUSTER_AGENT === 'crew-2')!.cwd).toBe(orch.store.state.repoRoot);
   });
 
@@ -322,8 +328,8 @@ describe('orchestrator API', () => {
   });
 
   it('diffs and merges a specific branch or task', async () => {
-    const d = await ok('GET', '/api/agents/captain/diff?branch=crew-2/share-dialog&stat=1');
-    expect(d).toMatchObject({ branch: 'crew-2/share-dialog', base: 'main', diff: '' });
+    const d = await ok('GET', '/api/agents/captain/diff?branch=crew-2/invite-api&stat=1');
+    expect(d).toMatchObject({ branch: 'crew-2/invite-api', base: 'main', diff: '' });
     expect(d.stat).toContain('invite.ts');
     expect((await call('GET', '/api/agents/captain/diff?branch=--output=x')).status).toBe(404);
 
@@ -332,7 +338,7 @@ describe('orchestrator API', () => {
     await ok('POST', '/api/tasks/T2/review', { actor: 'crew-2', summary: 'ok' }); // crew-2 is the Captain now
     const merged = await ok('POST', '/api/agents/captain/merge', { actor: 'you', taskId: 'T2' });
     expect(merged.ok).toBe(true);
-    expect(gitSync(repo, 'log', '-1', '--format=%s')).toBe('Merge crew-2/share-dialog (T2 Invite API)');
+    expect(gitSync(repo, 'log', '-1', '--format=%s')).toBe('Merge crew-2/invite-api (T2 Invite API)');
   });
 
   it('unsets config keys patched to null', async () => {

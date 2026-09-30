@@ -33,15 +33,40 @@ export function migrate(raw: Partial<MusterState>, repoRoot: string): MusterStat
   };
 }
 
+export interface StoreOptions {
+  /** Injectable for tests. */
+  rename?: (from: string, to: string) => void;
+  log?: (msg: string) => void;
+  /** Delays between rename attempts; Windows briefly locks files that a virus scanner or indexer has open. */
+  retryDelaysMs?: number[];
+}
+
+const RETRYABLE = new Set(['EPERM', 'EBUSY', 'EACCES']);
+const DEFAULT_RETRY_DELAYS = [20, 40, 80, 160, 320];
+
+/** Blocks the thread for `ms` (save() is synchronous by design so callers can rely on it before exiting). */
+function sleepSync(ms: number): void {
+  Atomics.wait(new Int32Array(new SharedArrayBuffer(4)), 0, 0, ms);
+}
+
 /**
  * Owns MusterState. Callers mutate `store.state` and then call `commit()`,
  * which writes state.json atomically and emits 'change'.
  */
 export class Store extends EventEmitter {
   state: MusterState;
+  private rename: (from: string, to: string) => void;
+  private log: (msg: string) => void;
+  private retryDelays: number[];
 
-  constructor(private paths: MusterPaths) {
+  constructor(
+    private paths: MusterPaths,
+    opts: StoreOptions = {},
+  ) {
     super();
+    this.rename = opts.rename ?? renameSync;
+    this.log = opts.log ?? ((msg) => console.error(msg));
+    this.retryDelays = opts.retryDelaysMs ?? DEFAULT_RETRY_DELAYS;
     this.state = this.load();
   }
 
@@ -55,17 +80,38 @@ export class Store extends EventEmitter {
     }
   }
 
-  save(): void {
+  /** Writes state.json via tmp + rename, retrying the rename while Windows holds a lock. Returns false (and logs) if it never succeeds. */
+  save(): boolean {
     const tmp = `${this.paths.state}.tmp`;
-    writeFileSync(tmp, JSON.stringify(this.state, null, 1));
-    renameSync(tmp, this.paths.state);
+    try {
+      writeFileSync(tmp, JSON.stringify(this.state, null, 1));
+    } catch (e) {
+      this.log(`could not write ${tmp}: ${e instanceof Error ? e.message : e}`);
+      return false;
+    }
+    for (let attempt = 0; ; attempt++) {
+      try {
+        this.rename(tmp, this.paths.state);
+        return true;
+      } catch (e) {
+        const code = (e as NodeJS.ErrnoException).code ?? '';
+        if (!RETRYABLE.has(code) || attempt >= this.retryDelays.length) {
+          this.log(`could not save ${this.paths.state} (${code || (e instanceof Error ? e.message : e)}) after ${attempt + 1} attempts; state stays in memory and is written on the next change`);
+          return false;
+        }
+        sleepSync(this.retryDelays[attempt]);
+      }
+    }
   }
 
+  /** Saves and notifies listeners. The change event fires even if the save failed: in-memory state is the truth. */
   commit(): void {
-    this.save();
-    this.emit('change');
+    try {
+      this.save();
+    } finally {
+      this.emit('change');
+    }
   }
-
 }
 
 export function nextId(state: MusterState, kind: IdKind): string {

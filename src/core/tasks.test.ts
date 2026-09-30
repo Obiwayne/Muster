@@ -1,8 +1,8 @@
 import { beforeEach, describe, expect, it } from 'vitest';
 import { DEFAULT_CONFIG, type MusterState } from '../types.js';
-import { inboxFor, listNotes } from './board.js';
+import { inboxFor, listNotes, postNote } from './board.js';
 import { emptyState } from './store.js';
-import { assignTask, claimTask, createTask, doneTask, handoffTask, hasReportedDone, markMerged, requestReview, sendBack } from './tasks.js';
+import { assignTask, claimTask, createTask, doneTask, handoffTask, hasReportedDone, markMerged, MERGE_CONFLICT, requestReview, sendBack, untake } from './tasks.js';
 import { makeAgent } from './testutil.js';
 
 let s: MusterState;
@@ -49,11 +49,11 @@ describe('tasks', () => {
     createTask(s, config, { title: 'Build 2', actor: 'captain' });
     expect(claimTask(s, 'crew-2')?.title).toBe('Build 1');
     expect(claimTask(s, 'design')?.title).toBe('Design check');
-    expect(claimTask(s, 'design')).toBeNull();
-    const t = claimTask(s, 'crew-3')!;
-    expect(t.title).toBe('Build 2');
+    expect(claimTask(s, 'crew-3')?.title).toBe('Build 2');
+    expect(claimTask(s, 'captain')).toBeNull(); // nothing at the review station
+    const t = s.tasks[2];
     expect(t.assignee).toBe('crew-3');
-    expect(t.branch).toBe('crew-3/work');
+    expect(t.branch).toBeUndefined(); // the branch is settled by AgentManager.syncTaskBranch
     expect(s.agents.find((a) => a.id === 'crew-3')!.taskId).toBe(t.id);
   });
 
@@ -61,8 +61,9 @@ describe('tasks', () => {
     const t = createTask(s, config, { title: 'Share dialog', stations: ['build', 'test', 'design'], actor: 'captain' });
     claimTask(s, 'crew-2');
 
-    const r1 = handoffTask(s, t.id, 'crew-2', 'crew-3', 'built, please test');
-    expect(r1.fromBranch).toBe('crew-2/work');
+    const r1 = handoffTask(s, t.id, 'crew-2', 'crew-3', 'built, please test', { branch: 'crew-2/share-dialog', sha: 'a'.repeat(40) });
+    expect(r1.fromBranch).toBe('crew-2/share-dialog');
+    expect(t.inputs).toEqual([{ branch: 'crew-2/share-dialog', sha: 'a'.repeat(40), kind: 'station' }]);
     expect(r1.receiver?.id).toBe('crew-3');
     expect(t).toMatchObject({ stationIndex: 1, status: 'in_progress', assignee: 'crew-3' });
     expect(s.agents.find((a) => a.id === 'crew-2')!.taskId).toBeUndefined();
@@ -133,5 +134,74 @@ describe('tasks', () => {
     const t = assignTask(s, 'T1', 'crew-3', 'you');
     expect(t.assignee).toBe('crew-3');
     expect(inboxFor(s, 'crew-3')[0]).toMatchObject({ kind: 'assignment', taskId: 'T1', from: 'you' });
+  });
+
+  it('gives an agent one task at a time: claim, assign, handoff and sendback refuse while it holds another', () => {
+    const a = createTask(s, config, { title: 'A', stations: ['build', 'test'], actor: 'captain' });
+    const b = createTask(s, config, { title: 'B', actor: 'captain' });
+    claimTask(s, 'crew-2'); // A
+    expect(() => claimTask(s, 'crew-2')).toThrow(/crew-2 already holds T1 A \(in_progress\)/);
+    expect(() => assignTask(s, b.id, 'crew-2', 'captain')).toThrow(/already holds T1/);
+    expect(b).toMatchObject({ status: 'ready' });
+    expect(b.assignee).toBeUndefined();
+    expect(assignTask(s, a.id, 'crew-2', 'captain').assignee).toBe('crew-2'); // the task it holds is fine
+
+    assignTask(s, b.id, 'crew-3', 'captain');
+    expect(() => handoffTask(s, a.id, 'crew-2', 'crew-3', 'test it')).toThrow(/crew-3 already holds T2/);
+    expect(a).toMatchObject({ stationIndex: 0, assignee: 'crew-2' }); // nothing moved
+
+    handoffTask(s, a.id, 'crew-2', undefined, 'anyone can test');
+    claimTask(s, 'crew-2'); // A again, at the test station
+    doneTask(s, a.id, 'crew-2', 'ok');
+    expect(claimTask(s, 'crew-2')).toBeNull(); // free again, nothing left
+    assignTask(s, createTask(s, config, { title: 'C', actor: 'captain' }).id, 'crew-2', 'captain');
+    expect(() => sendBack(s, a.id, 'captain', 'again')).toThrow(/crew-2 already holds T3/);
+    expect(a.status).toBe('review');
+  });
+
+  it('flags for merge only from review or in progress (or ready_for_merge again, to re-review)', () => {
+    const t = createTask(s, config, { title: 'X', actor: 'captain' });
+    expect(() => requestReview(s, t.id, 'captain', 'nothing yet')).toThrow(/T1 is ready; only work in review or in progress/);
+    expect(t.status).toBe('ready');
+    claimTask(s, 'crew-2');
+    requestReview(s, t.id, 'captain', 'looks done', { branch: 'crew-2/x', sha: 'a'.repeat(40) });
+    expect(t).toMatchObject({ status: 'ready_for_merge', branch: 'crew-2/x', reviewedSha: 'a'.repeat(40) });
+    requestReview(s, t.id, 'captain', 'new commit reviewed', { branch: 'crew-2/x', sha: 'b'.repeat(40) });
+    expect(t.reviewedSha).toBe('b'.repeat(40));
+    expect(listNotes(s, { type: 'review', open: true })).toHaveLength(1);
+    markMerged(s, t, 'you');
+    expect(() => requestReview(s, t.id, 'captain', 'again')).toThrow(/T1 is merged/);
+    sendBack; // (send-back clears the reviewed commit: covered in the API flow)
+  });
+
+  it('validates before creating: a refused assignee leaves no half-created task', () => {
+    createTask(s, config, { title: 'Held', assignee: 'crew-2', actor: 'captain' });
+    const before = { tasks: s.tasks.length, next: s.nextIds.task, feed: s.feed.length };
+    expect(() => createTask(s, config, { title: 'Second', assignee: 'crew-2', actor: 'captain' })).toThrow(/already holds T1/);
+    s.usage.paused = true;
+    expect(() => createTask(s, config, { title: 'Paused', assignee: 'crew-3', actor: 'captain' })).toThrow(/Paused/);
+    s.usage.paused = false;
+    expect(() => createTask(s, config, { title: 'Nobody', assignee: 'crew-9', actor: 'captain' })).toThrow(/No agent "crew-9"/);
+    expect(() => createTask(s, config, { title: 'Not yours', assignee: 'crew-3', actor: 'crew-2' })).toThrow(/Only the Captain or you/);
+    expect({ tasks: s.tasks.length, next: s.nextIds.task, feed: s.feed.length }).toEqual(before);
+  });
+
+  it('closes the merge-conflict stuck note once a station hands on a branch with every input', () => {
+    const t = createTask(s, config, { title: 'X', stations: ['build', 'test'], actor: 'captain' });
+    claimTask(s, 'crew-2');
+    handoffTask(s, t.id, 'crew-2', 'crew-3', 'test', { branch: 'crew-2/x', sha: 'a'.repeat(40) });
+    const note = postNote(s, { actor: 'crew-3', type: 'stuck', taskId: t.id, text: `${MERGE_CONFLICT} crew-2/x into crew-3/x` });
+    doneTask(s, t.id, 'crew-3', 'resolved and tested', { branch: 'crew-3/x', sha: 'c'.repeat(40) });
+    expect(note.open).toBe(false);
+    expect(t.branch).toBe('crew-3/x');
+  });
+
+  it('untake puts a task back on the board', () => {
+    const t = createTask(s, config, { title: 'X', actor: 'captain' });
+    claimTask(s, 'crew-2');
+    untake(s, t, s.agents[1], 'dirty worktree');
+    expect(t.status).toBe('ready');
+    expect(t.assignee).toBeUndefined();
+    expect(s.agents[1].taskId).toBeUndefined();
   });
 });

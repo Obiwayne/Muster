@@ -4,8 +4,9 @@ import { join } from 'node:path';
 import { describe, expect, it } from 'vitest';
 import { DEFAULT_CONFIG } from '../types.js';
 import { stripAnsi } from '../orchestrator/terminal.js';
-import { launchArgs, ptyEnv, resolveClaudePath, spawnCommand, trustPromptKeys, writeAgentFiles } from './claude.js';
+import { launchArgs, ptyArgs, ptyEnv, resolveClaudePath, spawnCommand, trustPromptKeys, writeAgentFiles } from './claude.js';
 import { musterPaths } from './paths.js';
+import { deriveAgentToken } from './tokens.js';
 import { makeAgent } from './testutil.js';
 
 // Raw ConPTY output of claude 2.1's first-run trust dialog (colours trimmed).
@@ -63,11 +64,13 @@ describe('claude launch', () => {
 
     const mcp = JSON.parse(readFileSync(files.mcp, 'utf8'));
     expect(mcp.mcpServers.muster.args[0]).toMatch(/^[^\\]+\/dist\/mcp\/index\.js$/);
-    expect(mcp.mcpServers.muster.env).toMatchObject({ MUSTER_AGENT: 'crew-2', MUSTER_ROLE: 'crew', MUSTER_TOKEN: 'abc', MUSTER_BASE_BRANCH: 'main' });
+    expect(mcp.mcpServers.muster.env).toMatchObject({ MUSTER_AGENT: 'crew-2', MUSTER_ROLE: 'crew', MUSTER_TOKEN: deriveAgentToken('abc', 'crew-2'), MUSTER_BASE_BRANCH: 'main' });
+    expect(JSON.stringify(mcp)).not.toContain('"abc"'); // the secret itself never reaches an agent
     expect(mcp.mcpServers.vellum).toBeUndefined();
 
     const settings = JSON.parse(readFileSync(files.settings, 'utf8'));
     expect(settings.permissions.allow).toEqual(DEFAULT_CONFIG.allowedTools);
+    expect(settings.hooks.PreToolUse[0].matcher.split('|')).toEqual(expect.arrayContaining(['Bash', 'PowerShell', 'Edit', 'Write', 'Read']));
     const hook = settings.hooks.PreToolUse[0].hooks[0].command as string;
     expect(hook).toMatch(/^"[^\\]+" "[^\\]+\/dist\/hooks\/hook\.js" pre-tool$/);
     expect(settings.statusLine.command).toMatch(/dist\/usage\/statusline\.js"$/);
@@ -75,11 +78,36 @@ describe('claude launch', () => {
 
     expect(launchArgs(agent, DEFAULT_CONFIG, files, { resume: false })).toEqual([
       '--session-id', 's-crew-2', '--model', 'sonnet', '--permission-mode', 'auto',
-      '--mcp-config', files.mcp, '--settings', files.settings, '--append-system-prompt-file', files.prompt, '--name', 'muster crew-2',
+      '--mcp-config', files.mcp, '--settings', files.settings, '--setting-sources', 'user', '--append-system-prompt-file', files.prompt, '--name', 'muster crew-2',
     ]);
     const resumed = launchArgs(agent, DEFAULT_CONFIG, files, { resume: true, inlinePrompt: 'be nice' });
     expect(resumed.slice(0, 2)).toEqual(['--resume', 's-crew-2']);
     expect(resumed).toContain('--append-system-prompt');
     expect(resumed).not.toContain('--append-system-prompt-file');
+  });
+});
+
+describe('spawning through a .cmd shim', () => {
+  it('runs the exe or node script behind an npm shim directly', () => {
+    const dir = mkdtempSync(join(tmpdir(), 'muster shim '));
+    const exe = join(dir, 'node_modules', '@anthropic-ai', 'claude-code', 'bin', 'claude.exe');
+    mkdirSync(join(exe, '..'), { recursive: true });
+    writeFileSync(exe, '');
+    writeFileSync(join(dir, 'claude.cmd'), '@ECHO off\r\n"%dp0%\\node_modules\\@anthropic-ai\\claude-code\\bin\\claude.exe"   %*\r\n');
+    expect(spawnCommand(join(dir, 'claude.cmd'), ['--x'])).toEqual({ file: exe, args: ['--x'] });
+
+    const cli = join(dir, 'node_modules', '@anthropic-ai', 'claude-code', 'cli.js');
+    writeFileSync(cli, '');
+    writeFileSync(join(dir, 'old.cmd'), '@IF EXIST "%~dp0\\node.exe" (\r\n  "%~dp0\\node.exe"  "%~dp0\\node_modules\\@anthropic-ai\\claude-code\\cli.js" %*\r\n)\r\n');
+    expect(spawnCommand(join(dir, 'old.cmd'), ['--x'])).toEqual({ file: process.execPath, args: [cli, '--x'] });
+  });
+
+  it('quotes the whole cmd line for /s /c and never passes the prompt inline', () => {
+    const cmd = spawnCommand('C:/Program Files/My Tools/claude.cmd', ['--settings', 'C:/a b/settings.json', '--append-system-prompt', 'rm -rf & calc', '--name', 'muster crew-2']);
+    expect(cmd.file).toBe('cmd.exe');
+    expect(cmd.args).toEqual(['/d', '/s', '/c', '""C:/Program Files/My Tools/claude.cmd" --settings "C:/a b/settings.json" --name "muster crew-2""']);
+    expect(ptyArgs(cmd.file, cmd.args)).toBe('/d /s /c ""C:/Program Files/My Tools/claude.cmd" --settings "C:/a b/settings.json" --name "muster crew-2""');
+    expect(ptyArgs('C:/bin/claude.exe', ['--x'])).toEqual(['--x']);
+    expect(() => spawnCommand('C:/x/claude.cmd', ['--name', 'a%PATH%'])).toThrow(/cmd\.exe/);
   });
 });

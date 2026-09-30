@@ -1,7 +1,7 @@
 // Git operations: worktrees, branches, diffs, tests and merges. Always execFile, never a shell string.
 import { execFile, spawn } from 'node:child_process';
-import { existsSync } from 'node:fs';
-import { resolve } from 'node:path';
+import { existsSync, readFileSync } from 'node:fs';
+import { dirname, join, resolve } from 'node:path';
 import { conflict } from './errors.js';
 
 export interface GitResult {
@@ -43,6 +43,43 @@ export async function currentBranch(cwd: string): Promise<string> {
   return out(cwd, ['rev-parse', '--abbrev-ref', 'HEAD']);
 }
 
+/** The commit a ref (branch, tag or sha) points at, or undefined when it doesn't resolve. */
+export async function revParse(cwd: string, ref: string): Promise<string | undefined> {
+  if (!ref || ref.startsWith('-')) return undefined;
+  const r = await git(cwd, ['rev-parse', '--verify', '--quiet', `${ref}^{commit}`], true);
+  return r.code === 0 ? r.stdout.trim() || undefined : undefined;
+}
+
+/** True when `ancestor` is reachable from `descendant` (a commit contains itself). */
+export async function isAncestor(cwd: string, ancestor: string, descendant: string): Promise<boolean> {
+  return (await git(cwd, ['merge-base', '--is-ancestor', ancestor, descendant], true)).code === 0;
+}
+
+/** Tracked files with uncommitted changes in `worktree` (empty = clean). Untracked files are ignored. */
+export async function uncommittedChanges(worktree: string): Promise<string[]> {
+  // not out(): trimming would eat the leading space of the first ' M file' line
+  return (await git(worktree, ['status', '--porcelain', '--untracked-files=no'])).stdout.split(/\r?\n/).filter(Boolean);
+}
+
+/** A branch name not taken yet: `name`, else `name-2`, `name-3`... */
+export async function freeBranchName(cwd: string, name: string): Promise<string> {
+  let candidate = name;
+  for (let i = 2; await branchExists(cwd, candidate); i++) candidate = `${name}-${i}`;
+  return candidate;
+}
+
+/** Switches `worktree` to a new branch started from `base`. Returns the (possibly suffixed) name. */
+export async function createBranch(worktree: string, name: string, base: string): Promise<string> {
+  const branch = await freeBranchName(worktree, name);
+  await git(worktree, ['switch', '-c', branch, base]);
+  return branch;
+}
+
+/** Fast-forwards the checked-out branch to `base` when possible; returns whether it moved or was already there. */
+export async function fastForward(worktree: string, base: string): Promise<boolean> {
+  return (await git(worktree, ['merge', '--ff-only', '--quiet', base], true)).code === 0;
+}
+
 /** Paths git reports as worktrees of this repo, normalised for comparison. */
 async function worktreePaths(repoRoot: string): Promise<Map<string, string | undefined>> {
   const text = await out(repoRoot, ['worktree', 'list', '--porcelain']);
@@ -59,7 +96,7 @@ async function worktreePaths(repoRoot: string): Promise<Map<string, string | und
   return map;
 }
 
-const normalise = (p: string) => resolve(p).replace(/\\/g, '/').toLowerCase();
+export const normalise = (p: string) => resolve(p).replace(/\\/g, '/').toLowerCase();
 
 /** Creates (or reuses) a worktree at `path` on `branch`, branching from `base` when the branch is new. Returns the branch checked out. */
 export async function addWorktree(repoRoot: string, path: string, branch: string, base: string): Promise<string> {
@@ -78,8 +115,7 @@ export async function commitsAhead(cwd: string, base: string, branch: string): P
 
 /** Renames the branch checked out in `worktree`; picks a free name by suffixing -2, -3... */
 export async function renameBranch(worktree: string, from: string, to: string): Promise<string> {
-  let name = to;
-  for (let i = 2; await branchExists(worktree, name); i++) name = `${to}-${i}`;
+  const name = await freeBranchName(worktree, to);
   await git(worktree, ['branch', '-m', from, name]);
   return name;
 }
@@ -90,22 +126,28 @@ export async function diff(repoRoot: string, base: string, branch: string): Prom
   return { stat, diff: full.stdout };
 }
 
-/** Merges `branch` into whatever `worktree` has checked out. Aborts and reports conflicts instead of leaving a half merge. */
-export async function mergeInto(worktree: string, branch: string): Promise<{ ok: boolean; conflicts: string[]; output: string }> {
-  const r = await git(worktree, ['merge', '--no-edit', branch], true);
+/**
+ * Merges `ref` (a branch or commit) into whatever `worktree` has checked out.
+ * Aborts and reports conflicts instead of leaving a half merge.
+ */
+export async function mergeInto(worktree: string, ref: string, message?: string): Promise<{ ok: boolean; conflicts: string[]; output: string }> {
+  const r = await git(worktree, ['merge', '--no-edit', ...(message ? ['-m', message] : []), ref], true);
   if (r.code === 0) return { ok: true, conflicts: [], output: r.stdout.trim() };
   const conflicts = (await git(worktree, ['diff', '--name-only', '--diff-filter=U'], true)).stdout.split(/\r?\n/).filter(Boolean);
   await git(worktree, ['merge', '--abort'], true);
   return { ok: false, conflicts, output: (r.stdout + r.stderr).trim() };
 }
 
-/** `git merge --no-ff` of `branch` into `base` in the main checkout. Throws 409 on a dirty tree or conflicts. */
-export async function mergeToBase(repoRoot: string, base: string, branch: string, message: string): Promise<string> {
+/**
+ * `git merge --no-ff` of `ref` (a branch, or the exact commit that was reviewed) into `base` in the main checkout.
+ * Throws 409 on a dirty tree or conflicts.
+ */
+export async function mergeToBase(repoRoot: string, base: string, ref: string, message: string): Promise<string> {
   const dirty = await out(repoRoot, ['status', '--porcelain', '--untracked-files=no']);
   if (dirty) throw conflict(`The main checkout has uncommitted changes:\n${dirty}`);
-  if (!(await branchExists(repoRoot, branch))) throw conflict(`Branch ${branch} does not exist`);
+  if (!(await revParse(repoRoot, ref))) throw conflict(`${/^[0-9a-f]{40}$/.test(ref) ? 'Commit' : 'Branch'} ${ref} does not exist`);
   await git(repoRoot, ['checkout', base]);
-  const r = await git(repoRoot, ['merge', '--no-ff', branch, '-m', message], true);
+  const r = await git(repoRoot, ['merge', '--no-ff', ref, '-m', message], true);
   if (r.code === 0) return (r.stdout + r.stderr).trim();
   const conflicts = (await git(repoRoot, ['diff', '--name-only', '--diff-filter=U'], true)).stdout.split(/\r?\n/).filter(Boolean);
   await git(repoRoot, ['merge', '--abort'], true);
@@ -116,12 +158,32 @@ export async function isMerged(repoRoot: string, branch: string, base: string): 
   return (await git(repoRoot, ['merge-base', '--is-ancestor', branch, base], true)).code === 0;
 }
 
+/** Worktree paths of the agents recorded in `.muster/state.json` (the folder above `worktreesDir`). */
+function registeredWorktrees(worktreesDir: string): Set<string> {
+  try {
+    const state = JSON.parse(readFileSync(join(dirname(worktreesDir), 'state.json'), 'utf8')) as { agents?: { worktree?: string }[] };
+    return new Set((state.agents ?? []).flatMap((a) => (a.worktree ? [normalise(a.worktree)] : [])));
+  } catch {
+    return new Set();
+  }
+}
+
+export interface CleanOptions {
+  /**
+   * Decides per worktree whether it may go. Default: only worktrees no registered agent uses
+   * (agents are read from .muster/state.json), so a clean never pulls a folder from under a live agent.
+   */
+  mayRemove?: (path: string, branch: string) => boolean;
+}
+
 /** Removes worktrees under `worktreesDir` whose branch is merged into base, then deletes the branch. Returns removed paths. */
-export async function cleanMergedWorktrees(repoRoot: string, worktreesDir: string, base: string): Promise<string[]> {
+export async function cleanMergedWorktrees(repoRoot: string, worktreesDir: string, base: string, opts: CleanOptions = {}): Promise<string[]> {
   const prefix = normalise(worktreesDir) + '/';
+  const registered = opts.mayRemove ? undefined : registeredWorktrees(worktreesDir);
+  const mayRemove = opts.mayRemove ?? ((path: string) => !registered!.has(normalise(path)));
   const removed: string[] = [];
   for (const [path, branch] of await worktreePaths(repoRoot)) {
-    if (!path.startsWith(prefix) || !branch || !(await isMerged(repoRoot, branch, base))) continue;
+    if (!path.startsWith(prefix) || !branch || !mayRemove(path, branch) || !(await isMerged(repoRoot, branch, base))) continue;
     const r = await git(repoRoot, ['worktree', 'remove', path], true);
     if (r.code !== 0) continue;
     await git(repoRoot, ['branch', '-d', branch], true);

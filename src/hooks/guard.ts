@@ -1,4 +1,10 @@
-// Pure PreToolUse decision logic for the muster hook. No I/O here, so it can be unit tested.
+// Pure PreToolUse decision logic for the muster hook. No I/O in decide() (paths are resolved through
+// the injected env.realpath), so it can be unit tested.
+//
+// This is defence in depth and best effort: a shell is too expressive to police by parsing. The hard
+// guarantees come from the git reference-transaction hook (core/refguard.ts: agents can't move the
+// base branch or other agents' branches) and the server's token identities (orchestrator/auth.ts).
+import { existsSync, realpathSync } from 'node:fs';
 import path from 'node:path';
 
 export interface PreToolInput {
@@ -11,10 +17,16 @@ export interface PreToolInput {
 
 export interface GuardEnv {
   role?: string; // MUSTER_ROLE; missing/unknown = not a muster agent, allow everything
+  agentId?: string; // MUSTER_AGENT
   worktree?: string; // MUSTER_WORKTREE
+  repo?: string; // MUSTER_REPO (main checkout; .muster lives here)
   baseBranch?: string; // default "main"
   currentBranch?: string; // branch checked out in the hook's cwd, when known (for `git merge`)
   platform?: NodeJS.Platform; // default process.platform
+  /** Folders no agent may read or touch (the human-token folder). */
+  secretDirs?: string[];
+  /** Maps an absolute path to its real path (junctions and symlinks resolved); see realNearest. */
+  realpath?: (p: string) => string;
 }
 
 export type Decision = { allow: true } | { allow: false; reason: string };
@@ -23,11 +35,17 @@ const ALLOW: Decision = { allow: true };
 const deny = (reason: string): Decision => ({ allow: false, reason });
 
 export const EDIT_TOOLS = new Set(['Edit', 'Write', 'MultiEdit', 'NotebookEdit']);
+export const READ_TOOLS = new Set(['Read', 'Grep', 'Glob', 'NotebookRead']);
+export const SHELL_TOOLS = new Set(['Bash', 'PowerShell']);
 
 const GIT_WRITE = new Set([
   'add', 'am', 'apply', 'branch', 'checkout', 'cherry-pick', 'clean', 'commit', 'merge', 'mv', 'pull',
   'push', 'rebase', 'reset', 'restore', 'revert', 'rm', 'stash', 'switch', 'tag', 'worktree',
+  'update-ref', 'symbolic-ref', 'config', 'fetch', 'replace', 'notes', 'gc', 'prune',
 ]);
+
+// Things in a worktree an agent must not edit: git internals, Claude Code project config, Muster's own files.
+const PROTECTED_IN_WORKTREE = new Set(['.git', '.claude', '.muster', '.mcp.json']);
 
 // ---- paths ----------------------------------------------------------------
 
@@ -46,10 +64,46 @@ export function normalizePath(p: string, base: string, win: boolean): string {
   return path.posix.resolve(base, p).replace(/\/+$/, '') || '/';
 }
 
-export function isInside(target: string, root: string, base: string, win: boolean): boolean {
-  const t = normalizePath(target, base, win);
-  const r = normalizePath(root, root, win);
+function under(t: string, r: string): boolean {
   return t === r || t.startsWith(r.endsWith('/') ? r : r + '/');
+}
+
+export function isInside(target: string, root: string, base: string, win: boolean): boolean {
+  return under(normalizePath(target, base, win), normalizePath(root, root, win));
+}
+
+/**
+ * Real path of `p`: realpath of its nearest existing ancestor plus the rest. Catches a junction or
+ * symlink inside the worktree that points elsewhere (the file itself may not exist yet).
+ */
+export function realNearest(p: string): string {
+  let cur = path.resolve(p);
+  const rest: string[] = [];
+  for (;;) {
+    if (existsSync(cur)) {
+      try {
+        return path.join(realpathSync.native(cur), ...rest.reverse());
+      } catch {
+        return path.resolve(p);
+      }
+    }
+    const parent = path.dirname(cur);
+    if (parent === cur) return path.resolve(p);
+    rest.push(path.basename(cur));
+    cur = parent;
+  }
+}
+
+/** Normalised real path (when env.realpath is set) of `p` resolved against `base`. */
+function realNorm(p: string, base: string, env: GuardEnv): string {
+  const win = isWin(env);
+  const n = normalizePath(p, base, win);
+  if (!env.realpath) return n;
+  try {
+    return normalizePath(env.realpath(n), '/', win);
+  } catch {
+    return n;
+  }
 }
 
 // ---- shell parsing (best effort) --------------------------------------------
@@ -91,7 +145,7 @@ export function splitCommands(cmd: string): string[] {
   return out;
 }
 
-/** Tokenise one simple command (quotes removed). */
+/** Tokenise one simple command (quotes removed). Leading ( { and trailing ) } of subshells/groups are dropped. */
 export function tokenize(cmd: string): string[] {
   const out: string[] = [];
   let cur = '';
@@ -118,56 +172,160 @@ export function tokenize(cmd: string): string[] {
     cur += c;
   }
   if (has || cur) out.push(cur);
+  while (out.length && /^[({]+/.test(out[0])) {
+    out[0] = out[0].replace(/^[({]+/, '');
+    if (!out[0]) out.shift();
+  }
+  while (out.length && /[)}]+$/.test(out[out.length - 1])) {
+    out[out.length - 1] = out[out.length - 1].replace(/[)}]+$/, '');
+    if (!out[out.length - 1]) out.pop();
+  }
   return out;
 }
 
 interface GitCall {
   sub: string;
   args: string[];
+  globals: string[]; // options between `git` and the subcommand
   dir?: string; // from -C
 }
+
+const ASSIGN = /^(?:\$env:)?[A-Za-z_][A-Za-z0-9_]*=/;
 
 /** Parse a simple command as a git invocation, or null. Skips env assignments and git global options. */
 export function parseGit(tokens: string[]): GitCall | null {
   let i = 0;
-  while (i < tokens.length && /^[A-Za-z_][A-Za-z0-9_]*=/.test(tokens[i])) i++;
-  if (tokens[i] === 'sudo' || tokens[i] === 'command' || tokens[i] === 'exec') i++;
+  while (i < tokens.length && ASSIGN.test(tokens[i])) i++;
+  while (['sudo', 'command', 'exec', 'env', '&', 'time', 'nohup', '!'].includes(tokens[i])) i++;
+  while (i < tokens.length && ASSIGN.test(tokens[i])) i++;
   const bin = tokens[i];
   if (!bin || !/(^|[\\/])git(\.exe)?$/i.test(bin)) return null;
   i++;
   let dir: string | undefined;
+  const globals: string[] = [];
   while (i < tokens.length && tokens[i].startsWith('-')) {
     const t = tokens[i];
     if (t === '-C') {
       dir = tokens[i + 1];
       i += 2;
-    } else if (t === '-c' || t === '--git-dir' || t === '--work-tree' || t === '--namespace') {
+    } else if (t === '-c' || t === '--git-dir' || t === '--work-tree' || t === '--namespace' || t === '--exec-path' || t === '--config-env') {
+      globals.push(t, tokens[i + 1] ?? '');
       i += 2;
-    } else i++;
+    } else {
+      globals.push(t);
+      i++;
+    }
   }
   const sub = tokens[i];
   if (!sub) return null;
-  return { sub, args: tokens.slice(i + 1), dir };
+  return { sub, args: tokens.slice(i + 1), globals, dir };
+}
+
+/** Contents of $( ... ) and ` ... ` substitutions (one level, best effort). */
+function substitutions(cmd: string): string[] {
+  const out: string[] = [];
+  for (const m of cmd.matchAll(/\$\(([^()]*)\)/g)) out.push(m[1]);
+  for (const m of cmd.matchAll(/`([^`]*)`/g)) out.push(m[1]);
+  return out;
+}
+
+const NESTED_SHELL = /^(?:.*[\\/])?(bash|sh|zsh|dash|ksh|fish|pwsh|powershell|cmd|wsl)(\.exe)?$/i;
+const GIT_WORD = /(^|[^\w.-])git(\.exe)?([^\w-]|$)/i;
+
+// ---- shell rules shared by every role ---------------------------------------
+
+function slashLower(s: string): string {
+  return s.replace(/\\/g, '/').toLowerCase();
+}
+
+/** Rules that hold for any agent, whatever its role. */
+function commonShell(command: string, env: GuardEnv): Decision {
+  const lower = slashLower(command);
+  for (const d of env.secretDirs ?? []) {
+    const n = slashLower(d).replace(/\/+$/, '');
+    if (n && lower.includes(n)) return deny("That folder holds the human's Muster token; agents may not touch it.");
+  }
+  if (/appdata\/local\/muster|localappdata[^\n]*muster|~\/\.muster\b|\$home\/\.muster\b/i.test(lower))
+    return deny("That folder holds the human's Muster token; agents may not touch it.");
+  if (/\.muster\/agents\b/.test(lower)) return deny("Other agents' Muster config is off limits.");
+  if (/\bMUSTER_\w*\s*=|\bunset\b[^;&|\n]*\bMUSTER_|\benv\b[^;&|\n]*\s(-i|-u|--unset|--ignore-environment)\b|Remove-Item\b[^;&|\n]*env:|SetEnvironmentVariable/i.test(command))
+    return deny('Agents may not change or clear their Muster environment.');
+  if (/(^|[\s;&|(`$])(\$env:)?GIT_(DIR|WORK_TREE|COMMON_DIR|INDEX_FILE|CONFIG\w*|OBJECT_DIRECTORY)\s*=/i.test(command))
+    return deny('Pointing git at another repository or config (GIT_DIR, GIT_WORK_TREE, GIT_CONFIG...) is not allowed.');
+  if (/\bmklink\b|-ItemType\s+(Junction|SymbolicLink|HardLink)|\bln\s+(-\w*s|-\w*\s+-s)/i.test(command))
+    return deny('Agents may not create links or junctions.');
+
+  for (const inner of substitutions(command)) if (GIT_WORD.test(inner)) return deny('git inside a command substitution is not allowed; run it directly.');
+
+  for (const seg of splitCommands(command)) {
+    const tokens = tokenize(seg);
+    let i = 0;
+    while (i < tokens.length && (ASSIGN.test(tokens[i]) || ['&', 'env', 'exec', 'command', 'nohup', 'time'].includes(tokens[i]))) i++;
+    const bin = tokens[i] ?? '';
+    if (NESTED_SHELL.test(bin)) {
+      const rest = tokens.slice(i + 1);
+      if (rest.some((t) => /^-e(nc(odedcommand)?)?$/i.test(t))) return deny('Encoded PowerShell commands are not allowed.');
+      if (rest.some((t) => /^(-c|-command|\/c|\/k|\/r|-lc|-ic)$/i.test(t)) && GIT_WORD.test(rest.join(' ')))
+        return deny(`Run git directly, not through ${bin} -c: the guard checks git commands.`);
+    }
+    if (/^(eval|iex|Invoke-Expression)$/i.test(bin) && GIT_WORD.test(tokens.slice(i + 1).join(' ')))
+      return deny('Run git directly, not through eval.');
+    const git = parseGit(tokens);
+    if (!git) continue;
+    const { sub, args, globals } = git;
+    if (globals.some((g) => /^--(git-dir|work-tree)(=|$)/.test(g))) return deny('git --git-dir/--work-tree is not allowed; work in your own checkout.');
+    if (globals.some((g) => /hookspath/i.test(g)) || globals.includes('--config-env')) return deny('Overriding git hooks is not allowed.');
+    if (sub === 'update-ref' || sub === 'symbolic-ref') return deny(`git ${sub} is not allowed; use normal commits on your own branch.`);
+    if (sub === 'branch' && args.some((a) => a === '-f' || a === '--force' || /^-[a-zA-Z]*[fMC]/.test(a)))
+      return deny('Forcing or overwriting branches (branch -f/-M/-C) is not allowed.');
+    if (sub === 'config' && /hookspath|alias\./i.test(args.join(' '))) return deny('Changing git hooks or aliases is not allowed.');
+    if (sub === 'push' && args.includes('--no-verify')) return deny('git push --no-verify is not allowed.');
+  }
+  return ALLOW;
 }
 
 // ---- decisions -------------------------------------------------------------
 
-function editTarget(input: PreToolInput): string | undefined {
+function toolPath(input: PreToolInput): string | undefined {
   const ti = input.tool_input ?? {};
   const p = ti.file_path ?? ti.notebook_path ?? ti.path;
   return typeof p === 'string' && p ? p : undefined;
 }
 
-function crewBash(command: string, env: GuardEnv, cwd: string): Decision {
+/** Reads of the token folder or of other agents' config folders (their tokens are in mcp.json). */
+function secretRead(target: string, base: string, env: GuardEnv): Decision {
+  const win = isWin(env);
+  const t = realNorm(target, base, env);
+  for (const d of env.secretDirs ?? []) if (under(t, normalizePath(d, d, win))) return deny("That folder holds the human's Muster token; agents may not read it.");
+  if (env.repo) {
+    const agents = normalizePath(path.join(env.repo, '.muster', 'agents'), env.repo, win);
+    const own = env.agentId ? `${agents}/${win ? env.agentId.toLowerCase() : env.agentId}` : undefined;
+    if (under(t, agents) && !(own && under(t, own))) return deny("Other agents' Muster config is off limits.");
+  }
+  return ALLOW;
+}
+
+function crewEdit(target: string, cwd: string, env: GuardEnv): Decision {
+  const wt = env.worktree!;
+  const t = realNorm(target, cwd, env);
+  const root = realNorm(wt, wt, env);
+  if (!under(t, root)) return deny(`${target} is outside your worktree (${wt}). Only edit files inside your worktree; message the owning crew instead.`);
+  const first = t.slice(root.length).replace(/^\/+/, '').split('/')[0];
+  if (PROTECTED_IN_WORKTREE.has(first)) return deny(`${first} is Muster/Claude/git configuration; agents may not edit it.`);
+  return ALLOW;
+}
+
+function crewShell(command: string, env: GuardEnv, cwd: string): Decision {
   const win = isWin(env);
   const base = env.baseBranch || 'main';
   const wt = env.worktree;
   let dir = cwd;
   for (const seg of splitCommands(command)) {
     const tokens = tokenize(seg);
-    if (tokens[0] === 'cd' || tokens[0] === 'pushd' || tokens[0] === 'Set-Location') {
-      const to = tokens[1];
+    if (/^(cd|pushd|chdir|Set-Location|sl|Push-Location)$/i.test(tokens[0] ?? '')) {
+      const to = tokens.slice(1).find((t) => !t.startsWith('-'));
       if (to && to !== '-' && !to.startsWith('~')) dir = normalizePath(to, dir, win);
+      else if (to?.startsWith('~')) dir = '~';
       continue;
     }
     const git = parseGit(tokens);
@@ -182,20 +340,36 @@ function crewBash(command: string, env: GuardEnv, cwd: string): Decision {
       return deny(`Crew never check out ${base}. Stay on your own branch in your worktree.`);
     if (sub === 'merge' && env.currentBranch && env.currentBranch === base)
       return deny(`Crew never merge into ${base}; only the human merges after review.`);
-    const gitDir = git.dir ? normalizePath(git.dir, dir, win) : dir;
-    if (wt && GIT_WRITE.has(sub) && !isInside(gitDir, wt, gitDir, win))
+    const gitDir = git.dir ? (dir === '~' ? '~' : normalizePath(git.dir, dir, win)) : dir;
+    if (wt && GIT_WRITE.has(sub) && (gitDir === '~' || !isInside(gitDir, wt, gitDir, win)))
       return deny(`git ${sub} outside your worktree (${wt}) is not allowed. Work only in your worktree.`);
   }
   return ALLOW;
 }
 
-function captainBash(command: string): Decision {
+const CAPTAIN_GIT_DENY: Record<string, string> = {
+  merge: 'The Captain never merges: call request_review and the human runs `muster merge`.',
+  push: 'The Captain never pushes.',
+  commit: "The Captain doesn't commit code: post_task or assign it to crew.",
+  pull: 'The Captain never pulls into the base branch; the human does.',
+  reset: 'The Captain never resets branches.',
+  rebase: 'The Captain never rebases.',
+  'cherry-pick': "The Captain doesn't commit code: post_task or assign it to crew.",
+  am: "The Captain doesn't commit code: post_task or assign it to crew.",
+  revert: "The Captain doesn't commit code: post_task or assign it to crew.",
+  worktree: 'Muster owns the worktrees.',
+};
+
+function captainShell(command: string): Decision {
   for (const seg of splitCommands(command)) {
     const git = parseGit(tokenize(seg));
     if (!git) continue;
-    if (git.sub === 'merge') return deny('The Captain never merges: call request_review and the human runs `muster merge`.');
-    if (git.sub === 'push') return deny('The Captain never pushes.');
-    if (git.sub === 'commit') return deny("The Captain doesn't commit code: post_task or assign it to crew.");
+    const why = CAPTAIN_GIT_DENY[git.sub];
+    if (why) return deny(why);
+    if ((git.sub === 'checkout' && git.args.some((a) => /^-[a-zA-Z]*B/.test(a))) || (git.sub === 'switch' && git.args.some((a) => /^-[a-zA-Z]*C$|^--force-create$/.test(a))))
+      return deny('The Captain never resets branches (checkout -B / switch -C).');
+    if (git.sub === 'branch' && git.args.some((a) => /^-[a-zA-Z]*[dDmM]/.test(a) || a === '--delete' || a === '--move'))
+      return deny('The Captain never deletes or renames branches.');
   }
   return ALLOW;
 }
@@ -204,23 +378,26 @@ export function decide(input: PreToolInput, env: GuardEnv): Decision {
   const role = env.role;
   const tool = input.tool_name ?? '';
   if (role !== 'captain' && role !== 'crew' && role !== 'design') return ALLOW;
-
-  if (role === 'captain') {
-    if (EDIT_TOOLS.has(tool)) return deny("The Captain doesn't write code: post_task or assign it to crew");
-    if (tool === 'Bash') return captainBash(String(input.tool_input?.command ?? ''));
-    return ALLOW;
-  }
-
-  // crew / design
   const cwd = input.cwd || env.worktree || process.cwd();
-  if (EDIT_TOOLS.has(tool)) {
-    const target = editTarget(input);
-    if (!target || !env.worktree) return ALLOW;
-    if (!isInside(target, env.worktree, cwd, isWin(env)))
-      return deny(`${target} is outside your worktree (${env.worktree}). Only edit files inside your worktree; message the owning crew instead.`);
-    return ALLOW;
+
+  if (READ_TOOLS.has(tool)) {
+    const target = toolPath(input);
+    return target ? secretRead(target, cwd, env) : ALLOW;
   }
-  if (tool === 'Bash') return crewBash(String(input.tool_input?.command ?? ''), env, cwd);
+
+  if (SHELL_TOOLS.has(tool)) {
+    const command = String(input.tool_input?.command ?? '');
+    const common = commonShell(command, env);
+    if (!common.allow) return common;
+    return role === 'captain' ? captainShell(command) : crewShell(command, env, cwd);
+  }
+
+  if (EDIT_TOOLS.has(tool)) {
+    if (role === 'captain') return deny("The Captain doesn't write code: post_task or assign it to crew");
+    const target = toolPath(input);
+    if (!target || !env.worktree) return ALLOW;
+    return crewEdit(target, cwd, env);
+  }
   return ALLOW;
 }
 

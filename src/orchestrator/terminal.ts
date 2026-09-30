@@ -1,5 +1,6 @@
 // PTY abstraction, output ring buffer and ANSI stripping.
 import * as pty from 'node-pty';
+import { ptyArgs } from '../core/claude.js';
 import { killTree } from '../core/git.js';
 
 export interface PtyProcess {
@@ -22,7 +23,7 @@ export interface PtySpawnOptions {
 export type PtyLauncher = (file: string, args: string[], opts: PtySpawnOptions) => PtyProcess;
 
 export const nodePtyLauncher: PtyLauncher = (file, args, opts) => {
-  const p = pty.spawn(file, args, { name: 'xterm-256color', ...opts });
+  const p = pty.spawn(file, ptyArgs(file, args), { name: 'xterm-256color', ...opts });
   return {
     pid: p.pid,
     onData: (cb) => void p.onData(cb),

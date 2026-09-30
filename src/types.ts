@@ -54,10 +54,20 @@ export interface Task {
   status: TaskStatus;
   assignee?: string; // agent id
   branch?: string; // branch that currently carries the work
+  reviewedSha?: string; // head commit of `branch` when the Captain requested review; merge merges exactly this commit
+  inputs?: TaskBranchInput[]; // commits the task branch must contain (earlier stations, dependencies); checked before done/review
   createdBy: string;
   createdAt: string;
   updatedAt: string;
   history: TaskEvent[];
+}
+
+/** Work a task branch has to contain: the branch of an earlier station, or a dependency's reviewed commit. */
+export interface TaskBranchInput {
+  branch: string;
+  sha: string;
+  kind: 'station' | 'dependency';
+  taskId?: string; // the dependency's task id
 }
 
 export type NoteType =
@@ -196,9 +206,7 @@ export const DEFAULT_CONFIG: MusterConfig = {
   permissionMode: 'auto',
   notify: true,
   allowedTools: [
-    'Bash(npm *)',
-    'Bash(npx *)',
-    'Bash(node *)',
+    'Bash(npm *)', // no Bash(node *) / Bash(npx *): either runs arbitrary code without a prompt
     'Bash(git status*)',
     'Bash(git diff*)',
     'Bash(git log*)',

@@ -4,7 +4,8 @@ import { execFileSync } from 'node:child_process';
 import { readFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { musterFetch } from '../client.js';
-import { decide, denyOutput, type PreToolInput } from './guard.js';
+import { secretsBase } from '../core/tokens.js';
+import { decide, denyOutput, realNearest, SHELL_TOOLS, type GuardEnv, type PreToolInput } from './guard.js';
 
 const EVENTS = new Set(['prompt', 'stop', 'notification', 'session-start']);
 
@@ -77,11 +78,15 @@ async function main(): Promise<void> {
   if (event === 'pre-tool') {
     const pre = input as PreToolInput;
     const cmd = String(pre.tool_input?.command ?? '');
-    const env = {
+    const env: GuardEnv = {
       role: process.env.MUSTER_ROLE,
+      agentId: process.env.MUSTER_AGENT,
       worktree: process.env.MUSTER_WORKTREE,
+      repo: process.env.MUSTER_REPO,
       baseBranch: baseBranch(),
-      currentBranch: pre.tool_name === 'Bash' && /\bgit\b[^;&|]*\bmerge\b/.test(cmd) ? currentBranch(pre.cwd) : undefined,
+      secretDirs: [secretsBase()],
+      realpath: realNearest,
+      currentBranch: SHELL_TOOLS.has(pre.tool_name ?? '') && /\bgit\b[^;&|]*\bmerge\b/.test(cmd) ? currentBranch(pre.cwd) : undefined,
     };
     const d = decide(pre, env);
     if (!d.allow) await new Promise<void>((r) => process.stdout.write(denyOutput(d.reason) + '\n', () => r()));

@@ -10,6 +10,7 @@ import type { Store } from '../core/store.js';
 import * as tasks from '../core/tasks.js';
 import { applyUsage, refreshGuard, type RawUsage } from '../core/usage.js';
 import type { AgentManager } from './agents.js';
+import { applyIdentity, forbiddenReason, type Caller } from './auth.js';
 
 export interface ApiContext {
   store: Store;
@@ -76,7 +77,7 @@ export function createApi(ctx: ApiContext) {
     if (!agent) return;
     await agents.syncTaskBranch(agent, task);
     store.commit();
-    if (!agents.isRunning(agent.id) && agent.role !== 'captain') agents.start(agent.id);
+    if (!agents.isRunning(agent.id) && agent.role !== 'captain') await agents.start(agent.id);
   };
 
   // ------------------------------------------------------------------ state
@@ -106,7 +107,7 @@ export function createApi(ctx: ApiContext) {
   });
   route('POST', '/api/agents/:id/input', async ({ params, body }) => {
     if (typeof body.text !== 'string') throw badRequest('Missing text');
-    await agents.type(agentOf(params.id).id, body.text, Boolean(body.submit));
+    await agents.type(agentOf(params.id).id, body.text, Boolean(body.submit), { human: true });
     return { ok: true };
   });
   route('GET', '/api/agents/:id/output', ({ params, query }) => ({ text: agents.output(agentOf(params.id).id, Number(query.get('lines')) || 80) }));
@@ -143,7 +144,17 @@ export function createApi(ctx: ApiContext) {
     }
     const branch = task?.branch ?? wanted;
     const base = ctx.config().baseBranch;
-    const output = await gitOps.mergeToBase(ctx.paths.root, base, branch, `Merge ${branch}${task ? ` (${task.id} ${task.title})` : ''}`);
+    // Merge exactly the commit the Captain reviewed; a branch that moved since needs a new review.
+    let ref = branch;
+    if (task?.reviewedSha && !body.force) {
+      const head = await gitOps.revParse(ctx.paths.root, branch);
+      if (head && head !== task.reviewedSha) {
+        const who = s.agents.find((a) => a.branch === branch && a.role !== 'captain')?.id ?? `Someone`;
+        throw conflict(`${who} committed after review (${branch} is at ${head.slice(0, 8)}, the Captain reviewed ${task.reviewedSha.slice(0, 8)}); ask the Captain to re-review`);
+      }
+      ref = task.reviewedSha;
+    }
+    const output = await gitOps.mergeToBase(ctx.paths.root, base, ref, `Merge ${branch}${task ? ` (${task.id} ${task.title})` : ''}`);
     mutate(() => (task ? tasks.markMerged(s, task, board.HUMAN) : board.feedEvent(s, board.HUMAN, `merged ${branch}`)));
     return { ok: true, output };
   });
@@ -165,6 +176,7 @@ export function createApi(ctx: ApiContext) {
   // ------------------------------------------------------------------ tasks
   route('GET', '/api/tasks', () => state().tasks);
   route('POST', '/api/tasks', async ({ body }) => {
+    if (body.assignee) await agents.assertCanTakeBranch(body.assignee);
     const task = mutate(() =>
       tasks.createTask(state(), ctx.config(), {
         title: str(body.title, 'title'),
@@ -179,28 +191,42 @@ export function createApi(ctx: ApiContext) {
     return task;
   });
   route('POST', '/api/tasks/claim', async ({ body }) => {
+    const claimer = board.findAgent(state(), body.actor);
+    if (claimer) await agents.assertCanTakeBranch(claimer.id, tasks.nextClaimable(state(), claimer));
     const task = mutate(() => tasks.claimTask(state(), str(body.actor, 'actor')));
     if (task) await afterTake(board.findAgent(state(), body.actor), task);
     return task;
   });
   route('POST', '/api/tasks/:id/assign', async ({ params, body }) => {
+    await agents.assertCanTakeBranch(body.agentId, tasks.requireTask(state(), params.id));
     const task = mutate(() => tasks.assignTask(state(), params.id, str(body.agentId, 'agentId'), str(body.actor, 'actor')));
     await afterTake(board.findAgent(state(), body.agentId), task);
     return task;
   });
   route('POST', '/api/tasks/:id/handoff', async ({ params, body }) => {
-    const r = mutate(() => tasks.handoffTask(state(), params.id, str(body.actor, 'actor'), body.to || undefined, body.note ?? ''));
+    const current = tasks.requireTask(state(), params.id);
+    const from = await agents.stationBranch(current); // 409 unless it contains the earlier stations' work
+    if (body.to) await agents.assertCanTakeBranch(body.to, current);
+    const r = mutate(() => tasks.handoffTask(state(), params.id, str(body.actor, 'actor'), body.to || undefined, body.note ?? '', from));
     if (r.receiver) await afterTake(r.receiver, r.task);
     return r.task;
   });
-  route('POST', '/api/tasks/:id/done', ({ params, body }) => mutate(() => tasks.doneTask(state(), params.id, str(body.actor, 'actor'), body.summary ?? '')));
-  route('POST', '/api/tasks/:id/review', ({ params, body }) => {
-    const { task, note } = mutate(() => tasks.requestReview(state(), params.id, str(body.actor, 'actor'), body.summary ?? ''));
+  route('POST', '/api/tasks/:id/done', async ({ params, body }) => {
+    const from = await agents.stationBranch(tasks.requireTask(state(), params.id));
+    return mutate(() => tasks.doneTask(state(), params.id, str(body.actor, 'actor'), body.summary ?? '', from));
+  });
+  route('POST', '/api/tasks/:id/review', async ({ params, body }) => {
+    const reviewed = await agents.stationBranch(tasks.requireTask(state(), params.id)); // records the commit the merge will take
+    const { task, note } = mutate(() => tasks.requestReview(state(), params.id, str(body.actor, 'actor'), body.summary ?? '', reviewed));
+    await agents.syncDependents(task.id);
+    store.commit();
     ctx.notify('Muster: ready for review', note.text);
     ctx.toast('info', note.text);
     return task;
   });
   route('POST', '/api/tasks/:id/sendback', async ({ params, body }) => {
+    const current = tasks.requireTask(state(), params.id);
+    await agents.assertCanTakeBranch(tasks.builderOf(state(), current)?.id, current);
     const task = mutate(() => tasks.sendBack(state(), params.id, str(body.actor, 'actor'), body.note ?? ''));
     if (task.assignee) await afterTake(board.findAgent(state(), task.assignee), task);
     return task;
@@ -252,7 +278,8 @@ export function createApi(ctx: ApiContext) {
   });
   route('GET', '/api/usage', () => state().usage); // UsageState already carries `paused`
 
-  return async function handle(req: IncomingMessage, res: ServerResponse, url: URL): Promise<void> {
+  /** `caller` is resolved from the token by the server; it decides what may run and overwrites body.actor. */
+  return async function handle(req: IncomingMessage, res: ServerResponse, url: URL, caller: Caller): Promise<void> {
     try {
       const path = url.pathname.replace(/\/+$/, '') || '/';
       const candidates = routes.filter((r) => r.pattern.test(path));
@@ -261,7 +288,10 @@ export function createApi(ctx: ApiContext) {
       if (!r) throw new HttpError(405, `${req.method} not allowed on ${path}`);
       const m = r.pattern.exec(path)!;
       const params = Object.fromEntries(r.keys.map((k, i) => [k, decodeURIComponent(m[i + 1])]));
+      const denied = forbiddenReason(caller, req.method ?? 'GET', path);
+      if (denied) throw forbidden(denied);
       const body = req.method === 'GET' || req.method === 'HEAD' ? {} : await readBody(req);
+      if (req.method !== 'GET' && req.method !== 'HEAD') applyIdentity(caller, path, body);
       sendJson(res, 200, (await r.handler({ params, query: url.searchParams, body })) ?? null);
     } catch (e) {
       const status = e instanceof HttpError ? e.status : 500;

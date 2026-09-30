@@ -251,6 +251,17 @@ export function createMusterServer(opts: MusterServerOptions): McpServer {
       },
     );
 
+    /** The answer came back as the tool result, so its inbox item must not be nudged or listed again. */
+    const markRepliesRead = async (noteId: string) => {
+      try {
+        const items = await api<InboxItem[]>(`/api/inbox/${enc(me)}?unread=1`);
+        const ids = (Array.isArray(items) ? items : []).filter((i) => i.noteId === noteId && i.kind === 'reply').map((i) => i.id);
+        if (ids.length) await api(`/api/inbox/${enc(me)}/read`, { method: 'POST', body: { ids } });
+      } catch {
+        /* best effort: at worst the reply shows up in read_inbox too */
+      }
+    };
+
     tool(
       'ask_captain',
       'Post a question note and wait up to 10 minutes for the first reply (crew may answer too). Ask other crew first when they own the area.',
@@ -269,7 +280,10 @@ export function createMusterServer(opts: MusterServerOptions): McpServer {
           const cur = notes.find((x) => x.id === n.id);
           if (!cur) continue;
           const r = cur.replies?.find((x) => x.from !== me);
-          if (r) return `${r.from} answered ${n.id}: ${r.text}`;
+          if (r) {
+            await markRepliesRead(n.id);
+            return `${r.from} answered ${n.id}: ${r.text}`;
+          }
           if (!cur.open) return `${n.id} was closed without an answer. Carry on with your best judgement.`;
         }
         return `No answer yet on ${n.id} — carry on with other work; the answer will arrive in your inbox.`;

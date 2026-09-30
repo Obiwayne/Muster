@@ -110,14 +110,15 @@ export async function showDiffModal(agentId: string, branch?: string): Promise<v
 
 // ---- merge ----
 export async function mergeTask(state: MusterState, task: Task): Promise<boolean> {
-  const owner = branchOwnerId(state, task);
+  // The route needs an agent id, but the task id decides what is merged; any agent will do.
+  const owner = [branchOwnerId(state, task), state.agents.find((a) => a.role === 'captain')?.id].find((id) => id && state.agents.some((a) => a.id === id));
   if (!owner) { toast(`No agent found for ${task.branch ?? task.id}`, 'error'); return false; }
   const ok = await confirmDialog(
     `Merge ${task.branch ?? task.id} into ${events.snapshot?.config.baseBranch ?? 'main'}?`,
     `${task.id} ${task.title}. The Captain has reviewed it. Muster runs git merge --no-ff in the repo root; on a conflict the merge is aborted and nothing changes.`,
     'Merge into main', 'merge');
   if (!ok) return false;
-  const r = await run(api.merge(owner));
+  const r = await run(api.merge(owner, task.id));
   if (r) toast(`Merged ${task.branch ?? task.id}`);
   return !!r;
 }
