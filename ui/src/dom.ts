@@ -1,0 +1,283 @@
+// Tiny DOM helpers: h() builds elements, icon() returns an inline SVG, plus menus,
+// popovers, modals and toasts. No framework.
+
+export type Child = Node | string | number | null | undefined | false | Child[];
+type Handler = (ev: any) => void;
+export interface Props {
+  class?: string | false | null | (string | false | null | undefined)[];
+  style?: string | Record<string, string | number | undefined>;
+  [key: string]: unknown;
+}
+
+/** h('div.a.b', { onclick, title }, ...children) */
+export function h(tag: string, props?: Props | null, ...children: Child[]): HTMLElement {
+  const [name, ...classes] = tag.split('.');
+  const el = document.createElement(name || 'div');
+  if (classes.length) el.className = classes.join(' ');
+  if (props) {
+    for (const [k, v] of Object.entries(props)) {
+      if (v === undefined || v === null || v === false) continue;
+      if (k === 'class') {
+        const extra = Array.isArray(v) ? v.filter(Boolean).join(' ') : String(v);
+        if (extra) el.className = el.className ? `${el.className} ${extra}` : extra;
+      } else if (k === 'style') {
+        if (typeof v === 'string') el.style.cssText = v;
+        else for (const [sk, sv] of Object.entries(v as Record<string, unknown>)) {
+          if (sv !== undefined) el.style.setProperty(sk.startsWith('--') ? sk : sk.replace(/[A-Z]/g, (m) => '-' + m.toLowerCase()), String(sv));
+        }
+      } else if (k.startsWith('on') && typeof v === 'function') {
+        el.addEventListener(k.slice(2).toLowerCase(), v as Handler);
+      } else if (k === 'dataset') {
+        Object.assign(el.dataset, v);
+      } else if (k in el && k !== 'list' && typeof v !== 'string') {
+        (el as any)[k] = v;
+      } else if (k === 'value' || k === 'checked' || k === 'disabled' || k === 'hidden') {
+        (el as any)[k] = v;
+      } else {
+        el.setAttribute(k, v === true ? '' : String(v));
+      }
+    }
+  }
+  append(el, children);
+  return el;
+}
+
+export function append(el: Node, children: Child[]): void {
+  for (const c of children) {
+    if (c === null || c === undefined || c === false) continue;
+    if (Array.isArray(c)) append(el, c);
+    else el.appendChild(typeof c === 'object' ? c : document.createTextNode(String(c)));
+  }
+}
+
+export function setChildren(el: Element, ...children: Child[]): void {
+  const frag = document.createDocumentFragment();
+  append(frag, children);
+  el.replaceChildren(frag);
+}
+
+// ---- icons (paths from the design exports; stroke = currentColor) ----
+const ICONS: Record<string, string> = {
+  grid: '<rect x="3" y="3" width="7" height="7" rx="1"/><rect x="14" y="3" width="7" height="7" rx="1"/><rect x="3" y="14" width="7" height="7" rx="1"/><rect x="14" y="14" width="7" height="7" rx="1"/>',
+  pin: '<path d="M12 17v5"/><path d="M9 10.76a2 2 0 0 1-1.11 1.79l-1.78.9A2 2 0 0 0 5 15.24V16a1 1 0 0 0 1 1h12a1 1 0 0 0 1-1v-.76a2 2 0 0 0-1.11-1.79l-1.78-.9A2 2 0 0 1 15 10.76V7a1 1 0 0 1 1-1 2 2 0 0 0 0-4H8a2 2 0 0 0 0 4 1 1 0 0 1 1 1z"/>',
+  chat: '<path d="M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z"/>',
+  tasks: '<path d="M9 11l3 3L22 4"/><path d="M21 12v7a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h11"/>',
+  branch: '<circle cx="6" cy="6" r="3"/><circle cx="6" cy="18" r="3"/><circle cx="18" cy="8" r="3"/><path d="M6 9v6M18 11c0 4-6 3-12 4"/>',
+  pen: '<path d="M12 19l7-7 3 3-7 7-3-3z"/><path d="M18 13l-1.5-7.5L2 2l3.5 14.5L13 18l5-5z"/><circle cx="11" cy="11" r="2"/>',
+  settings: '<circle cx="12" cy="12" r="3"/><path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 1 1-2.83 2.83l-.06-.06a1.65 1.65 0 0 0-2.82 1.17V21a2 2 0 1 1-4 0v-.09A1.65 1.65 0 0 0 7 19.4a1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 1 1-2.83-2.83l.06-.06A1.65 1.65 0 0 0 3.6 15a1.65 1.65 0 0 0-1.51-1H2a2 2 0 1 1 0-4h.09A1.65 1.65 0 0 0 3.6 9a1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 1 1 2.83-2.83l.06.06A1.65 1.65 0 0 0 9 4.6 1.65 1.65 0 0 0 10 3.09V3a2 2 0 1 1 4 0v.09A1.65 1.65 0 0 0 15 4.6a1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 1 1 2.83 2.83l-.06.06A1.65 1.65 0 0 0 19.4 9c.26.6.85 1 1.51 1H21a2 2 0 1 1 0 4h-.09a1.65 1.65 0 0 0-1.51 1z"/>',
+  plus: '<path d="M12 5v14M5 12h14"/>',
+  check: '<path d="M20 6L9 17l-5-5"/>',
+  chevron: '<path d="M6 9l6 6 6-6"/>',
+  users: '<path d="M17 21v-2a4 4 0 0 0-4-4H5a4 4 0 0 0-4 4v2"/><circle cx="9" cy="7" r="4"/><path d="M23 21v-2a4 4 0 0 0-3-3.87M16 3.13a4 4 0 0 1 0 7.75"/>',
+  alert: '<circle cx="12" cy="12" r="10"/><path d="M12 8v4M12 16h.01"/>',
+  circle: '<circle cx="12" cy="12" r="9"/>',
+  x: '<path d="M18 6L6 18M6 6l12 12"/>',
+  terminal: '<path d="M4 17l6-6-6-6M12 19h8"/>',
+  down: '<path d="M12 5v14M19 12l-7 7-7-7"/>',
+};
+
+export function icon(name: string, size = 16, strokeWidth = 2): SVGSVGElement {
+  const t = document.createElement('template');
+  if (name === 'more') {
+    t.innerHTML = `<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="currentColor" width="${size}" height="${size}"><circle cx="5" cy="12" r="1.6"/><circle cx="12" cy="12" r="1.6"/><circle cx="19" cy="12" r="1.6"/></svg>`;
+  } else {
+    t.innerHTML = `<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="${strokeWidth}" stroke-linecap="round" stroke-linejoin="round" width="${size}" height="${size}">${ICONS[name] ?? ''}</svg>`;
+  }
+  return t.content.firstElementChild as SVGSVGElement;
+}
+
+export function logo(size = 26): SVGSVGElement {
+  const t = document.createElement('template');
+  t.innerHTML = `<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" width="${size}" height="${size}"><rect x="2" y="2" width="9" height="9" rx="2.5" fill="#F5A524"/><rect x="13" y="2" width="9" height="9" rx="2.5" fill="#2DD4BF"/><rect x="2" y="13" width="9" height="9" rx="2.5" fill="#2DD4BF"/><rect x="13" y="13" width="9" height="9" rx="2.5" fill="#A78BFA"/></svg>`;
+  return t.content.firstElementChild as SVGSVGElement;
+}
+
+// ---- floating layers (one menu/popover at a time) ----
+let floating: { el: HTMLElement; close: () => void } | null = null;
+
+export function closeFloating(): void {
+  if (floating) {
+    const f = floating;
+    floating = null;
+    f.close();
+  }
+}
+
+function placeFloating(el: HTMLElement, x: number, y: number, align: 'left' | 'right' = 'left'): void {
+  el.style.visibility = 'hidden';
+  document.body.appendChild(el);
+  const r = el.getBoundingClientRect();
+  let left = align === 'right' ? x - r.width : x;
+  let top = y;
+  left = Math.max(8, Math.min(left, window.innerWidth - r.width - 8));
+  if (top + r.height > window.innerHeight - 8) top = Math.max(8, y - r.height - 8);
+  el.style.left = `${left}px`;
+  el.style.top = `${top}px`;
+  el.style.visibility = '';
+}
+
+function openFloating(el: HTMLElement, x: number, y: number, align: 'left' | 'right'): () => void {
+  closeFloating();
+  placeFloating(el, x, y, align);
+  const onDown = (e: MouseEvent) => { if (!el.contains(e.target as Node)) closeFloating(); };
+  const onKey = (e: KeyboardEvent) => { if (e.key === 'Escape') closeFloating(); };
+  const close = () => {
+    el.remove();
+    document.removeEventListener('mousedown', onDown, true);
+    document.removeEventListener('keydown', onKey, true);
+    window.removeEventListener('resize', closeFloating);
+    window.removeEventListener('hashchange', closeFloating);
+  };
+  setTimeout(() => {
+    document.addEventListener('mousedown', onDown, true);
+    document.addEventListener('keydown', onKey, true);
+    window.addEventListener('resize', closeFloating);
+    window.addEventListener('hashchange', closeFloating);
+  });
+  floating = { el, close };
+  return closeFloating;
+}
+
+export interface MenuItem {
+  label: string;
+  role?: string; // role colour dot
+  current?: boolean;
+  tone?: 'muted' | 'danger';
+  disabled?: boolean;
+  onClick: () => void;
+}
+
+export function showMenu(items: (MenuItem | 'sep')[], x: number, y: number, align: 'left' | 'right' = 'left'): void {
+  const el = h('div.menu', { role: 'menu' },
+    items.map((it) => it === 'sep'
+      ? h('div.menu-sep')
+      : h('button.menu-item', {
+          class: [it.role && `r-${it.role}`, it.current && 'current', it.tone],
+          disabled: it.disabled,
+          onclick: () => { closeFloating(); it.onClick(); },
+        },
+        it.role ? h('span.dot') : h('span.pad'),
+        h('span.flex1', { style: 'text-align:left' }, it.label),
+        it.current ? h('span.check', null, icon('check', 14, 2.5)) : null,
+      )),
+  );
+  el.addEventListener('contextmenu', (e) => e.preventDefault());
+  openFloating(el, x, y, align);
+}
+
+/** A popover anchored under an element. Returns a close function. */
+export function showPopover(anchor: HTMLElement, content: HTMLElement, align: 'left' | 'right' = 'right'): () => void {
+  const r = anchor.getBoundingClientRect();
+  const el = h('div.popover', null, content);
+  return openFloating(el, align === 'right' ? r.right : r.left, r.bottom + 8, align);
+}
+
+export interface ModalOpts {
+  title: string | Node;
+  body?: Child;
+  wide?: boolean;
+  actions?: { label: string; kind?: string; onClick: (close: () => void) => void | Promise<void>; disabled?: boolean }[];
+  cancelLabel?: string | null;
+  onClose?: () => void;
+}
+
+export function showModal(opts: ModalOpts): () => void {
+  closeFloating();
+  let closed = false;
+  const close = () => {
+    if (closed) return;
+    closed = true;
+    back.remove();
+    document.removeEventListener('keydown', onKey, true);
+    window.removeEventListener('hashchange', close);
+    opts.onClose?.();
+  };
+  const onKey = (e: KeyboardEvent) => { if (e.key === 'Escape') { e.stopPropagation(); close(); } };
+  const actions = opts.actions ?? [];
+  const foot = (actions.length || opts.cancelLabel !== null)
+    ? h('div.modal-foot', null,
+        opts.cancelLabel !== null ? h('button.btn.lg', { onclick: close }, opts.cancelLabel ?? 'Cancel') : null,
+        actions.map((a) => {
+          const b = h('button.btn.lg', { class: a.kind, disabled: a.disabled }, a.label) as HTMLButtonElement;
+          b.onclick = async () => {
+            b.disabled = true;
+            try { await a.onClick(close); } finally { b.disabled = false; }
+          };
+          return b;
+        }))
+    : null;
+  const modal = h('div.modal', { class: opts.wide && 'wide', role: 'dialog' },
+    h('div.modal-head', null,
+      h('div.modal-title', null, opts.title),
+      h('button.icon-btn', { onclick: close, title: 'Close' }, icon('x', 14)),
+    ),
+    opts.body !== undefined ? (opts.wide ? opts.body : h('div.modal-body', null, opts.body)) : null,
+    foot,
+  );
+  const back = h('div.modal-back', { onmousedown: (e: MouseEvent) => { if (e.target === back) close(); } }, modal);
+  document.body.appendChild(back);
+  document.addEventListener('keydown', onKey, true);
+  window.addEventListener('hashchange', close);
+  const first = modal.querySelector<HTMLElement>('input, textarea, select');
+  first?.focus();
+  return close;
+}
+
+export function confirmDialog(title: string, text: string, okLabel: string, kind = 'primary'): Promise<boolean> {
+  return new Promise((resolve) => {
+    let ok = false;
+    showModal({
+      title,
+      body: h('p', null, text),
+      actions: [{ label: okLabel, kind, onClick: (close) => { ok = true; close(); } }],
+      onClose: () => resolve(ok),
+    });
+  });
+}
+
+export function promptDialog(title: string, text: string, okLabel: string, placeholder = ''): Promise<string | null> {
+  return new Promise((resolve) => {
+    let val: string | null = null;
+    const input = h('textarea.field', { rows: 3, placeholder }) as HTMLTextAreaElement;
+    showModal({
+      title,
+      body: [h('p', null, text), input],
+      actions: [{ label: okLabel, kind: 'primary', onClick: (close) => { if (!input.value.trim()) return; val = input.value.trim(); close(); } }],
+      onClose: () => resolve(val),
+    });
+  });
+}
+
+// ---- toasts ----
+let toastHost: HTMLElement | null = null;
+export function toast(text: string, level: 'info' | 'warn' | 'error' = 'info', ms = 4000): void {
+  if (!toastHost) {
+    toastHost = h('div.toasts');
+    document.body.appendChild(toastHost);
+  }
+  const el = h('div.toast', { class: level }, h('span.dot'), h('div', null, text));
+  toastHost.appendChild(el);
+  while (toastHost.children.length > 5) toastHost.firstElementChild?.remove();
+  setTimeout(() => {
+    el.classList.add('out');
+    setTimeout(() => el.remove(), 220);
+  }, level === 'info' ? ms : ms + 3000);
+}
+
+export function toggle(on: boolean, onChange: (v: boolean) => void, small = false): HTMLElement {
+  const el = h('button.toggle', { class: [on && 'on', small && 'sm'], role: 'switch', 'aria-checked': String(on) }, h('span.knob'));
+  el.onclick = () => {
+    const v = !el.classList.contains('on');
+    el.classList.toggle('on', v);
+    el.setAttribute('aria-checked', String(v));
+    onChange(v);
+  };
+  return el;
+}
+
+export function select(options: { value: string; label: string }[], value: string, onChange: (v: string) => void): HTMLElement {
+  const sel = h('select', { onchange: (e: Event) => onChange((e.target as HTMLSelectElement).value) },
+    options.map((o) => h('option', { value: o.value, selected: o.value === value }, o.label))) as HTMLSelectElement;
+  sel.value = value;
+  return h('div.select-wrap', null, sel, icon('chevron', 12, 2.5));
+}
