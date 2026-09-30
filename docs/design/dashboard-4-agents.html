@@ -1,0 +1,277 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>Dashboard — 4 agents</title>
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Geist:ital,wght@0,100;0,200;0,300;0,400;0,500;0,600;0,700;0,800;0,900;1,100;1,200;1,300;1,400;1,500;1,600;1,700;1,800;1,900&family=Geist+Mono:ital,wght@0,100;0,200;0,300;0,400;0,500;0,600;0,700;0,800;0,900;1,100;1,200;1,300;1,400;1,500;1,600;1,700;1,800;1,900&display=block" />
+<style>
+*,*::before,*::after{box-sizing:border-box}
+html,body{margin:0;padding:0;background:transparent}
+h1,h2,h3,h4,h5,h6,p,blockquote,figure,pre,ul,ol,li,dl,dd{margin:0;padding:0}
+h1,h2,h3,h4,h5,h6{font-size:inherit;font-weight:inherit}
+button,input,select,textarea{font:inherit;color:inherit;background:none;border:0;padding:0;margin:0;text-align:inherit}
+a{color:inherit;text-decoration:inherit}
+img,svg{display:block}
+
+:root{--color-bg:#111113;--color-term:#0C0C0E;--color-surface:#19191C;--color-surface-2:#222226;--color-line:#2D2D32;--color-text:#F4F4F5;--color-muted:#9B9BA4;--color-faint:#62626B;--color-captain:#F5A524;--color-crew:#2DD4BF;--color-design:#A78BFA;--color-stuck:#F2555A;--font-sans:Geist;--font-mono:Geist Mono;--radius-sm:8px;--radius-md:12px;--color-success:#34C77B;--color-glow-blue:#4F7BFF;--color-glow-violet:#8B5CF6;--color-warm:#FF8A3D;--color-primary-btn:#F4F4F5;--color-on-primary:#111113;--radius-lg:16px;--text-xs:12px;--text-sm:13px;--text-base:14px;--text-lg:16px;--text-xl:20px;--text-2xl:28px;--text-3xl:40px}
+body{font-family:system-ui, sans-serif;font-size:16px;font-weight:400;line-height:normal;color:#000000}
+</style>
+</head>
+<body>
+<div style="width: 1440px; height: 900px; background-color: var(--color-bg); overflow: clip; box-sizing: border-box; flex-direction: row; font-family: var(--font-sans); color: var(--color-text); display: flex; position: relative">
+  <div style="width: 232px; height: 100%; flex-shrink: 0; display: flex; flex-direction: column; background: var(--color-surface); border-right: 1px solid var(--color-line); padding: 18px 12px; gap: 22px">
+    <div style="display: flex; align-items: center; gap: 10px; padding: 0 8px">
+      <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" style="width: 26px; height: 26px"><rect x="2" y="2" width="9" height="9" rx="2.5" fill="#F5A524"></rect><rect x="13" y="2" width="9" height="9" rx="2.5" fill="#2DD4BF"></rect><rect x="2" y="13" width="9" height="9" rx="2.5" fill="#2DD4BF"></rect><rect x="13" y="13" width="9" height="9" rx="2.5" fill="#A78BFA"></rect></svg>
+      <div style="display: flex; flex-direction: column; gap: 1px">
+        <div style="font-size: 16px; font-weight: 650; letter-spacing: -0.01em; line-height: 19px; color: var(--color-text)">Muster</div>
+        <div style="font-size: 11px; font-weight: 400; line-height: 14px; color: var(--color-muted)">wall-education</div>
+      </div>
+    </div>
+    <div style="display: flex; flex-direction: column; gap: 2px">
+      <div style="display: flex; align-items: center; gap: 10px; height: 34px; padding: 0 10px; border-radius: var(--radius-sm); background: var(--color-surface-2)">
+        <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="#E6E8EB" stroke-width="2" style="width: 16px; height: 16px"><rect x="3" y="3" width="7" height="7" rx="1"></rect><rect x="14" y="3" width="7" height="7" rx="1"></rect><rect x="3" y="14" width="7" height="7" rx="1"></rect><rect x="14" y="14" width="7" height="7" rx="1"></rect></svg>
+        <div style="font-size: 13px; font-weight: 550; flex: 1">Dashboard</div>
+      </div>
+      <div style="display: flex; align-items: center; gap: 10px; height: 34px; padding: 0 10px; border-radius: var(--radius-sm)">
+        <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="#8B93A0" stroke-width="2" style="width: 16px; height: 16px"><path d="M12 17v5"></path><path d="M9 10.76a2 2 0 0 1-1.11 1.79l-1.78.9A2 2 0 0 0 5 15.24V16a1 1 0 0 0 1 1h12a1 1 0 0 0 1-1v-.76a2 2 0 0 0-1.11-1.79l-1.78-.9A2 2 0 0 1 15 10.76V7a1 1 0 0 1 1-1 2 2 0 0 0 0-4H8a2 2 0 0 0 0 4 1 1 0 0 1 1 1z"></path></svg>
+        <div style="font-size: 13px; color: var(--color-muted); flex: 1">Bulletin board</div>
+        <div style="font-size: 11px; font-weight: 600; color: #0F1114; background: var(--color-stuck); border-radius: 9px; padding: 1px 7px">2</div>
+      </div>
+      <div style="display: flex; align-items: center; gap: 10px; height: 34px; padding: 0 10px; border-radius: var(--radius-sm)">
+        <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="#8B93A0" stroke-width="2" style="width: 16px; height: 16px"><path d="M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z"></path></svg>
+        <div style="font-size: 13px; color: var(--color-muted); flex: 1">Crew chat</div>
+        <div style="font-size: 11px; color: var(--color-faint)">24</div>
+      </div>
+      <div style="display: flex; align-items: center; gap: 10px; height: 34px; padding: 0 10px; border-radius: var(--radius-sm)">
+        <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="#8B93A0" stroke-width="2" style="width: 16px; height: 16px"><path d="M9 11l3 3L22 4"></path><path d="M21 12v7a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h11"></path></svg>
+        <div style="font-size: 13px; color: var(--color-muted); flex: 1">Tasks</div>
+        <div style="font-size: 11px; color: var(--color-faint)">7</div>
+      </div>
+      <div style="display: flex; align-items: center; gap: 10px; height: 34px; padding: 0 10px; border-radius: var(--radius-sm)">
+        <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="#8B93A0" stroke-width="2" style="width: 16px; height: 16px"><circle cx="6" cy="6" r="3"></circle><circle cx="6" cy="18" r="3"></circle><circle cx="18" cy="8" r="3"></circle><path d="M6 9v6M18 11c0 4-6 3-12 4"></path></svg>
+        <div style="font-size: 13px; color: var(--color-muted); flex: 1">Branches</div>
+      </div>
+      <div style="display: flex; align-items: center; gap: 10px; height: 34px; padding: 0 10px; border-radius: var(--radius-sm)">
+        <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="#8B93A0" stroke-width="2" style="width: 16px; height: 16px"><path d="M12 19l7-7 3 3-7 7-3-3z"></path><path d="M18 13l-1.5-7.5L2 2l3.5 14.5L13 18l5-5z"></path><circle cx="11" cy="11" r="2"></circle></svg>
+        <div style="font-size: 13px; color: var(--color-muted); flex: 1">Vellum boards</div>
+      </div>
+      <div style="display: flex; align-items: center; gap: 10px; height: 34px; padding: 0 10px; border-radius: var(--radius-sm)">
+        <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="#8B93A0" stroke-width="2" style="width: 16px; height: 16px"><circle cx="12" cy="12" r="3"></circle><path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 1 1-2.83 2.83l-.06-.06a1.65 1.65 0 0 0-2.82 1.17V21a2 2 0 1 1-4 0v-.09A1.65 1.65 0 0 0 7 19.4a1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 1 1-2.83-2.83l.06-.06A1.65 1.65 0 0 0 3.6 15a1.65 1.65 0 0 0-1.51-1H2a2 2 0 1 1 0-4h.09A1.65 1.65 0 0 0 3.6 9a1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 1 1 2.83-2.83l.06.06A1.65 1.65 0 0 0 9 4.6 1.65 1.65 0 0 0 10 3.09V3a2 2 0 1 1 4 0v.09A1.65 1.65 0 0 0 15 4.6a1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 1 1 2.83 2.83l-.06.06A1.65 1.65 0 0 0 19.4 9c.26.6.85 1 1.51 1H21a2 2 0 1 1 0 4h-.09a1.65 1.65 0 0 0-1.51 1z"></path></svg>
+        <div style="font-size: 13px; color: var(--color-muted); flex: 1">Settings</div>
+      </div>
+    </div>
+    <div style="display: flex; flex-direction: column; gap: 4px; flex: 1">
+      <div style="display: flex; align-items: center; padding: 0 10px 6px">
+        <div style="font-size: 11px; font-weight: 600; letter-spacing: 0.08em; color: var(--color-faint); flex: 1">AGENTS · 5</div>
+        <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="#8B93A0" stroke-width="2" style="width: 14px; height: 14px"><path d="M12 5v14M5 12h14"></path></svg>
+      </div>
+      <div style="display: flex; align-items: center; gap: 10px; height: 44px; padding: 0 10px; border-radius: var(--radius-sm)">
+        <div style="width: 8px; height: 8px; border-radius: 4px; background: var(--color-captain); flex-shrink: 0"></div>
+        <div style="display: flex; flex-direction: column; flex: 1; gap: 1px; min-width: 0; overflow: hidden">
+          <div style="font-size: 13px; font-weight: 550">captain</div>
+          <div style="font-family: var(--font-mono); font-size: 11px; color: var(--color-faint); white-space: nowrap; overflow: hidden; text-overflow: ellipsis">main</div>
+        </div>
+        <div style="width: 60px; flex-shrink: 0; font-size: 11px; color: var(--color-muted); text-align: right">reviewing</div>
+      </div>
+      <div style="display: flex; align-items: center; gap: 10px; height: 44px; padding: 0 10px; border-radius: var(--radius-sm)">
+        <div style="width: 8px; height: 8px; border-radius: 4px; background: var(--color-crew); flex-shrink: 0"></div>
+        <div style="display: flex; flex-direction: column; flex: 1; gap: 1px; min-width: 0; overflow: hidden">
+          <div style="font-size: 13px; font-weight: 550">crew-2</div>
+          <div style="font-family: var(--font-mono); font-size: 11px; color: var(--color-faint); white-space: nowrap; overflow: hidden; text-overflow: ellipsis">crew-2/invite-api</div>
+        </div>
+        <div style="width: 60px; flex-shrink: 0; font-size: 11px; color: var(--color-muted); text-align: right">working</div>
+      </div>
+      <div style="display: flex; align-items: center; gap: 10px; height: 44px; padding: 0 10px; border-radius: var(--radius-sm)">
+        <div style="width: 8px; height: 8px; border-radius: 4px; background: var(--color-crew); flex-shrink: 0"></div>
+        <div style="display: flex; flex-direction: column; flex: 1; gap: 1px; min-width: 0; overflow: hidden">
+          <div style="font-size: 13px; font-weight: 550">crew-3</div>
+          <div style="font-family: var(--font-mono); font-size: 11px; color: var(--color-faint); white-space: nowrap; overflow: hidden; text-overflow: ellipsis">crew-3/share-dialog</div>
+        </div>
+        <div style="width: 60px; flex-shrink: 0; font-size: 11px; color: var(--color-stuck); text-align: right; font-weight: 600">stuck</div>
+      </div>
+      <div style="display: flex; align-items: center; gap: 10px; height: 44px; padding: 0 10px; border-radius: var(--radius-sm)">
+        <div style="width: 8px; height: 8px; border-radius: 4px; background: var(--color-design); flex-shrink: 0"></div>
+        <div style="display: flex; flex-direction: column; flex: 1; gap: 1px; min-width: 0; overflow: hidden">
+          <div style="font-size: 13px; font-weight: 550">design</div>
+          <div style="font-family: var(--font-mono); font-size: 11px; color: var(--color-faint); white-space: nowrap; overflow: hidden; text-overflow: ellipsis">design/check</div>
+        </div>
+        <div style="width: 60px; flex-shrink: 0; font-size: 11px; color: var(--color-muted); text-align: right">waiting</div>
+      </div>
+      <div style="display: flex; align-items: center; gap: 10px; height: 44px; padding: 0 10px; border-radius: var(--radius-sm); opacity: 0.6">
+        <div style="width: 8px; height: 8px; border-radius: 4px; background: var(--color-crew); flex-shrink: 0"></div>
+        <div style="display: flex; flex-direction: column; flex: 1; gap: 1px; min-width: 0; overflow: hidden">
+          <div style="font-size: 13px; font-weight: 550">crew-5</div>
+          <div style="font-family: var(--font-mono); font-size: 11px; color: var(--color-faint); white-space: nowrap; overflow: hidden; text-overflow: ellipsis">crew-5/tests · page 2</div>
+        </div>
+        <div style="width: 60px; flex-shrink: 0; font-size: 11px; color: var(--color-muted); text-align: right">idle</div>
+      </div>
+    </div>
+  </div>
+  <div style="flex: 1; height: 100%; display: flex; flex-direction: column; min-width: 0">
+    <div style="height: 60px; flex-shrink: 0; display: flex; align-items: center; gap: 28px; padding: 0 20px; border-bottom: 1px solid var(--color-line)">
+      <div style="display: flex; flex-direction: column; gap: 2px; flex: 1">
+        <div style="font-size: 15px; font-weight: 600">Build the invite-link sharing flow</div>
+        <div style="font-size: 12px; color: var(--color-muted)">Goal set 42 min ago · 3 of 7 tasks done</div>
+      </div>
+      <div style="width: 190px; display: flex; flex-direction: column; gap: 6px">
+        <div style="display: flex">
+          <div style="font-size: 11px; font-weight: 600; letter-spacing: 0.08em; color: var(--color-faint); flex: 1">5-HOUR</div>
+          <div style="font-family: var(--font-mono); font-size: 11px; color: var(--color-text)">62% · resets 1h 48m</div>
+        </div>
+        <div style="height: 4px; border-radius: 2px; background: var(--color-surface-2); display: flex">
+          <div style="width: 62%; height: 4px; border-radius: 2px; background: var(--color-text)"></div>
+        </div>
+      </div>
+      <div style="width: 190px; display: flex; flex-direction: column; gap: 6px">
+        <div style="display: flex">
+          <div style="font-size: 11px; font-weight: 600; letter-spacing: 0.08em; color: var(--color-faint); flex: 1">WEEKLY</div>
+          <div style="font-family: var(--font-mono); font-size: 11px; color: var(--color-text)">38% · resets Mon</div>
+        </div>
+        <div style="height: 4px; border-radius: 2px; background: var(--color-surface-2); display: flex">
+          <div style="width: 38%; height: 4px; border-radius: 2px; background: var(--color-muted)"></div>
+        </div>
+      </div>
+      <div style="display: flex; align-items: center; gap: 6px; height: 32px; padding: 0 12px; border-radius: var(--radius-sm); background: var(--color-surface-2); border: 1px solid var(--color-line)">
+        <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="#E6E8EB" stroke-width="2" style="width: 14px; height: 14px"><path d="M12 5v14M5 12h14"></path></svg>
+        <div style="font-size: 13px; font-weight: 550">Add agent</div>
+      </div>
+    </div>
+    <div style="flex: 1; display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); grid-template-rows: repeat(2, minmax(0, 1fr)); gap: 12px; padding: 12px; min-height: 0">
+      <div style="display: flex; flex-direction: column; background: var(--color-term); border: 1px solid var(--color-line); border-top: 2px solid var(--color-captain); border-radius: var(--radius-md); overflow: hidden; min-height: 0">
+        <div style="height: 40px; flex-shrink: 0; display: flex; align-items: center; gap: 10px; padding: 0 12px; background: var(--color-surface); border-bottom: 1px solid var(--color-line)">
+          <div style="font-size: 10px; font-weight: 700; letter-spacing: 0.08em; color: var(--color-captain); background: color-mix(in oklab, var(--color-captain) 14%, transparent); border-radius: 4px; padding: 3px 6px">CAPTAIN</div>
+          <div style="font-size: 13px; font-weight: 600">captain</div>
+          <div style="font-family: var(--font-mono); font-size: 11px; color: var(--color-faint); flex: 1">main</div>
+          <div style="display: flex; align-items: center; gap: 6px">
+            <div style="width: 6px; height: 6px; border-radius: 3px; background: var(--color-captain)"></div>
+            <div style="font-size: 12px; color: var(--color-muted)">reviewing crew-2</div>
+          </div>
+          <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="#8B93A0" style="width: 16px; height: 16px"><circle cx="5" cy="12" r="1.6"></circle><circle cx="12" cy="12" r="1.6"></circle><circle cx="19" cy="12" r="1.6"></circle></svg>
+        </div>
+        <div style="flex: 1; min-height: 0; overflow: hidden; padding: 12px 14px; display: flex; flex-direction: column; gap: 3px; font-family: var(--font-mono); font-size: 12px; line-height: 18px">
+          <div style="color: var(--color-muted)">● read_board(open) → 1 stuck, 1 question</div>
+          <div style="color: var(--color-text)">crew-3 is stuck on the invite token format. Answering first.</div>
+          <div style="color: var(--color-muted)">● reply(N14, "Use the 22-char base62 token from T2")</div>
+          <div style="color: var(--color-muted)">● get_diff(crew-2) → 6 files, +214 −18</div>
+          <div style="color: var(--color-muted)">● run_tests(crew-2) → 41 passed</div>
+          <div style="color: var(--color-text)">The invite API looks right. One nit: expiresAt should be UTC.</div>
+          <div style="color: var(--color-captain)">● request_review(crew-2, "Invite API ready")</div>
+        </div>
+        <div style="height: 40px; flex-shrink: 0; display: flex; align-items: center; gap: 8px; padding: 0 14px; border-top: 1px solid var(--color-line)">
+          <div style="font-family: var(--font-mono); font-size: 13px; color: var(--color-captain)">›</div>
+          <div style="font-size: 13px; color: var(--color-faint); flex: 1">Tell the Captain what to build…</div>
+          <div style="font-size: 11px; color: var(--color-faint); font-family: var(--font-mono)">Enter</div>
+        </div>
+      </div>
+      <div style="display: flex; flex-direction: column; background: var(--color-term); border: 1px solid var(--color-line); border-top: 2px solid var(--color-crew); border-radius: var(--radius-md); overflow: hidden; min-height: 0">
+        <div style="height: 40px; flex-shrink: 0; display: flex; align-items: center; gap: 10px; padding: 0 12px; background: var(--color-surface); border-bottom: 1px solid var(--color-line)">
+          <div style="font-size: 10px; font-weight: 700; letter-spacing: 0.08em; color: var(--color-crew); background: color-mix(in oklab, var(--color-captain) 14%, transparent); border-radius: 4px; padding: 3px 6px; background-color: color-mix(in oklab, var(--color-crew) 14%, transparent)">CREW</div>
+          <div style="font-size: 13px; font-weight: 600">crew-2</div>
+          <div style="font-family: var(--font-mono); font-size: 11px; color: var(--color-faint); flex: 1">crew-2/invite-api</div>
+          <div style="display: flex; align-items: center; gap: 6px">
+            <div style="width: 6px; height: 6px; border-radius: 3px; background: var(--color-captain); background-color: var(--color-crew)"></div>
+            <div style="font-size: 12px; color: var(--color-muted)">T3 · build → test</div>
+          </div>
+          <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="#8B93A0" style="width: 16px; height: 16px"><circle cx="5" cy="12" r="1.6"></circle><circle cx="12" cy="12" r="1.6"></circle><circle cx="19" cy="12" r="1.6"></circle></svg>
+        </div>
+        <div style="flex: 1; min-height: 0; overflow: hidden; padding: 12px 14px; display: flex; flex-direction: column; gap: 3px; font-family: var(--font-mono); font-size: 12px; line-height: 18px">
+          <div style="color: var(--color-muted)">● claim_task() → T3 Invite API endpoints</div>
+          <div style="color: var(--color-text)">  Working in .muster/worktrees/crew-2</div>
+          <div style="color: var(--color-muted)">● Edit src/api/invites.ts</div>
+          <div style="color: var(--color-muted)">● Bash npm test -- invites → 41 passed</div>
+          <div style="color: var(--color-muted)">● message_crew(crew-3, "invite API now returns expiresAt")</div>
+          <div style="color: var(--color-text)">● post_note(progress, "endpoints + tests done")</div>
+          <div style="color: var(--color-crew)">● handoff(crew-5, "ready for the test station")</div>
+        </div>
+        <div style="height: 40px; flex-shrink: 0; display: flex; align-items: center; gap: 8px; padding: 0 14px; border-top: 1px solid var(--color-line)">
+          <div style="font-family: var(--font-mono); font-size: 13px; color: var(--color-crew)">›</div>
+          <div style="font-size: 13px; color: var(--color-faint); flex: 1">Message crew-2…</div>
+          <div style="font-size: 11px; color: var(--color-faint); font-family: var(--font-mono)">Enter</div>
+        </div>
+      </div>
+      <div style="display: flex; flex-direction: column; background: var(--color-term); border: 1px solid var(--color-line); border-top: 2px solid var(--color-crew); border-radius: var(--radius-md); overflow: hidden; min-height: 0; box-shadow: 0 0 0 1px color-mix(in oklab, var(--color-stuck) 45%, transparent)">
+        <div style="height: 40px; flex-shrink: 0; display: flex; align-items: center; gap: 10px; padding: 0 12px; background: var(--color-surface); border-bottom: 1px solid var(--color-line)">
+          <div style="font-size: 10px; font-weight: 700; letter-spacing: 0.08em; color: var(--color-crew); background: color-mix(in oklab, var(--color-crew) 14%, transparent); border-radius: 4px; padding: 3px 6px">CREW</div>
+          <div style="font-size: 13px; font-weight: 600">crew-3</div>
+          <div style="font-family: var(--font-mono); font-size: 11px; color: var(--color-faint); flex: 1">crew-3/share-dialog</div>
+          <div style="display: flex; align-items: center; gap: 5px; height: 22px; padding: 0 8px; border-radius: 11px; background: color-mix(in oklab, var(--color-stuck) 16%, transparent)">
+            <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="#F0655A" stroke-width="2.5" style="width: 12px; height: 12px"><path d="M12 17v5"></path><path d="M9 10.76a2 2 0 0 1-1.11 1.79l-1.78.9A2 2 0 0 0 5 15.24V16a1 1 0 0 0 1 1h12a1 1 0 0 0 1-1v-.76a2 2 0 0 0-1.11-1.79l-1.78-.9A2 2 0 0 1 15 10.76V7a1 1 0 0 1 1-1 2 2 0 0 0 0-4H8a2 2 0 0 0 0 4 1 1 0 0 1 1 1z"></path></svg>
+            <div style="font-size: 11px; font-weight: 600; color: var(--color-stuck)">1 open</div>
+          </div>
+          <div style="display: flex; align-items: center; gap: 6px">
+            <div style="width: 6px; height: 6px; border-radius: 3px; background: var(--color-captain); background-color: var(--color-stuck)"></div>
+            <div style="font-size: 12px; color: var(--color-stuck); font-weight: 600">stuck · 4 min</div>
+          </div>
+          <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="#8B93A0" style="width: 16px; height: 16px"><circle cx="5" cy="12" r="1.6"></circle><circle cx="12" cy="12" r="1.6"></circle><circle cx="19" cy="12" r="1.6"></circle></svg>
+        </div>
+        <div style="flex: 1; min-height: 0; overflow: hidden; padding: 12px 14px; display: flex; flex-direction: column; gap: 3px; font-family: var(--font-mono); font-size: 12px; line-height: 18px">
+          <div style="color: var(--color-muted)">● claim_task() → T4 Share dialog UI</div>
+          <div style="color: var(--color-text)">  Building ShareDialog with copy-link button</div>
+          <div style="color: var(--color-muted)">● Write src/ui/ShareDialog.tsx</div>
+          <div style="color: var(--color-muted)">● Bash npm test -- share → 2 failed</div>
+          <div style="color: var(--color-muted)">  Token format in the fixture doesn't match the API.</div>
+          <div style="color: var(--color-stuck)">● post_note(stuck, "which token format does T2 use?")</div>
+          <div style="color: var(--color-stuck)">  Waiting for an answer on N14…</div>
+        </div>
+        <div style="height: 40px; flex-shrink: 0; display: flex; align-items: center; gap: 8px; padding: 0 14px; border-top: 1px solid var(--color-line)">
+          <div style="font-family: var(--font-mono); font-size: 13px; color: var(--color-crew)">›</div>
+          <div style="font-size: 13px; color: var(--color-faint); flex: 1">Message crew-3…</div>
+          <div style="font-size: 11px; color: var(--color-faint); font-family: var(--font-mono)">Enter</div>
+        </div>
+      </div>
+      <div style="display: flex; flex-direction: column; background: var(--color-term); border: 1px solid var(--color-line); border-top: 2px solid var(--color-design); border-radius: var(--radius-md); overflow: hidden; min-height: 0">
+        <div style="height: 40px; flex-shrink: 0; display: flex; align-items: center; gap: 10px; padding: 0 12px; background: var(--color-surface); border-bottom: 1px solid var(--color-line)">
+          <div style="font-size: 10px; font-weight: 700; letter-spacing: 0.08em; color: var(--color-design); background: color-mix(in oklab, var(--color-captain) 14%, transparent); border-radius: 4px; padding: 3px 6px; background-color: color-mix(in oklab, var(--color-design) 14%, transparent)">DESIGN</div>
+          <div style="font-size: 13px; font-weight: 600">design</div>
+          <div style="font-family: var(--font-mono); font-size: 11px; color: var(--color-faint); flex: 1">design/check</div>
+          <div style="display: flex; align-items: center; gap: 6px">
+            <div style="width: 6px; height: 6px; border-radius: 3px; background: var(--color-captain); background-color: var(--color-design)"></div>
+            <div style="font-size: 12px; color: var(--color-muted)">waiting on crew-3</div>
+          </div>
+          <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="#8B93A0" style="width: 16px; height: 16px"><circle cx="5" cy="12" r="1.6"></circle><circle cx="12" cy="12" r="1.6"></circle><circle cx="19" cy="12" r="1.6"></circle></svg>
+        </div>
+        <div style="flex: 1; min-height: 0; overflow: hidden; padding: 12px 14px; display: flex; flex-direction: column; gap: 3px; font-family: var(--font-mono); font-size: 12px; line-height: 18px">
+          <div style="color: var(--color-muted)">● vellum.get_basic_info("Wall Education") → 16 pages</div>
+          <div style="color: var(--color-text)">  Reading the design framework: tokens, type scale, buttons</div>
+          <div style="color: var(--color-muted)">● vellum.get_tokens() → 38 tokens</div>
+          <div style="color: var(--color-muted)">● read_board(waitingOn: design) → none</div>
+          <div style="color: var(--color-muted)">  The ShareDialog button uses #2563EB; framework is --color-primary.</div>
+          <div style="color: var(--color-text)">● post_note(waiting, "design check on T4 once crew-3 hands off")</div>
+          <div style="color: var(--color-design)">● message_crew(crew-3, "use var(--color-primary) on buttons")</div>
+        </div>
+        <div style="height: 40px; flex-shrink: 0; display: flex; align-items: center; gap: 8px; padding: 0 14px; border-top: 1px solid var(--color-line)">
+          <div style="font-family: var(--font-mono); font-size: 13px; color: var(--color-design)">›</div>
+          <div style="font-size: 13px; color: var(--color-faint); flex: 1">Message design…</div>
+          <div style="font-size: 11px; color: var(--color-faint); font-family: var(--font-mono)">Enter</div>
+        </div>
+      </div>
+    </div>
+  </div>
+  <div style="position: absolute; width: 240px; display: flex; flex-direction: column; padding: 6px; gap: 1px; background: var(--color-surface-2); border: 1px solid var(--color-line); border-radius: var(--radius-md); box-shadow: 0 12px 32px rgba(0,0,0,0.5); height: fit-content; left: 1186px; top: 520px">
+    <div style="display: flex; align-items: center; gap: 10px; height: 32px; padding: 0 10px; border-radius: var(--radius-sm)">
+      <div style="width: 8px; height: 8px; border-radius: 4px; background: var(--color-captain); flex-shrink: 0"></div>
+      <div style="font-size: 13px; flex: 1">Set as Captain</div>
+    </div>
+    <div style="display: flex; align-items: center; gap: 10px; height: 32px; padding: 0 10px; border-radius: var(--radius-sm)">
+      <div style="width: 8px; height: 8px; border-radius: 4px; background: var(--color-crew); flex-shrink: 0"></div>
+      <div style="font-size: 13px; flex: 1">Set as Crew</div>
+    </div>
+    <div style="display: flex; align-items: center; gap: 10px; height: 32px; padding: 0 10px; border-radius: var(--radius-sm); background: color-mix(in oklab, var(--color-design) 12%, transparent)">
+      <div style="width: 8px; height: 8px; border-radius: 4px; background: var(--color-design); flex-shrink: 0"></div>
+      <div style="font-size: 13px; flex: 1; white-space: nowrap">Set as Vellum design crew</div>
+      <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="#B4A3F0" stroke-width="2.5" style="width: 14px; height: 14px"><path d="M20 6L9 17l-5-5"></path></svg>
+    </div>
+    <div style="height: 1px; background: var(--color-line); flex-shrink: 0"></div>
+    <div style="display: flex; align-items: center; gap: 10px; height: 32px; padding: 0 10px; border-radius: var(--radius-sm)">
+      <div style="width: 8px; flex-shrink: 0"></div>
+      <div style="font-size: 13px; flex: 1; color: var(--color-muted)">View diff</div>
+    </div>
+    <div style="display: flex; align-items: center; gap: 10px; height: 32px; padding: 0 10px; border-radius: var(--radius-sm)">
+      <div style="width: 8px; flex-shrink: 0"></div>
+      <div style="font-size: 13px; flex: 1; color: var(--color-stuck)">Close</div>
+    </div>
+  </div>
+</div>
+</body>
+</html>

@@ -1,0 +1,220 @@
+// Shared types for Muster. This file is the contract between the orchestrator,
+// the CLI, muster-mcp, the hooks and the dashboard. Change it deliberately.
+
+export type Role = 'captain' | 'crew' | 'design';
+
+export type AgentStatus =
+  | 'starting' // PTY spawned, claude booting
+  | 'working' // a prompt is being processed
+  | 'idle' // claude finished its turn and waits for input
+  | 'waiting' // blocked on another agent (has an open Waiting note)
+  | 'stuck' // has an open Stuck note, or is waiting for a permission prompt
+  | 'done' // reported its task done, nothing new assigned
+  | 'stopped'; // process exited or was stopped
+
+export interface Agent {
+  id: string; // "captain", "crew-2", "crew-3", or the name given to `muster add <name>`
+  role: Role;
+  model: string; // "opus" | "sonnet" | full model id
+  branch: string; // "main" for the captain, "<id>/<slug>" for crew
+  worktree: string; // absolute path; the repo root for the captain
+  status: AgentStatus;
+  taskId?: string; // task currently held
+  sessionId: string; // claude --session-id, reused with --resume on restart
+  pid?: number;
+  startedAt: string; // ISO time
+  lastActivityAt: string; // ISO time of last PTY output or hook event
+  costUsd: number; // latest cost.total_cost_usd reported by this agent's status line
+}
+
+export type TaskStatus =
+  | 'blocked' // waiting on dependsOn tasks
+  | 'ready' // can be claimed
+  | 'in_progress' // held by an agent at stations[stationIndex]
+  | 'review' // at the Captain's review station
+  | 'ready_for_merge' // Captain called request_review; waiting for the human
+  | 'merged'
+  | 'cancelled';
+
+export interface TaskEvent {
+  at: string;
+  agentId: string;
+  kind: 'created' | 'claimed' | 'assigned' | 'handoff' | 'done' | 'review_requested' | 'merged' | 'note';
+  text?: string;
+}
+
+export interface Task {
+  id: string; // "T1", "T2", ...
+  title: string;
+  description: string;
+  dependsOn: string[]; // task ids that must be ready_for_merge or merged first
+  stations: string[]; // e.g. ["build", "test", "design", "review"]; always ends with "review"
+  stationIndex: number; // current station
+  status: TaskStatus;
+  assignee?: string; // agent id
+  branch?: string; // branch that currently carries the work
+  createdBy: string;
+  createdAt: string;
+  updatedAt: string;
+  history: TaskEvent[];
+}
+
+export type NoteType =
+  | 'stuck'
+  | 'question'
+  | 'waiting'
+  | 'progress'
+  | 'done'
+  | 'review' // Ready for review: posted by the Captain, acted on by the human
+  | 'escalation' // Captain asking the human
+  | 'message' // direct message between agents; shown on the board, never "open"
+  | 'system'; // posted by the orchestrator (usage warnings, pauses, crashes)
+
+export interface NoteReply {
+  at: string;
+  from: string; // agent id, or "you" for the human
+  text: string;
+}
+
+export interface Note {
+  id: string; // "N1", "N2", ...
+  type: NoteType;
+  from: string; // agent id, "you" or "muster"
+  to?: string; // for message / waiting (the agent it waits on)
+  taskId?: string;
+  branch?: string;
+  text: string;
+  createdAt: string;
+  open: boolean; // stuck/question/waiting/review/escalation start open; others start closed
+  closedAt?: string;
+  replies: NoteReply[];
+}
+
+// One line in the Crew chat log. Appended by the orchestrator for every message,
+// note reply, note posted, task claim/assign/handoff/done/review, merge and agent start/stop.
+export interface FeedItem {
+  id: string; // "F1", "F2", ...
+  at: string;
+  kind: 'message' | 'reply' | 'note' | 'event';
+  from: string; // agent id, "you" or "muster"
+  to?: string; // agent id or "everyone" (messages)
+  noteId?: string; // reply/note: the note it belongs to
+  noteType?: NoteType; // note: the type of note posted
+  taskId?: string;
+  text: string;
+}
+
+// Something waiting to be delivered to an agent. Delivered by typing a short
+// "[muster] ..." line into its terminal when it is idle, and returned by read_inbox().
+export interface InboxItem {
+  id: string; // "I1", ...
+  at: string;
+  agentId: string; // recipient
+  from: string;
+  kind: 'message' | 'reply' | 'note' | 'assignment' | 'handoff' | 'review' | 'system';
+  text: string;
+  noteId?: string;
+  taskId?: string;
+  read: boolean;
+  delivered: boolean; // nudged into the terminal
+}
+
+export interface RateWindow {
+  usedPercentage: number; // 0-100
+  resetsAt?: string; // ISO time
+}
+
+export interface UsageState {
+  fiveHour?: RateWindow;
+  sevenDay?: RateWindow;
+  updatedAt?: string;
+  perAgentCostUsd: Record<string, number>;
+  paused: boolean; // fiveHour >= config.pauseAtFiveHourPct
+  weeklyWarned: boolean; // sevenDay >= config.warnAtWeeklyPct (warning note already posted)
+}
+
+export interface MusterConfig {
+  port: number; // default 47800
+  captainModel: string; // default "opus"
+  crewModel: string; // default "sonnet"
+  designModel: string; // default "sonnet"
+  maxCrew: number; // default 3 (crew running at once, not counting the captain or design crew)
+  pauseAtFiveHourPct: number; // default 80
+  warnAtWeeklyPct: number; // default 75
+  shutdownIdleCrew: boolean; // default true: stop a crew agent once its task reaches review and it has nothing else
+  defaultStations: string[]; // default ["build", "review"]
+  testCommand: string; // default "npm test"
+  baseBranch: string; // default "main"
+  permissionMode: string; // claude --permission-mode for crew; default "acceptEdits"
+  claudePath?: string; // absolute path to claude executable; auto-detected when missing
+  vellum?: { command: string; args: string[]; env?: Record<string, string> }; // MCP server for the design crew
+  notify: boolean; // default true: Windows toast when a branch is ready or the Captain escalates
+  allowedTools: string[]; // passed as permissions.allow in each agent's settings so crew can work unattended
+  projectName?: string; // shown under "Muster" in the dashboard; defaults to the repo folder name
+}
+
+export interface MusterState {
+  version: 1;
+  repoRoot: string;
+  agents: Agent[];
+  tasks: Task[];
+  notes: Note[];
+  feed: FeedItem[];
+  inbox: InboxItem[];
+  usage: UsageState;
+  goal?: { text: string; at: string }; // last goal given to the Captain (muster ask)
+  nextIds: { agent: number; task: number; note: number; feed: number; inbox: number };
+}
+
+// Events pushed over ws://127.0.0.1:<port>/ws/events
+export type MusterEvent =
+  | { type: 'state'; state: MusterState; config: MusterConfig } // full snapshot, sent on connect and after every change
+  | { type: 'toast'; level: 'info' | 'warn'; text: string };
+
+// Messages on ws://127.0.0.1:<port>/ws/term/<agentId>
+// server -> client: raw terminal output as text frames (a backlog replay first)
+// client -> server: JSON text frames
+export type TermClientMessage =
+  | { type: 'input'; data: string }
+  | { type: 'resize'; cols: number; rows: number };
+
+export const OPEN_BY_DEFAULT: NoteType[] = ['stuck', 'question', 'waiting', 'review', 'escalation'];
+
+export const DEFAULT_CONFIG: MusterConfig = {
+  port: 47800,
+  captainModel: 'opus',
+  crewModel: 'sonnet',
+  designModel: 'sonnet',
+  maxCrew: 3,
+  pauseAtFiveHourPct: 80,
+  warnAtWeeklyPct: 75,
+  shutdownIdleCrew: true,
+  defaultStations: ['build', 'review'],
+  testCommand: 'npm test',
+  baseBranch: 'main',
+  permissionMode: 'acceptEdits',
+  notify: true,
+  allowedTools: [
+    'Bash(npm *)',
+    'Bash(npx *)',
+    'Bash(node *)',
+    'Bash(git status*)',
+    'Bash(git diff*)',
+    'Bash(git log*)',
+    'Bash(git add*)',
+    'Bash(git commit*)',
+    'Bash(git show*)',
+    'Bash(git merge*)',
+    'Bash(ls*)',
+    'Bash(cat *)',
+    'mcp__muster__*',
+  ],
+};
+
+// Which role works each station. Unknown station names are worked by crew.
+export const STATION_ROLE: Record<string, Role> = {
+  build: 'crew',
+  test: 'crew',
+  design: 'design',
+  review: 'captain',
+};

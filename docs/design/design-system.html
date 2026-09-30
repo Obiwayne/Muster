@@ -1,0 +1,374 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>Design system</title>
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Geist:ital,wght@0,100;0,200;0,300;0,400;0,500;0,600;0,700;0,800;0,900;1,100;1,200;1,300;1,400;1,500;1,600;1,700;1,800;1,900&family=Geist+Mono:ital,wght@0,100;0,200;0,300;0,400;0,500;0,600;0,700;0,800;0,900;1,100;1,200;1,300;1,400;1,500;1,600;1,700;1,800;1,900&display=block" />
+<style>
+*,*::before,*::after{box-sizing:border-box}
+html,body{margin:0;padding:0;background:transparent}
+h1,h2,h3,h4,h5,h6,p,blockquote,figure,pre,ul,ol,li,dl,dd{margin:0;padding:0}
+h1,h2,h3,h4,h5,h6{font-size:inherit;font-weight:inherit}
+button,input,select,textarea{font:inherit;color:inherit;background:none;border:0;padding:0;margin:0;text-align:inherit}
+a{color:inherit;text-decoration:inherit}
+img,svg{display:block}
+
+:root{--color-bg:#111113;--color-term:#0C0C0E;--color-surface:#19191C;--color-surface-2:#222226;--color-line:#2D2D32;--color-text:#F4F4F5;--color-muted:#9B9BA4;--color-faint:#62626B;--color-captain:#F5A524;--color-crew:#2DD4BF;--color-design:#A78BFA;--color-stuck:#F2555A;--font-sans:Geist;--font-mono:Geist Mono;--radius-sm:8px;--radius-md:12px;--color-success:#34C77B;--color-glow-blue:#4F7BFF;--color-glow-violet:#8B5CF6;--color-warm:#FF8A3D;--color-primary-btn:#F4F4F5;--color-on-primary:#111113;--radius-lg:16px;--text-xs:12px;--text-sm:13px;--text-base:14px;--text-lg:16px;--text-xl:20px;--text-2xl:28px;--text-3xl:40px}
+body{font-family:system-ui, sans-serif;font-size:16px;font-weight:400;line-height:normal;color:#000000}
+</style>
+</head>
+<body>
+<div style="width: 1440px; height: fit-content; background-color: var(--color-bg); overflow: hidden; box-sizing: border-box; font-family: var(--font-sans); color: var(--color-text); padding: 64px 72px; gap: 56px; display: flex; flex-direction: column; position: relative">
+  <div style="position: absolute; width: 760px; height: 560px; border-radius: 50%; background: radial-gradient(closest-side, color-mix(in oklab, var(--color-glow-violet) 38%, transparent), color-mix(in oklab, var(--color-glow-blue) 14%, transparent) 55%, transparent); filter: blur(30px); left: 760px; top: -220px"></div>
+  <div style="display: flex; flex-direction: column; gap: 14px; position: relative">
+    <div style="display: flex; align-items: center; gap: 12px">
+      <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" style="width: 28px; height: 28px"><rect x="2" y="2" width="9" height="9" rx="2.5" fill="#F5A524"></rect><rect x="13" y="2" width="9" height="9" rx="2.5" fill="#2DD4BF"></rect><rect x="2" y="13" width="9" height="9" rx="2.5" fill="#2DD4BF"></rect><rect x="13" y="13" width="9" height="9" rx="2.5" fill="#A78BFA"></rect></svg>
+      <div style="font-size: 13px; font-weight: 600; letter-spacing: 0.1em; color: var(--color-muted)">MUSTER · DESIGN SYSTEM</div>
+    </div>
+    <div style="font-size: 56px; font-weight: 650; letter-spacing: -0.03em; line-height: 60px; width: 760px">Graphite surfaces, one soft glow, colour only for roles.</div>
+    <div style="font-size: 16px; line-height: 25px; color: var(--color-muted); width: 640px">Neutral cards with thin borders carry the data. A blue-violet glow marks the one hero area per screen. Amber, teal and lavender are reserved for Captain, Crew and design crew.</div>
+  </div>
+  <div style="display: flex; flex-direction: column; gap: 20px; position: relative">
+    <div style="font-size: 12px; font-weight: 600; letter-spacing: 0.1em; color: var(--color-faint)">01 · COLOUR</div>
+    <div style="display: flex; gap: 12px">
+      <div style="flex: 1; display: flex; flex-direction: column; gap: 10px">
+        <div style="height: 88px; border-radius: var(--radius-md); background: var(--color-bg); border: 1px solid var(--color-line)"></div>
+        <div style="font-size: 13px; font-weight: 550">bg</div>
+        <div style="font-family: var(--font-mono); font-size: 12px; color: var(--color-faint)">#111113</div>
+      </div>
+      <div style="flex: 1; display: flex; flex-direction: column; gap: 10px">
+        <div style="height: 88px; border-radius: var(--radius-md); background: var(--color-surface); border: 1px solid var(--color-line)"></div>
+        <div style="font-size: 13px; font-weight: 550">surface</div>
+        <div style="font-family: var(--font-mono); font-size: 12px; color: var(--color-faint)">#19191C</div>
+      </div>
+      <div style="flex: 1; display: flex; flex-direction: column; gap: 10px">
+        <div style="height: 88px; border-radius: var(--radius-md); background: var(--color-surface-2); border: 1px solid var(--color-line)"></div>
+        <div style="font-size: 13px; font-weight: 550">surface-2</div>
+        <div style="font-family: var(--font-mono); font-size: 12px; color: var(--color-faint)">#222226</div>
+      </div>
+      <div style="flex: 1; display: flex; flex-direction: column; gap: 10px">
+        <div style="height: 88px; border-radius: var(--radius-md); background: var(--color-line)"></div>
+        <div style="font-size: 13px; font-weight: 550">line</div>
+        <div style="font-family: var(--font-mono); font-size: 12px; color: var(--color-faint)">#2D2D32</div>
+      </div>
+      <div style="flex: 1; display: flex; flex-direction: column; gap: 10px">
+        <div style="height: 88px; border-radius: var(--radius-md); background: var(--color-muted)"></div>
+        <div style="font-size: 13px; font-weight: 550">muted</div>
+        <div style="font-family: var(--font-mono); font-size: 12px; color: var(--color-faint)">#9B9BA4</div>
+      </div>
+      <div style="flex: 1; display: flex; flex-direction: column; gap: 10px">
+        <div style="height: 88px; border-radius: var(--radius-md); background: var(--color-text)"></div>
+        <div style="font-size: 13px; font-weight: 550">text · primary button</div>
+        <div style="font-family: var(--font-mono); font-size: 12px; color: var(--color-faint)">#F4F4F5</div>
+      </div>
+    </div>
+    <div style="display: flex; gap: 12px">
+      <div style="flex: 1; display: flex; flex-direction: column; gap: 10px">
+        <div style="height: 88px; border-radius: var(--radius-md); background: var(--color-captain)"></div>
+        <div style="font-size: 13px; font-weight: 550">captain</div>
+        <div style="font-family: var(--font-mono); font-size: 12px; color: var(--color-faint)">#F5A524</div>
+      </div>
+      <div style="flex: 1; display: flex; flex-direction: column; gap: 10px">
+        <div style="height: 88px; border-radius: var(--radius-md); background: var(--color-crew)"></div>
+        <div style="font-size: 13px; font-weight: 550">crew</div>
+        <div style="font-family: var(--font-mono); font-size: 12px; color: var(--color-faint)">#2DD4BF</div>
+      </div>
+      <div style="flex: 1; display: flex; flex-direction: column; gap: 10px">
+        <div style="height: 88px; border-radius: var(--radius-md); background: var(--color-design)"></div>
+        <div style="font-size: 13px; font-weight: 550">design crew</div>
+        <div style="font-family: var(--font-mono); font-size: 12px; color: var(--color-faint)">#A78BFA</div>
+      </div>
+      <div style="flex: 1; display: flex; flex-direction: column; gap: 10px">
+        <div style="height: 88px; border-radius: var(--radius-md); background: var(--color-success)"></div>
+        <div style="font-size: 13px; font-weight: 550">success</div>
+        <div style="font-family: var(--font-mono); font-size: 12px; color: var(--color-faint)">#34C77B</div>
+      </div>
+      <div style="flex: 1; display: flex; flex-direction: column; gap: 10px">
+        <div style="height: 88px; border-radius: var(--radius-md); background: var(--color-stuck)"></div>
+        <div style="font-size: 13px; font-weight: 550">stuck · danger</div>
+        <div style="font-family: var(--font-mono); font-size: 12px; color: var(--color-faint)">#F2555A</div>
+      </div>
+      <div style="flex: 1; display: flex; flex-direction: column; gap: 10px">
+        <div style="height: 88px; border-radius: var(--radius-md); background: linear-gradient(135deg, var(--color-glow-blue), var(--color-glow-violet) 60%, var(--color-warm))"></div>
+        <div style="font-size: 13px; font-weight: 550">glow · hero only</div>
+        <div style="font-family: var(--font-mono); font-size: 12px; color: var(--color-faint)">#4F7BFF → #8B5CF6 → #FF8A3D</div>
+      </div>
+    </div>
+  </div>
+  <div style="display: flex; flex-direction: column; gap: 20px; position: relative">
+    <div style="font-size: 12px; font-weight: 600; letter-spacing: 0.1em; color: var(--color-faint)">02 · TYPE · GEIST + GEIST MONO</div>
+    <div style="display: flex; flex-direction: column; border-top: 1px solid var(--color-line)">
+      <div style="display: flex; align-items: baseline; gap: 24px; padding: 18px 0; border-bottom: 1px solid var(--color-line)">
+        <div style="width: 140px; flex-shrink: 0; font-family: var(--font-mono); font-size: 12px; color: var(--color-faint)">40 / 650</div>
+        <div style="font-size: 40px; font-weight: 650; letter-spacing: -0.02em">3 of 7 tasks</div>
+        <div style="font-size: 13px; color: var(--color-muted)">Hero number</div>
+      </div>
+      <div style="display: flex; align-items: baseline; gap: 24px; padding: 18px 0; border-bottom: 1px solid var(--color-line)">
+        <div style="width: 140px; flex-shrink: 0; font-family: var(--font-mono); font-size: 12px; color: var(--color-faint)">28 / 600</div>
+        <div style="font-size: 28px; font-weight: 600; letter-spacing: -0.01em">41 passed</div>
+        <div style="font-size: 13px; color: var(--color-muted)">Stat value</div>
+      </div>
+      <div style="display: flex; align-items: baseline; gap: 24px; padding: 18px 0; border-bottom: 1px solid var(--color-line)">
+        <div style="width: 140px; flex-shrink: 0; font-family: var(--font-mono); font-size: 12px; color: var(--color-faint)">20 / 600</div>
+        <div style="font-size: 20px; font-weight: 600">Build the invite-link sharing flow</div>
+        <div style="font-size: 13px; color: var(--color-muted)">Card and page title</div>
+      </div>
+      <div style="display: flex; align-items: baseline; gap: 24px; padding: 18px 0; border-bottom: 1px solid var(--color-line)">
+        <div style="width: 140px; flex-shrink: 0; font-family: var(--font-mono); font-size: 12px; color: var(--color-faint)">14 / 400</div>
+        <div style="font-size: 14px; line-height: 21px">Body copy and table cells. Calm, readable, never smaller than 13px in content.</div>
+      </div>
+      <div style="display: flex; align-items: baseline; gap: 24px; padding: 18px 0; border-bottom: 1px solid var(--color-line)">
+        <div style="width: 140px; flex-shrink: 0; font-family: var(--font-mono); font-size: 12px; color: var(--color-faint)">12 / 600 caps</div>
+        <div style="font-size: 12px; font-weight: 600; letter-spacing: 0.1em; color: var(--color-muted)">SECTION LABEL</div>
+      </div>
+      <div style="display: flex; align-items: baseline; gap: 24px; padding: 18px 0; border-bottom: 1px solid var(--color-line)">
+        <div style="width: 140px; flex-shrink: 0; font-family: var(--font-mono); font-size: 12px; color: var(--color-faint)">mono 12</div>
+        <div style="font-family: var(--font-mono); font-size: 12px; color: var(--color-muted)">crew-2/invite-api · +214 −18 · npm test → 41 passed</div>
+      </div>
+    </div>
+  </div>
+  <div style="display: flex; flex-direction: column; gap: 24px; position: relative">
+    <div style="font-size: 12px; font-weight: 600; letter-spacing: 0.1em; color: var(--color-faint)">03 · CONTROLS</div>
+    <div style="display: flex; align-items: center; gap: 12px">
+      <div style="height: 40px; display: flex; align-items: center; gap: 8px; padding: 0 16px; border-radius: var(--radius-sm); background: var(--color-primary-btn); color: var(--color-on-primary); font-size: 14px; font-weight: 600">Merge into main</div>
+      <div style="height: 40px; display: flex; align-items: center; border-radius: var(--radius-sm); background: var(--color-primary-btn); color: var(--color-on-primary)">
+        <div style="padding: 0 14px; font-size: 14px; font-weight: 600">New</div>
+        <div style="width: 1px; height: 40px; background: #D4D4D8"></div>
+        <div style="width: 36px; display: flex; justify-content: center">
+          <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="#111113" stroke-width="2.5" style="width: 14px; height: 14px"><path d="M6 9l6 6 6-6"></path></svg>
+        </div>
+      </div>
+      <div style="height: 40px; display: flex; align-items: center; gap: 8px; padding: 0 14px; border-radius: var(--radius-sm); background: var(--color-surface-2); border: 1px solid var(--color-line); font-size: 14px">
+        <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="#F4F4F5" stroke-width="2" style="width: 16px; height: 16px"><path d="M12 5v14M5 12h14"></path></svg>
+        <div>Add agent</div>
+      </div>
+      <div style="height: 40px; display: flex; align-items: center; gap: 8px; padding: 0 14px; border-radius: var(--radius-sm); border: 1px solid var(--color-line); font-size: 14px; color: var(--color-muted)">
+        <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="#9B9BA4" stroke-width="2" style="width: 16px; height: 16px"><path d="M22 3H2l8 9.46V19l4 2v-8.54L22 3z"></path></svg>
+        <div>Filter</div>
+      </div>
+      <div style="height: 40px; display: flex; align-items: center; padding: 0 16px; border-radius: var(--radius-sm); background: var(--color-crew); color: #0C0C0E; font-size: 14px; font-weight: 600">Merge</div>
+      <div style="height: 40px; display: flex; align-items: center; padding: 0 14px; border-radius: var(--radius-sm); background: color-mix(in oklab, var(--color-stuck) 14%, transparent); color: var(--color-stuck); font-size: 14px; font-weight: 550">Stop agent</div>
+      <div style="height: 40px; display: flex; align-items: center; gap: 6px; padding: 0 10px; font-size: 14px; color: var(--color-muted)">
+        <div>Select plan</div>
+        <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="#9B9BA4" stroke-width="2.5" style="width: 14px; height: 14px"><path d="M9 18l6-6-6-6"></path></svg>
+      </div>
+    </div>
+    <div style="display: flex; align-items: center; gap: 12px">
+      <div style="height: 40px; display: flex; align-items: center; padding: 4px; gap: 2px; border-radius: var(--radius-sm); background: var(--color-surface); border: 1px solid var(--color-line)">
+        <div style="height: 30px; display: flex; align-items: center; padding: 0 14px; border-radius: 6px; background: var(--color-surface-2); font-size: 13px; font-weight: 550">Open</div>
+        <div style="height: 30px; display: flex; align-items: center; padding: 0 14px; font-size: 13px; color: var(--color-muted)">Needs you</div>
+        <div style="height: 30px; display: flex; align-items: center; padding: 0 14px; font-size: 13px; color: var(--color-muted)">All</div>
+      </div>
+      <div style="width: 320px; height: 40px; display: flex; align-items: center; gap: 10px; padding: 0 12px; border-radius: var(--radius-sm); background: var(--color-surface); border: 1px solid var(--color-line)">
+        <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="#9B9BA4" stroke-width="2" style="width: 16px; height: 16px"><circle cx="11" cy="11" r="7"></circle><path d="M21 21l-4.3-4.3"></path></svg>
+        <div style="flex: 1; font-size: 14px; color: var(--color-faint)">Search agents, tasks, notes…</div>
+        <div style="font-family: var(--font-mono); font-size: 11px; color: var(--color-muted); padding: 2px 6px; border-radius: 4px; background: var(--color-surface-2)">Ctrl K</div>
+      </div>
+      <div style="height: 40px; display: flex; align-items: center; gap: 8px; padding: 0 12px; border-radius: var(--radius-sm); border: 1px solid var(--color-line); font-size: 13px">
+        <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="#9B9BA4" stroke-width="2" style="width: 15px; height: 15px"><circle cx="12" cy="12" r="9"></circle><path d="M12 7v5l3 3"></path></svg>
+        <div>Status</div>
+      </div>
+      <div style="width: 38px; height: 22px; border-radius: 11px; background: var(--color-crew); display: flex; align-items: center; justify-content: flex-end; padding: 3px">
+        <div style="width: 16px; height: 16px; border-radius: 8px; background: #0C0C0E"></div>
+      </div>
+      <div style="width: 18px; height: 18px; border-radius: 5px; border: 1.5px solid var(--color-muted)"></div>
+    </div>
+  </div>
+  <div style="display: flex; flex-direction: column; gap: 20px; position: relative">
+    <div style="font-size: 12px; font-weight: 600; letter-spacing: 0.1em; color: var(--color-faint)">04 · BADGES AND STATUS</div>
+    <div style="display: flex; align-items: center; gap: 10px">
+      <div style="font-size: 11px; font-weight: 700; letter-spacing: 0.08em; color: var(--color-captain); background: color-mix(in oklab, var(--color-captain) 14%, transparent); border-radius: 5px; padding: 4px 7px">CAPTAIN</div>
+      <div style="font-size: 11px; font-weight: 700; letter-spacing: 0.08em; color: var(--color-crew); background: color-mix(in oklab, var(--color-crew) 14%, transparent); border-radius: 5px; padding: 4px 7px">CREW</div>
+      <div style="font-size: 11px; font-weight: 700; letter-spacing: 0.08em; color: var(--color-design); background: color-mix(in oklab, var(--color-design) 14%, transparent); border-radius: 5px; padding: 4px 7px">DESIGN</div>
+      <div style="width: 24px"></div>
+      <div style="font-size: 13px; font-weight: 500; color: var(--color-success); background: color-mix(in oklab, var(--color-success) 16%, transparent); border-radius: 6px; padding: 3px 9px">Passed</div>
+      <div style="font-size: 13px; font-weight: 500; color: var(--color-stuck); background: color-mix(in oklab, var(--color-stuck) 16%, transparent); border-radius: 6px; padding: 3px 9px">Stuck</div>
+      <div style="font-size: 13px; font-weight: 500; color: var(--color-glow-blue); background: color-mix(in oklab, var(--color-glow-blue) 16%, transparent); border-radius: 6px; padding: 3px 9px">Working</div>
+      <div style="font-size: 13px; font-weight: 500; color: var(--color-design); background: color-mix(in oklab, var(--color-design) 16%, transparent); border-radius: 6px; padding: 3px 9px">Waiting</div>
+      <div style="font-size: 13px; font-weight: 500; color: var(--color-warm); background: color-mix(in oklab, var(--color-warm) 16%, transparent); border-radius: 6px; padding: 3px 9px">Needs you</div>
+      <div style="font-size: 13px; font-weight: 500; color: var(--color-muted); background: var(--color-surface-2); border-radius: 6px; padding: 3px 9px">Idle</div>
+      <div style="width: 24px"></div>
+      <div style="font-size: 13px; font-weight: 500; color: var(--color-success)">+20% (223)</div>
+      <div style="font-size: 13px; color: var(--color-faint)">·</div>
+      <div style="font-size: 13px; color: var(--color-muted)">Last 5 hours</div>
+      <div style="width: 12px"></div>
+      <div style="font-size: 11px; font-weight: 600; color: #0C0C0E; background: var(--color-stuck); border-radius: 9px; padding: 1px 7px">2</div>
+    </div>
+  </div>
+  <div style="display: flex; flex-direction: column; gap: 20px; position: relative">
+    <div style="font-size: 12px; font-weight: 600; letter-spacing: 0.1em; color: var(--color-faint)">05 · CARDS</div>
+    <div style="display: flex; gap: 16px">
+      <div style="flex: 1; display: flex; flex-direction: column; gap: 6px; padding: 20px; border-radius: var(--radius-md); background: var(--color-surface); border: 1px solid var(--color-line)">
+        <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="#9B9BA4" stroke-width="1.8" style="width: 20px; height: 20px"><path d="M17 21v-2a4 4 0 0 0-4-4H5a4 4 0 0 0-4 4v2"></path><circle cx="9" cy="7" r="4"></circle><path d="M23 21v-2a4 4 0 0 0-3-3.87M16 3.13a4 4 0 0 1 0 7.75"></path></svg>
+        <div style="font-size: 13px; color: var(--color-muted); padding-top: 6px">Agents working</div>
+        <div style="font-size: 28px; font-weight: 600; letter-spacing: -0.01em">4 of 5</div>
+        <div style="display: flex; gap: 6px">
+          <div style="font-size: 13px; color: var(--color-success)">+2</div>
+          <div style="font-size: 13px; color: var(--color-faint)">·</div>
+          <div style="font-size: 13px; color: var(--color-muted)">since goal set</div>
+        </div>
+      </div>
+      <div style="flex: 1; display: flex; flex-direction: column; gap: 6px; padding: 20px; border-radius: var(--radius-md); background: var(--color-surface); border: 1px solid var(--color-line)">
+        <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="#9B9BA4" stroke-width="1.8" style="width: 20px; height: 20px"><path d="M9 11l3 3L22 4"></path><path d="M21 12v7a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h11"></path></svg>
+        <div style="font-size: 13px; color: var(--color-muted); padding-top: 6px">Tasks done</div>
+        <div style="font-size: 28px; font-weight: 600; letter-spacing: -0.01em">3 of 7</div>
+        <div style="display: flex; gap: 6px">
+          <div style="font-size: 13px; color: var(--color-success)">+1</div>
+          <div style="font-size: 13px; color: var(--color-faint)">·</div>
+          <div style="font-size: 13px; color: var(--color-muted)">last hour</div>
+        </div>
+      </div>
+      <div style="flex: 1; display: flex; flex-direction: column; gap: 6px; padding: 20px; border-radius: var(--radius-md); background: var(--color-surface); border: 1px solid var(--color-line)">
+        <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="#9B9BA4" stroke-width="1.8" style="width: 20px; height: 20px"><path d="M12 17v5"></path><path d="M9 10.76a2 2 0 0 1-1.11 1.79l-1.78.9A2 2 0 0 0 5 15.24V16a1 1 0 0 0 1 1h12a1 1 0 0 0 1-1v-.76a2 2 0 0 0-1.11-1.79l-1.78-.9A2 2 0 0 1 15 10.76V7a1 1 0 0 1 1-1 2 2 0 0 0 0-4H8a2 2 0 0 0 0 4 1 1 0 0 1 1 1z"></path></svg>
+        <div style="font-size: 13px; color: var(--color-muted); padding-top: 6px">Open notes</div>
+        <div style="font-size: 28px; font-weight: 600; letter-spacing: -0.01em">4</div>
+        <div style="display: flex; gap: 6px">
+          <div style="font-size: 13px; color: var(--color-stuck)">1 stuck</div>
+          <div style="font-size: 13px; color: var(--color-faint)">·</div>
+          <div style="font-size: 13px; color: var(--color-muted)">0 need you</div>
+        </div>
+      </div>
+      <div style="flex: 1; display: flex; flex-direction: column; gap: 6px; padding: 20px; border-radius: var(--radius-md); background: var(--color-surface); border: 1px solid var(--color-line)">
+        <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="#9B9BA4" stroke-width="1.8" style="width: 20px; height: 20px"><circle cx="6" cy="6" r="3"></circle><circle cx="6" cy="18" r="3"></circle><circle cx="18" cy="8" r="3"></circle><path d="M6 9v6M18 11c0 4-6 3-12 4"></path></svg>
+        <div style="font-size: 13px; color: var(--color-muted); padding-top: 6px">Ready to merge</div>
+        <div style="font-size: 28px; font-weight: 600; letter-spacing: -0.01em">1</div>
+        <div style="display: flex; gap: 6px">
+          <div style="font-size: 13px; color: var(--color-success)">12 passed</div>
+          <div style="font-size: 13px; color: var(--color-faint)">·</div>
+          <div style="font-size: 13px; color: var(--color-muted)">crew-2/invites-db</div>
+        </div>
+      </div>
+    </div>
+    <div style="display: flex; gap: 16px">
+      <div style="width: 420px; flex-shrink: 0; position: relative; overflow: hidden; display: flex; flex-direction: column; gap: 18px; padding: 22px; border-radius: var(--radius-lg); background: linear-gradient(160deg, #1B1B24, #141418); border: 1px solid color-mix(in oklab, var(--color-glow-violet) 30%, var(--color-line))">
+        <div style="position: absolute; width: 320px; height: 320px; border-radius: 50%; background: radial-gradient(closest-side, color-mix(in oklab, var(--color-glow-blue) 45%, transparent), transparent); filter: blur(20px); left: 180px; top: -120px"></div>
+        <div style="display: flex; align-items: center; gap: 10px; position: relative">
+          <div style="font-size: 16px; font-weight: 600; flex: 1">Usage</div>
+          <div style="font-size: 12px; color: var(--color-muted); padding: 4px 10px; border-radius: 14px; background: rgba(255,255,255,0.06)">Max 5x</div>
+        </div>
+        <div style="display: flex; align-items: center; gap: 24px; position: relative">
+          <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 148 148" style="width: 148px; height: 148px"><defs><linearGradient id="ring" x1="0" y1="0" x2="1" y2="1"><stop offset="0" stop-color="#4F7BFF"></stop><stop offset="0.6" stop-color="#8B5CF6"></stop><stop offset="1" stop-color="#FF8A3D"></stop></linearGradient></defs><circle cx="74" cy="74" r="60" fill="none" stroke="#26262D" stroke-width="12"></circle><circle cx="74" cy="74" r="60" fill="none" stroke="url(#ring)" stroke-width="12" stroke-linecap="round" stroke-dasharray="234 377" transform="rotate(-90 74 74)"></circle><text x="74" y="72" text-anchor="middle" font-family="Geist" font-size="30" font-weight="650" fill="#F4F4F5">62%</text><text x="74" y="94" text-anchor="middle" font-family="Geist" font-size="12" fill="#9B9BA4">5-hour window</text></svg>
+          <div style="display: flex; flex-direction: column; gap: 14px; flex: 1">
+            <div style="display: flex; flex-direction: column; gap: 3px">
+              <div style="font-size: 12px; color: var(--color-muted)">Resets in</div>
+              <div style="font-size: 18px; font-weight: 600">1h 48m</div>
+            </div>
+            <div style="display: flex; flex-direction: column; gap: 3px">
+              <div style="font-size: 12px; color: var(--color-muted)">Weekly</div>
+              <div style="font-size: 18px; font-weight: 600">38%</div>
+            </div>
+            <div style="display: flex; flex-direction: column; gap: 3px">
+              <div style="font-size: 12px; color: var(--color-muted)">Pauses at</div>
+              <div style="font-size: 18px; font-weight: 600; color: var(--color-warm)">80%</div>
+            </div>
+          </div>
+        </div>
+      </div>
+      <div style="flex: 1; position: relative; overflow: hidden; display: flex; flex-direction: column; gap: 14px; padding: 22px; border-radius: var(--radius-lg); background: var(--color-surface); border: 1px solid var(--color-line)">
+        <div style="display: flex; align-items: center; gap: 10px">
+          <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="#F4F4F5" stroke-width="2" style="width: 18px; height: 18px"><path d="M3 3v18h18"></path><path d="M7 15l4-4 3 3 5-6"></path></svg>
+          <div style="font-size: 16px; font-weight: 600; flex: 1">Crew activity</div>
+          <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="#9B9BA4" style="width: 16px; height: 16px"><circle cx="5" cy="12" r="1.6"></circle><circle cx="12" cy="12" r="1.6"></circle><circle cx="19" cy="12" r="1.6"></circle></svg>
+        </div>
+        <div style="display: flex; align-items: baseline; gap: 10px">
+          <div style="font-size: 40px; font-weight: 650; letter-spacing: -0.02em">128</div>
+          <div style="font-size: 13px; color: var(--color-muted)">tool calls this hour</div>
+          <div style="font-size: 13px; color: var(--color-success)">+18%</div>
+        </div>
+        <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 760 120" preserveAspectRatio="none" style="width: 100%; height: 120px"><defs><linearGradient id="area" x1="0" y1="0" x2="0" y2="1"><stop offset="0" stop-color="#8B5CF6" stop-opacity="0.35"></stop><stop offset="1" stop-color="#8B5CF6" stop-opacity="0"></stop></linearGradient><linearGradient id="line" x1="0" y1="0" x2="1" y2="0"><stop offset="0" stop-color="#4F7BFF"></stop><stop offset="1" stop-color="#A78BFA"></stop></linearGradient></defs><path d="M0 100 L40 92 L80 96 L120 84 L160 88 L200 76 L240 80 L280 64 L320 70 L360 52 L400 58 L440 44 L480 60 L520 40 L560 46 L600 30 L640 38 L680 22 L720 26 L760 10 L760 120 L0 120 Z" fill="url(#area)"></path><path d="M0 100 L40 92 L80 96 L120 84 L160 88 L200 76 L240 80 L280 64 L320 70 L360 52 L400 58 L440 44 L480 60 L520 40 L560 46 L600 30 L640 38 L680 22 L720 26 L760 10" fill="none" stroke="url(#line)" stroke-width="2.5"></path><line x1="520" y1="0" x2="520" y2="120" stroke="#62626B" stroke-dasharray="4 4"></line><circle cx="520" cy="40" r="5" fill="#111113" stroke="#A78BFA" stroke-width="2.5"></circle></svg>
+        <div style="display: flex; justify-content: space-between">
+          <div style="font-size: 12px; color: var(--color-faint)">21:00</div>
+          <div style="font-size: 12px; color: var(--color-faint)">22:00</div>
+        </div>
+      </div>
+    </div>
+  </div>
+  <div style="display: flex; flex-direction: column; gap: 20px; position: relative">
+    <div style="font-size: 12px; font-weight: 600; letter-spacing: 0.1em; color: var(--color-faint)">06 · PATTERNS</div>
+    <div style="display: flex; gap: 16px; align-items: flex-start">
+      <div style="width: 260px; flex-shrink: 0; display: flex; flex-direction: column; gap: 2px; padding: 14px; border-radius: var(--radius-md); background: var(--color-surface); border: 1px solid var(--color-line)">
+        <div style="display: flex; align-items: center; gap: 4px; padding: 0 8px 8px">
+          <div style="font-size: 13px; color: var(--color-muted)">Main menu</div>
+          <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="#9B9BA4" stroke-width="2.5" style="width: 12px; height: 12px"><path d="M6 9l6 6 6-6"></path></svg>
+        </div>
+        <div style="display: flex; align-items: center; gap: 12px; height: 38px; padding: 0 10px; position: relative">
+          <div style="position: absolute; width: 3px; height: 20px; border-radius: 2px; background: var(--color-text); left: 0; top: 9px"></div>
+          <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="#F4F4F5" stroke-width="1.8" style="width: 18px; height: 18px"><rect x="3" y="3" width="7" height="7" rx="1.5"></rect><rect x="14" y="3" width="7" height="7" rx="1.5"></rect><rect x="3" y="14" width="7" height="7" rx="1.5"></rect><rect x="14" y="14" width="7" height="7" rx="1.5"></rect></svg>
+          <div style="font-size: 14px; font-weight: 550; flex: 1">Dashboard</div>
+        </div>
+        <div style="display: flex; align-items: center; gap: 12px; height: 38px; padding: 0 10px">
+          <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="#9B9BA4" stroke-width="1.8" style="width: 18px; height: 18px"><path d="M12 17v5"></path><path d="M9 10.76a2 2 0 0 1-1.11 1.79l-1.78.9A2 2 0 0 0 5 15.24V16a1 1 0 0 0 1 1h12a1 1 0 0 0 1-1v-.76a2 2 0 0 0-1.11-1.79l-1.78-.9A2 2 0 0 1 15 10.76V7a1 1 0 0 1 1-1 2 2 0 0 0 0-4H8a2 2 0 0 0 0 4 1 1 0 0 1 1 1z"></path></svg>
+          <div style="font-size: 14px; color: var(--color-muted); flex: 1">Bulletin board</div>
+          <div style="font-size: 11px; font-weight: 600; color: #0C0C0E; background: var(--color-stuck); border-radius: 9px; padding: 1px 7px">2</div>
+        </div>
+        <div style="display: flex; align-items: center; gap: 12px; height: 38px; padding: 0 10px">
+          <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="#9B9BA4" stroke-width="1.8" style="width: 18px; height: 18px"><path d="M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z"></path></svg>
+          <div style="font-size: 14px; color: var(--color-muted); flex: 1">Crew chat</div>
+          <div style="font-size: 12px; color: var(--color-faint)">24</div>
+        </div>
+      </div>
+      <div style="flex: 1; display: flex; flex-direction: column; border-radius: var(--radius-md); background: var(--color-term); border: 1px solid var(--color-line); overflow: hidden">
+        <div style="height: 44px; display: flex; align-items: center; gap: 10px; padding: 0 14px; background: var(--color-surface); border-bottom: 1px solid var(--color-line); box-shadow: inset 0 2px 0 var(--color-crew)">
+          <div style="font-size: 11px; font-weight: 700; letter-spacing: 0.08em; color: var(--color-crew); background: color-mix(in oklab, var(--color-crew) 14%, transparent); border-radius: 5px; padding: 3px 7px">CREW</div>
+          <div style="font-size: 14px; font-weight: 600">crew-2</div>
+          <div style="font-family: var(--font-mono); font-size: 12px; color: var(--color-faint); flex: 1">crew-2/invite-api</div>
+          <div style="font-size: 12px; font-weight: 500; color: var(--color-glow-blue); background: color-mix(in oklab, var(--color-glow-blue) 16%, transparent); border-radius: 6px; padding: 2px 8px">Working</div>
+        </div>
+        <div style="display: flex; flex-direction: column; gap: 4px; padding: 14px; font-family: var(--font-mono); font-size: 12px; line-height: 18px">
+          <div style="color: var(--color-muted)">● claim_task() → T3 Invite API endpoints</div>
+          <div style="color: var(--color-muted)">● Bash npm test -- invites → 41 passed</div>
+          <div style="color: var(--color-crew)">● handoff(crew-5, "ready for the test station")</div>
+        </div>
+        <div style="height: 42px; display: flex; align-items: center; gap: 8px; padding: 0 14px; border-top: 1px solid var(--color-line)">
+          <div style="font-family: var(--font-mono); font-size: 13px; color: var(--color-crew)">›</div>
+          <div style="font-size: 13px; color: var(--color-faint)">Message crew-2…</div>
+        </div>
+      </div>
+    </div>
+    <div style="display: flex; flex-direction: column; border-radius: var(--radius-md); background: var(--color-surface); border: 1px solid var(--color-line); padding: 6px 20px">
+      <div style="display: flex; align-items: center; gap: 16px; height: 44px; border-bottom: 1px solid var(--color-line)">
+        <div style="width: 18px; flex-shrink: 0; display: flex; flex-direction: column">
+          <div style="width: 16px; height: 16px; border-radius: 4px; border: 1.5px solid var(--color-muted)"></div>
+        </div>
+        <div style="width: 200px; flex-shrink: 0; font-size: 13px; font-weight: 550">Branch</div>
+        <div style="width: 120px; flex-shrink: 0; font-size: 13px; font-weight: 550">Agent</div>
+        <div style="width: 130px; flex-shrink: 0; font-size: 13px; font-weight: 550">Status</div>
+        <div style="flex: 1; font-size: 13px; font-weight: 550">Task</div>
+        <div style="width: 110px; flex-shrink: 0; font-size: 13px; font-weight: 550">Updated</div>
+      </div>
+      <div style="display: flex; align-items: center; gap: 16px; height: 48px; border-bottom: 1px solid var(--color-line)">
+        <div style="width: 18px; flex-shrink: 0; display: flex; flex-direction: column">
+          <div style="width: 16px; height: 16px; border-radius: 4px; border: 1.5px solid var(--color-muted)"></div>
+        </div>
+        <div style="width: 200px; flex-shrink: 0; font-family: var(--font-mono); font-size: 13px">crew-2/invites-db</div>
+        <div style="width: 120px; flex-shrink: 0; display: flex; align-items: center; gap: 8px">
+          <div style="width: 8px; height: 8px; border-radius: 4px; background: var(--color-crew)"></div>
+          <div style="font-size: 14px">crew-2</div>
+        </div>
+        <div style="width: 130px; flex-shrink: 0; display: flex">
+          <div style="font-size: 13px; font-weight: 500; color: var(--color-success); background: color-mix(in oklab, var(--color-success) 16%, transparent); border-radius: 6px; padding: 3px 9px">Ready</div>
+        </div>
+        <div style="flex: 1; font-size: 14px; color: var(--color-muted)">T1 Invites table + migration</div>
+        <div style="width: 110px; flex-shrink: 0; font-size: 14px; color: var(--color-muted)">2 min ago</div>
+      </div>
+      <div style="display: flex; align-items: center; gap: 16px; height: 48px">
+        <div style="width: 18px; flex-shrink: 0; display: flex; flex-direction: column">
+          <div style="width: 16px; height: 16px; border-radius: 4px; border: 1.5px solid var(--color-muted)"></div>
+        </div>
+        <div style="width: 200px; flex-shrink: 0; font-family: var(--font-mono); font-size: 13px">crew-3/share-dialog</div>
+        <div style="width: 120px; flex-shrink: 0; display: flex; align-items: center; gap: 8px">
+          <div style="width: 8px; height: 8px; border-radius: 4px; background: var(--color-crew)"></div>
+          <div style="font-size: 14px">crew-3</div>
+        </div>
+        <div style="width: 130px; flex-shrink: 0; display: flex">
+          <div style="font-size: 13px; font-weight: 500; color: var(--color-stuck); background: color-mix(in oklab, var(--color-stuck) 16%, transparent); border-radius: 6px; padding: 3px 9px">Stuck</div>
+        </div>
+        <div style="flex: 1; font-size: 14px; color: var(--color-muted)">T4 Share dialog UI</div>
+        <div style="width: 110px; flex-shrink: 0; font-size: 14px; color: var(--color-muted)">4 min ago</div>
+      </div>
+    </div>
+  </div>
+</div>
+</body>
+</html>
