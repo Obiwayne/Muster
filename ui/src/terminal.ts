@@ -49,6 +49,9 @@ export class TermView {
   private resizeTimer: number | undefined;
   private lastSize = '';
   private hadData = false;
+  private pending = '';
+  private flushRaf = 0;
+  private flushTimer: number | undefined;
   onConnectionChange?: (connected: boolean) => void;
 
   constructor(private host: HTMLElement, readonly agentId: string) {
@@ -100,14 +103,15 @@ export class TermView {
       this.retry = 0;
       this.onConnectionChange?.(true);
       // The server replays the backlog on connect; start from a clean screen.
+      this.pending = '';
       if (this.hadData) this.term.reset();
       this.lastSize = '';
       this.doFit();
     };
     ws.onmessage = (ev) => {
       this.hadData = true;
-      if (typeof ev.data === 'string') this.term.write(ev.data);
-      else if (ev.data instanceof Blob) ev.data.arrayBuffer().then((b) => this.term.write(new Uint8Array(b)));
+      if (typeof ev.data === 'string') this.queueWrite(ev.data);
+      else if (ev.data instanceof Blob) ev.data.arrayBuffer().then((b) => this.queueWrite(new TextDecoder().decode(b, { stream: true })));
     };
     ws.onclose = () => {
       if (this.ws !== ws) return;
@@ -118,6 +122,28 @@ export class TermView {
       setTimeout(() => this.connect(), delay);
     };
     ws.onerror = () => ws.close();
+  }
+
+  /**
+   * The PTY delivers a TUI repaint as several small chunks (erase, then redraw). Writing each one as it
+   * arrives lets a frame land between them and shows a half-drawn screen; batch to one write per frame.
+   */
+  private queueWrite(data: string): void {
+    this.pending += data;
+    if (this.flushRaf || this.flushTimer) return;
+    this.flushRaf = requestAnimationFrame(() => this.flush());
+    // rAF is paused in hidden windows; keep draining so the backlog doesn't grow unbounded.
+    this.flushTimer = window.setTimeout(() => this.flush(), 100);
+  }
+
+  private flush(): void {
+    cancelAnimationFrame(this.flushRaf);
+    clearTimeout(this.flushTimer);
+    this.flushRaf = 0;
+    this.flushTimer = undefined;
+    const data = this.pending;
+    this.pending = '';
+    if (data && !this.disposed) this.term.write(data);
   }
 
   private send(msg: TermClientMessage): void {
@@ -148,6 +174,8 @@ export class TermView {
     if (this.disposed) return;
     this.disposed = true;
     clearTimeout(this.resizeTimer);
+    cancelAnimationFrame(this.flushRaf);
+    clearTimeout(this.flushTimer);
     this.ro.disconnect();
     const ws = this.ws;
     this.ws = null;

@@ -58,7 +58,9 @@ class Tile {
 
   update(state: MusterState, a: Agent): void {
     this.agent = a;
-    this.el.className = `tile r-${a.role}`;
+    // Not `className =`: that would wipe the transient `flash` class and cut its animation short on every snapshot.
+    for (const c of Array.from(this.el.classList)) if (c.startsWith('r-') && c !== `r-${a.role}`) this.el.classList.remove(c);
+    this.el.classList.add('tile', `r-${a.role}`);
     this.badge.className = `badge b-${a.role}`;
     this.badge.textContent = a.role;
     this.name.textContent = a.id;
