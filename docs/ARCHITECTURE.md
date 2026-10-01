@@ -168,6 +168,8 @@ Muster acts as a read-only MCP client to the Vellum server (`vellumServer(config
 
 ### New apps (src/core/newproject.ts, src/core/github.ts, src/cli/newapp.ts)
 
+Any folder: Muster needs a git repo with a commit (worktrees branch from it). `muster up --create` / `muster init --create` call `prepareRepo` (`src/cli/setup.ts`): not a repo → `git init -b main`; empty folder → `README.md` (`# <folder>`); no `.gitignore` → node_modules, dist, .env, .muster/; then `git add -A` and `Initial commit (set up by Muster)` (placeholder identity for that commit only if none is set, never global config). A subfolder of a repo resolves to the repo root, nothing is nested. Without the flag the old errors stay. `muster init --inspect` prints JSON `{state, root, files, bytes, large}` (large = over 5,000 files or 200 MB, ignored files not counted); the desktop app uses it to show a confirm dialog ("Set up and open" runs `muster up --create`, with the count if large).
+
 Start from nothing: `muster new "<idea>" [--dir <parent>] [--title <t>] [--no-open]` calls `createNewProject({ parentDir, idea, title? })`, which makes `<parent>/<slug>` (slug from the title, else `idea-YYYY-MM-DD`; `-2`, `-3`… on a clash), runs `git init -b main`, writes `README.md` (`# <title|Untitled idea>` + the idea) and `.gitignore` (node_modules, dist, .env), makes the first commit (your git identity; if none is set, `-c user.name=Muster -c user.email=muster@localhost` for that one commit only), runs `initMuster` and returns `{ root, slug }`. The CLI then starts the orchestrator like `muster up`, POSTs the idea to `/api/ask` (retrying while the Captain starts) and prints the path.
 
 | Method | Path | Body | Returns |

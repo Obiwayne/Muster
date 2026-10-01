@@ -63,14 +63,6 @@ function cli(args, cwd) {
   });
 }
 
-function gitRoot(dir) {
-  try {
-    return execFileSync('git', ['rev-parse', '--show-toplevel'], { cwd: dir, encoding: 'utf8', windowsHide: true }).trim().replace(/\//g, path.sep);
-  } catch {
-    return null;
-  }
-}
-
 function serverPort(root) {
   try {
     return JSON.parse(fs.readFileSync(path.join(root, '.muster', 'server.json'), 'utf8')).port;
@@ -137,10 +129,39 @@ function showPicker() {
   buildMenu();
 }
 
+// Ask the CLI whether the folder is ready; if not, offer to set it up (local git only, nothing is uploaded).
+async function confirmSetup(dir) {
+  const r = await cli(['init', '--inspect'], dir);
+  let info;
+  try {
+    info = JSON.parse(r.out);
+  } catch {
+    return { ok: false, error: r.out || `Could not look at ${dir}.` };
+  }
+  if (info.state === 'ready') return { ok: true, root: info.root, create: false };
+  const name = path.basename(info.root);
+  let detail = `${name} isn't set up for Muster yet. Muster will make it a local git repo and commit the files that are there now. Nothing is uploaded to GitHub.`;
+  if (info.large) detail += `
+
+Heads up: that is ${info.files.toLocaleString()} files (${Math.round(info.bytes / 1048576).toLocaleString()} MB), more than usual. The first commit may take a while.`;
+  const { response } = await dialog.showMessageBox(win, {
+    type: 'question',
+    title: 'Set up this folder?',
+    message: `Set up ${name} for Muster?`,
+    detail,
+    buttons: ['Set up and open', 'Cancel'],
+    defaultId: 0,
+    cancelId: 1,
+  });
+  if (response !== 0) return { ok: false, canceled: true };
+  return { ok: true, root: info.root, create: true };
+}
+
 async function openProject(dir) {
-  const root = gitRoot(dir);
-  if (!root) return { ok: false, error: `${dir} is not inside a git repository. Run \`git init\` and make a first commit there.` };
-  const r = await cli(['up', '--no-ui'], root);
+  const c = await confirmSetup(dir);
+  if (!c.ok) return c;
+  const root = c.root.replace(/\//g, path.sep);
+  const r = await cli(['up', '--no-ui', ...(c.create ? ['--create'] : [])], root);
   const port = serverPort(root);
   if (!r.ok || !port) return { ok: false, error: r.out || 'Muster did not start. See .muster/logs/orchestrator.log in the project.' };
   remember(root);
@@ -263,7 +284,7 @@ async function chooseAndOpen() {
   const r = await dialog.showOpenDialog(win, { title: 'Open a project for Muster', properties: ['openDirectory'] });
   if (r.canceled || !r.filePaths[0]) return { ok: false, canceled: true };
   const res = await openProject(r.filePaths[0]);
-  if (!res.ok) await dialog.showMessageBox(win, { type: 'error', title: 'Could not open project', message: res.error });
+  if (!res.ok && !res.canceled) await dialog.showMessageBox(win, { type: 'error', title: 'Could not open project', message: res.error });
   return res;
 }
 
@@ -312,7 +333,7 @@ ipcMain.handle('app:switch', async (event, root) => {
   if (!fromWindow(event)) return { ok: false, error: 'not allowed' };
   if (current && String(root).toLowerCase() === current.root.toLowerCase()) return { ok: true };
   const r = await openProject(String(root)); // the project being left keeps its crew running
-  if (!r.ok) await dialog.showMessageBox(win, { type: 'error', title: 'Could not open project', message: r.error });
+  if (!r.ok && !r.canceled) await dialog.showMessageBox(win, { type: 'error', title: 'Could not open project', message: r.error });
   return r;
 });
 ipcMain.handle('app:openFolder', (event) => (fromWindow(event) ? chooseAndOpen() : null));

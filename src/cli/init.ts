@@ -3,6 +3,7 @@ import { execFileSync } from 'node:child_process';
 import { existsSync, mkdirSync, readFileSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { CliError, gitMainRoot } from './context.js';
+import { prepareRepo } from './setup.js';
 
 export interface InitResult {
   root: string;
@@ -18,13 +19,15 @@ function gitOk(cwd: string, args: string[]): string | null {
 }
 
 /** `exact`: cwd is the repo root itself (skips MUSTER_REPO / worktree discovery). */
-export function initMuster(cwd: string, exact = false): InitResult {
+export function initMuster(cwd: string, exact = false, create = false): InitResult {
+  const setup = create ? prepareRepo(cwd) : null;
+  if (setup && !exact && process.env.MUSTER_REPO === undefined) cwd = setup.root;
   const root = exact ? cwd : gitMainRoot(cwd);
-  if (!root) throw new CliError('Not a git repository. Run `git init` in your project first (Muster works on one git repo).');
+  if (!root) throw new CliError('Not a git repository. Run `muster init --create` to set it up, or `git init` and make a first commit.');
   if (gitOk(root, ['rev-parse', '--verify', '--quiet', 'HEAD']) === null) {
-    throw new CliError('This repo has no commits yet. Make a first commit (worktrees branch from it), then run muster again.');
+    throw new CliError('This repo has no commits yet. Run `muster init --create` to make the first commit, or commit yourself (worktrees branch from it).');
   }
-  const created: string[] = [];
+  const created: string[] = setup ? setup.did.map((d) => `(${d})`) : [];
   const dir = join(root, '.muster');
   for (const sub of ['', 'logs', 'agents', 'worktrees']) {
     const p = join(dir, sub);
