@@ -86,14 +86,15 @@ export function showStationEditor(opts: StationEditorOpts): void {
   }
 
   async function removeStation(name: string): Promise<void> {
-    const builtIn = saved[name]?.builtIn;
-    const [title, text, ok] = builtIn
+    const builtin = saved[name]?.builtin;
+    const [title, text, ok] = builtin
       ? [`Reset ${name}?`, `${name} goes back to its default role and loses its guideline.`, 'Reset']
       : [`Remove ${name}?`, `Tasks created from now on skip the ${name} station, and its guideline is deleted from this machine.`, 'Remove'];
     if (!(await confirmDialog(title, text, ok, 'danger'))) return;
     try {
       await api.deleteStation(name);
       delete drafts[name];
+      if (!builtin) await opts.setOrder(order.filter((n) => n !== name));
       await load();
     } catch (e) { errToast(e); }
   }
@@ -168,7 +169,7 @@ export function showStationEditor(opts: StationEditorOpts): void {
       h('div.se-head', null,
         h('div.se-title', null, current, isDirty(current) ? h('span.unsaved', { title: 'Unsaved changes' }) : null),
         h('label.se-role', null, h('span.muted', null, 'Role'), h('div.select-wrap', null, roleSel, icon('chevron', 14))),
-        isReview ? null : h('button.btn.danger', { onclick: () => void removeStation(current) }, s.builtIn ? 'Reset' : 'Remove')),
+        isReview ? null : h('button.btn.danger', { onclick: () => void removeStation(current) }, s.builtin ? 'Reset' : 'Remove')),
       h('div.se-tabs', null,
         h('button', { class: tab === 'edit' && 'on', onclick: () => { tab = 'edit'; draw(); } }, 'Edit'),
         h('button', { class: tab === 'preview' && 'on', onclick: () => { tab = 'preview'; draw(); } }, 'Preview'),
