@@ -1,0 +1,61 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8" />
+<meta http-equiv="Content-Security-Policy" content="default-src 'self'; style-src 'self' 'unsafe-inline' https://fonts.googleapis.com; font-src https://fonts.gstatic.com; script-src 'self' 'unsafe-inline'" />
+<title>Close Muster</title>
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Geist:wght@400;500;600&display=swap" />
+<style>
+  :root { --bg: #111113; --surface: #19191C; --surface-2: #222226; --line: #2D2D32; --text: #F4F4F5; --muted: #9B9BA4; --faint: #62626B; --warm: #FF7A1A; }
+  * { box-sizing: border-box; }
+  html, body { margin: 0; height: 100%; background: transparent; font-family: Geist, 'Segoe UI', sans-serif; color: var(--text); -webkit-font-smoothing: antialiased; user-select: none; }
+  .card { height: 100%; display: flex; flex-direction: column; gap: 18px; padding: 24px; background: var(--surface); border: 1px solid var(--line); border-radius: 14px; position: relative; overflow: hidden; }
+  .glow { position: absolute; right: -80px; top: -120px; width: 280px; height: 240px; border-radius: 50%; background: radial-gradient(closest-side, color-mix(in oklab, var(--warm) 22%, transparent), transparent); pointer-events: none; }
+  .head { display: flex; gap: 14px; align-items: flex-start; position: relative; }
+  .icon { width: 36px; height: 36px; flex-shrink: 0; border-radius: 10px; background: var(--surface-2); border: 1px solid var(--line); display: flex; align-items: center; justify-content: center; }
+  h1 { margin: 0 0 6px; font-size: 16px; font-weight: 600; letter-spacing: -0.01em; }
+  p { margin: 0; font-size: 13px; line-height: 20px; color: var(--muted); }
+  .actions { display: flex; gap: 10px; align-items: center; margin-top: auto; position: relative; }
+  button { font: inherit; cursor: pointer; border: none; border-radius: 8px; height: 38px; padding: 0 16px; font-size: 13px; }
+  .primary { background: var(--text); color: var(--bg); font-weight: 600; }
+  .primary:hover { background: #fff; }
+  .secondary { background: var(--surface-2); color: var(--text); border: 1px solid var(--line); }
+  .secondary:hover { border-color: #3a3a40; }
+  .ghost { background: transparent; color: var(--muted); padding: 0 10px; }
+  .ghost:hover { color: var(--text); }
+  button:focus-visible { outline: 2px solid color-mix(in oklab, var(--warm) 70%, transparent); outline-offset: 2px; }
+  .remember { display: flex; align-items: center; gap: 8px; font-size: 12px; color: var(--muted); cursor: pointer; margin-right: auto; }
+  .remember input { appearance: none; width: 16px; height: 16px; margin: 0; border-radius: 4px; border: 1.5px solid var(--faint); display: grid; place-content: center; cursor: pointer; }
+  .remember input:checked { background: var(--text); border-color: var(--text); }
+  .remember input:checked::after { content: ''; width: 8px; height: 5px; border: 2px solid var(--bg); border-top: 0; border-right: 0; transform: rotate(-45deg) translate(1px, -1px); }
+</style>
+</head>
+<body>
+<div class="card">
+  <div class="glow"></div>
+  <div class="head">
+    <div class="icon"><svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="#F4F4F5" stroke-width="2" stroke-linecap="round"><path d="M18.36 6.64a9 9 0 1 1-12.73 0"/><path d="M12 2v10"/></svg></div>
+    <div>
+      <h1 id="title">Stop the crew?</h1>
+      <p>Stopping ends every agent's session. Keep running and they carry on in the background; open this project again to come back.</p>
+    </div>
+  </div>
+  <div class="actions">
+    <label class="remember"><input type="checkbox" id="remember" /> Remember my choice</label>
+    <button class="ghost" id="cancel">Cancel</button>
+    <button class="secondary" id="keep">Keep running</button>
+    <button class="primary" id="stop">Stop the crew</button>
+  </div>
+</div>
+<script>
+  const project = new URLSearchParams(location.search).get('project') || 'this project';
+  document.getElementById('title').textContent = `Stop the crew working on ${project}?`;
+  const done = (choice) => window.muster.closeChoice({ choice, remember: document.getElementById('remember').checked });
+  document.getElementById('stop').onclick = () => done('stop');
+  document.getElementById('keep').onclick = () => done('keep');
+  document.getElementById('cancel').onclick = () => done('cancel');
+  document.addEventListener('keydown', (e) => { if (e.key === 'Escape') done('cancel'); });
+  document.getElementById('stop').focus();
+</script>
+</body>
+</html>

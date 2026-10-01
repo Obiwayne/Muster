@@ -155,25 +155,60 @@ async function stopProject(root, clean = false) {
   return cli(['down', ...(clean ? ['--clean'] : [])], root);
 }
 
+let askingClose = false;
+
+// The close prompt: a small frameless window styled like the app (a native message box looks foreign).
+function askClose(project) {
+  return new Promise((resolve) => {
+    const [w, h] = [520, 200];
+    const b = win.getBounds();
+    const dlg = new BrowserWindow({
+      parent: win,
+      modal: true,
+      width: w,
+      height: h,
+      x: Math.round(b.x + (b.width - w) / 2),
+      y: Math.round(b.y + (b.height - h) / 2),
+      frame: false,
+      resizable: false,
+      minimizable: false,
+      maximizable: false,
+      transparent: true,
+      backgroundColor: '#00000000',
+      show: false,
+      skipTaskbar: true,
+      webPreferences: { preload: path.join(__dirname, 'preload.cjs'), contextIsolation: true, sandbox: true },
+    });
+    let settled = false;
+    const finish = (r) => {
+      if (settled) return;
+      settled = true;
+      ipcMain.removeListener('muster:closeChoice', onChoice);
+      if (!dlg.isDestroyed()) dlg.destroy();
+      resolve(r);
+    };
+    const onChoice = (event, r) => {
+      if (event.sender === dlg.webContents) finish(r ?? { choice: 'cancel' });
+    };
+    ipcMain.on('muster:closeChoice', onChoice);
+    dlg.on('closed', () => finish({ choice: 'cancel' }));
+    dlg.once('ready-to-show', () => dlg.show());
+    void dlg.loadFile(path.join(__dirname, 'close-dialog.html'), { query: { project } });
+  });
+}
+
 // Closing the window: stop the crew, or leave it working in the background.
 async function onClose(e) {
   if (quitting || !current) return;
   e.preventDefault();
+  if (askingClose) return;
   let choice = loadSettings().onClose;
   if (choice === 'ask') {
-    const r = await dialog.showMessageBox(win, {
-      type: 'question',
-      title: 'Close Muster',
-      message: `Stop the crew working on ${current.name}?`,
-      detail: 'Keep running: the agents carry on in the background, and you can come back by opening this project again.',
-      buttons: ['Stop the crew', 'Keep running', 'Cancel'],
-      defaultId: 0,
-      cancelId: 2,
-      checkboxLabel: 'Remember my choice',
-    });
-    if (r.response === 2) return;
-    choice = r.response === 0 ? 'stop' : 'keep';
-    if (r.checkboxChecked) saveSettings({ ...loadSettings(), onClose: choice });
+    askingClose = true;
+    const r = await askClose(current.name).finally(() => (askingClose = false));
+    if (r.choice !== 'stop' && r.choice !== 'keep') return;
+    choice = r.choice;
+    if (r.remember) saveSettings({ ...loadSettings(), onClose: choice });
   }
   if (choice === 'stop') {
     win.setTitle(`Muster · stopping ${current.name}…`);
