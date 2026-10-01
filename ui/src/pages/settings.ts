@@ -6,6 +6,7 @@ import type { Page } from '../page';
 import { api } from '../api';
 import { errToast } from '../actions';
 import { stationRole } from '../util';
+import { showStationEditor } from '../stationeditor';
 
 const MODELS = [
   { value: 'opus', label: 'Opus' },
@@ -33,6 +34,7 @@ function withCurrent(opts: { value: string; label: string }[], v: string) {
 export function createSettings(): Page {
   let cfg: MusterConfig | null = null;
   let lastJson = '';
+  let apiRoles: Record<string, string> = {}; // station roles from GET /api/stations, when the server has it
   const body = h('div.settings');
   const el = h('div.page', null, body);
 
@@ -96,7 +98,7 @@ export function createSettings(): Page {
     const draw = () => {
       const parts: HTMLElement[] = [];
       stations.forEach((s, i) => {
-        parts.push(h('span.st-chip', { class: `r-${stationRole(s)}` }, s,
+        parts.push(h('span.st-chip', { class: `r-${apiRoles[s] ?? stationRole(s)}` }, s,
           h('button.x', { title: `Remove ${s}`, onclick: () => { stations.splice(i, 1); draw(); saveStations(stations); } }, '×')));
         parts.push(h('span.st-arrow', null, '→'));
       });
@@ -129,6 +131,21 @@ export function createSettings(): Page {
       const [command, ...args] = parts;
       save({ vellum: { command, args, ...(c.vellum?.env ? { env: c.vellum.env } : {}) } });
     }, { mono: true, width: 260, placeholder: 'node F:/Vellum/mcp/dist/index.js' });
+  }
+
+  async function loadRoles(): Promise<void> {
+    try {
+      const res = await api.stations();
+      const next = Object.fromEntries(res.stations.map((s) => [s.name, s.role]));
+      if (JSON.stringify(next) !== JSON.stringify(apiRoles)) { apiRoles = next; if (cfg) render(cfg); }
+    } catch { /* older server: chips keep their built-in colours */ }
+  }
+
+  function editLine(): void {
+    showStationEditor({
+      setOrder: async (names) => { await save({ defaultStations: [...names, 'review'] }); },
+      onClose: () => { void loadRoles(); },
+    });
   }
 
   function render(c: MusterConfig): void {
@@ -165,7 +182,9 @@ export function createSettings(): Page {
               ctl(pctInput(c.pauseAtFiveHourPct, (v) => save({ pauseAtFiveHourPct: v })), 120)),
             row('Warn me at', 'Weekly window',
               ctl(pctInput(c.warnAtWeeklyPct, (v) => save({ warnAtWeeklyPct: v })), 120))),
-          panel('Factory line and review',
+          h('div.panel', null,
+            h('div.panel-head', null, h('div.section-label', null, 'Factory line and review'),
+              h('button.btn.sm', { onclick: editLine, title: 'Reorder stations and edit the role and guideline of each station' }, 'Edit line')),
             h('div.srow.col', null, h('div.lbl', null, h('div.t', null, 'Default stations')), stationsEditor(c)),
             row('Test command', 'Run by the Captain in each worktree',
               ctl(textInput(c.testCommand, (v) => save({ testCommand: v }), { mono: true }))),
@@ -184,6 +203,7 @@ export function createSettings(): Page {
       lastJson = json;
       cfg = s.config;
       render(s.config);
+      void loadRoles();
     },
   };
 }

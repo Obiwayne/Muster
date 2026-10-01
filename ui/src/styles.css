@@ -520,3 +520,49 @@ textarea.field { height: auto; min-height: 40px; padding: 10px 14px; resize: ver
 .srow .ctl > .select-wrap { width: 100%; }
 .st-chip .x { display: none; opacity: .8; }
 .st-chip:hover .x { display: inline; }
+
+/* ---------- Edit line (station editor) ---------- */
+.panel-head { display: flex; align-items: center; justify-content: space-between; padding: 10px 18px 8px 0; }
+.panel-head .section-label { padding: 4px 18px; }
+.se { display: flex; flex-direction: column; flex: 1; min-height: 0; }
+.se-body { display: flex; flex: 1; min-height: 0; }
+.se-list { width: 220px; flex-shrink: 0; display: flex; flex-direction: column; gap: 4px; padding: 16px 12px; border-right: 1px solid var(--color-line); overflow: auto; }
+.se-list .section-label { padding: 0 8px 6px; }
+.se-item { display: flex; align-items: center; gap: 8px; padding: 7px 8px; border-radius: var(--radius-sm); cursor: pointer; font-size: var(--text-sm); color: var(--color-muted); }
+.se-item:hover, .se-item.on { background: var(--color-surface-2); color: var(--color-text); }
+.se-item .dot { width: 8px; height: 8px; border-radius: 50%; background: var(--role); flex-shrink: 0; }
+.se-item .nm { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; }
+.se-item .mv { display: none; gap: 2px; }
+.se-item:hover .mv { display: flex; }
+.se-item .mv .icon-btn:disabled { opacity: .3; }
+.se-item .pin { color: var(--icon); display: flex; }
+.unsaved { width: 7px; height: 7px; border-radius: 50%; background: var(--color-captain); display: inline-block; margin-left: 6px; flex-shrink: 0; }
+.se-edit { flex: 1; min-width: 0; display: flex; flex-direction: column; gap: 12px; padding: 16px 22px; }
+.se-head { display: flex; align-items: center; gap: 14px; }
+.se-title { font-size: var(--text-lg); font-weight: 600; flex: 1; display: flex; align-items: center; }
+.se-role { display: flex; align-items: center; gap: 8px; font-size: var(--text-sm); }
+.se-tabs { display: flex; align-items: center; gap: 4px; }
+.se-tabs > button:not(.btn) { padding: 5px 12px; border-radius: 8px; font-size: var(--text-sm); color: var(--color-muted); }
+.se-tabs > button.on { background: var(--color-surface-2); color: var(--color-text); }
+.se-tabs .sp { flex: 1; }
+.se-count { font-size: var(--text-xs); color: var(--color-faint); margin-right: 8px; }
+.se-count.over { color: var(--color-stuck); }
+.se-text, .se-preview { flex: 1; min-height: 0; border: 1px solid var(--color-line); border-radius: var(--radius-sm); background: var(--color-term); padding: 12px 14px; overflow: auto; }
+.se-text { font-family: var(--font-mono); font-size: 12.5px; line-height: 19px; resize: none; color: var(--color-text); }
+.se-preview { font-size: var(--text-sm); line-height: 21px; }
+.se-preview h1, .se-preview h2, .se-preview h3 { font-weight: 600; margin: 12px 0 6px; }
+.se-preview h1 { font-size: 18px; } .se-preview h2 { font-size: 16px; } .se-preview h3 { font-size: 14px; }
+.se-preview p, .se-preview ul, .se-preview ol, .se-preview pre, .se-preview blockquote { margin: 0 0 10px; }
+.se-preview ul, .se-preview ol { padding-left: 22px; }
+.se-preview ul { list-style: disc; } .se-preview ol { list-style: decimal; }
+.se-preview code { font-family: var(--font-mono); font-size: 12px; background: var(--color-surface-2); padding: 1px 5px; border-radius: 4px; }
+.se-preview pre { background: var(--color-surface); border: 1px solid var(--color-line); border-radius: 8px; padding: 10px 12px; overflow: auto; }
+.se-preview pre code { background: none; padding: 0; }
+.se-preview blockquote { border-left: 3px solid var(--color-line); padding-left: 12px; color: var(--color-muted); }
+.se-preview a { color: var(--color-glow-blue); text-decoration: underline; }
+.se-preview hr { border: 0; border-top: 1px solid var(--color-line); margin: 12px 0; }
+.se-note { font-size: var(--text-xs); color: var(--color-faint); }
+.se-foot { display: flex; justify-content: flex-end; gap: 10px; }
+.se-warn { display: flex; align-items: center; gap: 10px; padding: 10px 22px; background: color-mix(in oklab, var(--color-captain) 14%, transparent); color: var(--color-captain); font-size: var(--text-sm); }
+.se-warn span { flex: 1; }
+.se-error { padding: 22px; color: var(--color-stuck); font-size: var(--text-sm); }
