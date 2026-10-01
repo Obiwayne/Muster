@@ -53,7 +53,17 @@ export function append(el: Node, children: Child[]): void {
 export function setChildren(el: Element, ...children: Child[]): void {
   const frag = document.createDocumentFragment();
   append(frag, children);
+  // Snapshots arrive often; leave the DOM alone when the new content renders identically,
+  // so lists don't flash, lose hover state or restart transitions.
+  const next = Array.from(frag.childNodes);
+  const prev = Array.from(el.childNodes);
+  if (next.length === prev.length && next.every((n, i) => sameNode(n, prev[i]))) return;
   el.replaceChildren(frag);
+}
+
+function sameNode(a: Node, b: Node): boolean {
+  if (a.nodeType !== b.nodeType) return false;
+  return a instanceof Element ? a.outerHTML === (b as Element).outerHTML : a.textContent === b.textContent;
 }
 
 // ---- icons (paths from the design exports; stroke = currentColor) ----

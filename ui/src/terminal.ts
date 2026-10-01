@@ -1,6 +1,7 @@
 // One live xterm.js terminal per agent tile, attached over ws://<host>/ws/term/<id>.
 import { Terminal } from '@xterm/xterm';
 import { FitAddon } from '@xterm/addon-fit';
+import { WebglAddon } from '@xterm/addon-webgl';
 import '@xterm/xterm/css/xterm.css';
 import type { TermClientMessage } from '../../src/types';
 import { wsUrl } from './events';
@@ -69,10 +70,26 @@ export class TermView {
     waitForFonts().then(() => {
       if (this.disposed) return;
       this.term.open(this.host);
+      this.useWebgl();
       this.ro.observe(this.host);
       this.doFit();
       this.connect();
     });
+  }
+
+  /**
+   * Claude's TUI repaints its screen many times a second (spinner, status line). The default DOM
+   * renderer rebuilds every row as elements on each repaint, which flickers; WebGL draws to a canvas.
+   * Falls back to the DOM renderer when WebGL isn't available or its context is lost.
+   */
+  private useWebgl(): void {
+    try {
+      const webgl = new WebglAddon();
+      webgl.onContextLoss(() => webgl.dispose());
+      this.term.loadAddon(webgl);
+    } catch {
+      // DOM renderer stays in place
+    }
   }
 
   private connect(): void {
