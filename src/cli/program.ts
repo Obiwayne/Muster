@@ -4,6 +4,7 @@ import * as cmd from './commands.js';
 import { CliError, defaultCtx, type Ctx } from './context.js';
 import { initMuster } from './init.js';
 import { attach, chat } from './live.js';
+import { newApp } from './newapp.js';
 import { down, ui, up } from './lifecycle.js';
 
 function int(v: string): number {
@@ -26,6 +27,14 @@ export function buildProgram(ctx: Ctx): Command {
       const r = initMuster(ctx.repoRoot ?? ctx.cwd);
       ctx.out(r.created.length ? `Muster set up in ${r.root}: ${r.created.join(', ')}` : `Muster is already set up in ${r.root}.`);
     });
+
+  program
+    .command('new <idea...>')
+    .description('start a new app from an idea: make a git project, start Muster in it and ask the Captain')
+    .option('--dir <parent>', 'folder to create the project in (default: here)')
+    .option('--title <t>', 'project title (names the folder)')
+    .option('--no-open', "don't open the dashboard")
+    .action((idea: string[], o: { dir?: string; title?: string; open: boolean }) => newApp(ctx, idea.join(' '), o));
 
   program
     .command('up')

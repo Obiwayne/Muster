@@ -5,7 +5,7 @@ import { defaultLineName, getLine } from './lines.js';
 import type { MusterPaths } from './paths.js';
 import { readUserName, writeUserName } from './user.js';
 
-function readPartial(p: MusterPaths): Partial<MusterConfig> {
+export function readPartial(p: MusterPaths): Partial<MusterConfig> {
   if (!existsSync(p.config)) return {};
   try {
     return JSON.parse(readFileSync(p.config, 'utf8')) as Partial<MusterConfig>;
