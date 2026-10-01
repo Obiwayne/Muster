@@ -41,23 +41,10 @@ export async function attach(ctx: Ctx, agent: string): Promise<void> {
     }
     send({ type: 'input', data: buf.toString('utf8') });
   };
-  // Claude's TUI repaints in many small PTY chunks; writing each one separately shows half-drawn frames.
-  // Coalesce whatever arrives within a few ms into a single write.
-  let pending: Buffer[] = [];
-  let flushTimer: NodeJS.Timeout | null = null;
-  const flush = () => {
-    if (flushTimer) clearTimeout(flushTimer);
-    flushTimer = null;
-    if (!pending.length) return;
-    const out = Buffer.concat(pending);
-    pending = [];
-    stdout.write(out);
-  };
   let cleaned = false;
   const cleanup = () => {
     if (cleaned) return;
     cleaned = true;
-    flush();
     stdin.off('data', onData);
     stdout.off('resize', sendResize);
     if (stdin.isTTY) stdin.setRawMode(false);
@@ -75,8 +62,7 @@ export async function attach(ctx: Ctx, agent: string): Promise<void> {
       sendResize();
     });
     ws.on('message', (data: WebSocket.RawData) => {
-      pending.push(Array.isArray(data) ? Buffer.concat(data) : Buffer.from(data as ArrayBuffer));
-      flushTimer ??= setTimeout(flush, 8);
+      stdout.write(Array.isArray(data) ? Buffer.concat(data) : Buffer.from(data as ArrayBuffer));
     });
     ws.on('close', () => {
       cleanup();
