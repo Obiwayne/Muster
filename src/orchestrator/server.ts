@@ -18,12 +18,16 @@ import { TokenBook, type Caller } from './auth.js';
 import { nodePtyLauncher, type PtyLauncher } from './terminal.js';
 import { Coalescer } from '../core/coalesce.js';
 
+import type { VellumCall } from '../core/vellum.js';
+
 export interface OrchestratorOptions {
   repoRoot: string;
   /** Overrides config.port; 0 picks a free port. */
   port?: number;
   launcher?: PtyLauncher;
   uiDir?: string;
+  /** Test seam: replaces the real Vellum MCP call behind GET /api/vellum. */
+  vellumCall?: VellumCall;
   timings?: Partial<Timings>;
   /** Resume previously running agents and create the Captain if missing (default true). */
   autoStart?: boolean;
@@ -160,6 +164,7 @@ export async function startOrchestrator(opts: OrchestratorOptions): Promise<Orch
     notify: (title, text) => notify(config, title, text),
     toast: (level, text) => broadcast({ type: 'toast', level, text }),
     shutdown: (clean) => void shutdown(clean).then(() => opts.onShutdown?.()),
+    vellumCall: opts.vellumCall,
   });
 
   const serveUi = (res: ServerResponse, pathname: string) => {

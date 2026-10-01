@@ -8,6 +8,7 @@ import * as gitOps from '../core/git.js';
 import type { MusterPaths } from '../core/paths.js';
 import type { Store } from '../core/store.js';
 import * as tasks from '../core/tasks.js';
+import { createVellumChecker, type VellumCall } from '../core/vellum.js';
 import { applyUsage, refreshGuard, type RawUsage } from '../core/usage.js';
 import type { AgentManager } from './agents.js';
 import { applyIdentity, forbiddenReason, type Caller } from './auth.js';
@@ -22,6 +23,8 @@ export interface ApiContext {
   notify(title: string, text: string): void;
   toast(level: 'info' | 'warn', text: string): void;
   shutdown(clean: boolean): void;
+  /** Test seam: replaces the real Vellum MCP call. */
+  vellumCall?: VellumCall;
 }
 
 interface Req {
@@ -43,7 +46,7 @@ const TEST_TIMEOUT_MS = 10 * 60_000;
 const MAX_BODY = 2 * 1024 * 1024;
 const CONFIG_KEYS = new Set<string>([
   'port', 'captainModel', 'crewModel', 'designModel', 'maxCrew', 'pauseAtFiveHourPct', 'warnAtWeeklyPct', 'shutdownIdleCrew',
-  'defaultStations', 'testCommand', 'baseBranch', 'permissionMode', 'claudePath', 'vellum', 'notify', 'allowedTools', 'projectName', 'userName',
+  'defaultStations', 'testCommand', 'baseBranch', 'permissionMode', 'claudePath', 'vellum', 'notify', 'allowedTools', 'projectName', 'userName', 'vellumFile',
 ]);
 
 const str = (v: unknown, name: string): string => {
@@ -55,6 +58,7 @@ const flag = (q: URLSearchParams, k: string) => q.get(k) === '1' || q.get(k) ===
 export function createApi(ctx: ApiContext) {
   const { store, agents } = ctx;
   const state = () => store.state;
+  const vellum = createVellumChecker({ call: ctx.vellumCall });
   const routes: Route[] = [];
   const route = (method: string, path: string, handler: Handler) => {
     const keys: string[] = [];
@@ -86,6 +90,8 @@ export function createApi(ctx: ApiContext) {
   route('GET', '/api/config', () => ctx.config());
   route('PATCH', '/api/config', ({ body }) => {
     const patch = Object.fromEntries(Object.entries(body).filter(([k]) => CONFIG_KEYS.has(k))) as ConfigPatch;
+    if (patch.vellumFile !== undefined && patch.vellumFile !== null && typeof patch.vellumFile !== 'string') throw badRequest('vellumFile must be a string, or null to clear it');
+    if (patch.vellumFile === '') patch.vellumFile = null;
     const before = ctx.config().userName;
     const config = ctx.updateConfig(patch);
     return mutate(() => {
@@ -100,6 +106,7 @@ export function createApi(ctx: ApiContext) {
       return config;
     });
   });
+  route('GET', '/api/vellum', ({ query }) => vellum.check(ctx.config(), flag(query, 'refresh')));
   route('POST', '/api/shutdown', ({ body }) => {
     setImmediate(() => ctx.shutdown(Boolean(body.clean)));
     return { ok: true };

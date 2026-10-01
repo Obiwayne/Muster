@@ -126,14 +126,15 @@ export function rolePrompt(agent: Agent, ctx: LaunchContext): string {
     baseBranch: ctx.config.baseBranch,
     testCommand: ctx.config.testCommand,
     projectName: ctx.config.projectName ?? '',
+    vellumFile: ctx.config.vellumFile?.trim() || undefined,
     userName: ctx.config.userName,
   };
   return agent.role === 'captain' ? captainPrompt(p) : agent.role === 'design' ? designPrompt(p) : crewPrompt(p);
 }
 
-function vellumServer(config: MusterConfig): MusterConfig['vellum'] {
+export function vellumServer(config: MusterConfig, defaultEntry = DEFAULT_VELLUM_ENTRY): MusterConfig['vellum'] {
   if (config.vellum) return config.vellum;
-  return existsSync(DEFAULT_VELLUM_ENTRY) ? { command: posix(process.execPath), args: [DEFAULT_VELLUM_ENTRY] } : undefined;
+  return existsSync(defaultEntry) ? { command: posix(process.execPath), args: [defaultEntry] } : undefined;
 }
 
 export function mcpConfig(agent: Agent, ctx: LaunchContext): object {

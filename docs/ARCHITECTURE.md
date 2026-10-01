@@ -57,7 +57,7 @@ design claude ──stdio──► Vellum MCP (node F:/Vellum/mcp/dist/index.js)
 
 ```
 <repo>/.muster/
-  config.json          MusterConfig (partial; merged over DEFAULT_CONFIG)
+  config.json          MusterConfig (partial; merged over DEFAULT_CONFIG). `vellumFile` = id of the Vellum design framework file; rolePrompt passes it to designPrompt (unset → the design crew finds it with list_files)
   state.json           MusterState (written atomically: write tmp + rename)
   server.json          { port, pid, token, startedAt }  (present while the orchestrator runs)
   logs/orchestrator.log
@@ -112,6 +112,18 @@ export async function musterFetch<T>(path: string, opts?: { method?: string; bod
 | GET | /api/config | – | `MusterConfig` |
 | PATCH | /api/config | partial MusterConfig | `MusterConfig` (saved to config.json) |
 | POST | /api/shutdown | `{ clean?: boolean }` | `{ ok }` — stops every agent, removes merged worktrees if clean, exits |
+
+### Vellum status (src/core/vellum.ts)
+| Method | Path | Returns |
+|---|---|---|
+| GET | /api/vellum | `VellumStatus` (src/types.ts) = `{ status: 'connected' \| 'not_configured' \| 'unreachable' \| 'error', message?, checkedAt, files: { id, name, pages, updated? }[] }` |
+| GET | /api/vellum?refresh=1 | same, bypassing the cache (the "Test connection" button) |
+
+Muster acts as a read-only MCP client to the Vellum server (`vellumServer(config)`: `config.vellum`, else the default `F:/Vellum/mcp/dist/index.js` if it exists). It spawns it over stdio, calls **only `list_files`**, then closes it; no other tool is ever called.
+- `not_configured`: no `config.vellum` and no default entry (`files: []`, never spawns). `unreachable`: spawn, connect or deadline failure. `error`: Vellum answered with a tool error (e.g. its app is not running) or text that isn't a file list. `message` explains any non-`connected` status.
+- Mapping: `pages` = length of the `pages` array (or the count), `updated` = ISO of `updatedAt` (epoch ms or ISO string); unknown fields are dropped.
+- One overall 5s deadline across connect + call; on expiry the child process is killed. The result is cached ~30s (keyed by the server command, so changing the Vellum setting invalidates it); concurrent requests share one in-flight check. The cache is also used for failures.
+- Tests inject the call through `startOrchestrator({ vellumCall })` / `createVellumChecker({ call, defaultEntry })`.
 
 ### Agents
 | Method | Path | Body | Returns |
@@ -234,6 +246,9 @@ Stdio MCP server named `muster`. Tools by role (`MUSTER_ROLE`):
 ## Role prompts (src/prompts)
 
 `captainPrompt(ctx)`, `crewPrompt(ctx)`, `designPrompt(ctx)` where `ctx = { agentId, repoRoot, worktree, branch, baseBranch, testCommand, projectName, vellumFile? }` → markdown string. Must encode the SPEC rules: Captain checks the board first every turn, never writes code or merges, crew answer each other first, escalate only decisions only the human can make, request_review when a branch is tested; Crew work only in their worktree, commit on their branch, post progress, ask other crew before the Captain, never merge or push; Design crew read the Vellum design framework (read-only unless the Captain asks) and flag drift with notes/messages.
+
+### Design check reporting (designPrompt; parsed by the Vellum page's Design checks list)
+Every design check the design crew posts, as a `done` note or a `report_done`/`handoff` summary, starts with a line `PASS T# <summary>` or `DRIFT T# <summary>`. For drift, one line per difference follows: `path:line — what differs` (e.g. `ui/src/pages/vellum.ts:42 — card radius 8px, design says 12px`). `config.vellumFile` (string; `null` or `""` clears it, other types get 400) names the framework file in that prompt.
 
 ## Dashboard (ui/)
 
