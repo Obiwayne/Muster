@@ -64,6 +64,22 @@ describe('muster-mcp calls', () => {
     expect(calls[1].body).toEqual({ role: 'crew', taskId: 'T9', actor: 'captain' });
     expect(r.text).toBe('Spawned crew-4 (crew) on crew-4/work with task T9. It starts working on its own.');
   });
+  it('request_review and get_diff work by task id after the builder is gone', async () => {
+    const { call, calls } = await connect('captain', (c) =>
+      c.path === '/api/state'
+        ? { state: { agents: [{ id: 'captain', role: 'captain' }], tasks: [{ id: 'T1', branch: 'crew-2/fix', status: 'review' }] } }
+        : c.path.includes('/diff')
+          ? { branch: 'crew-2/fix', base: 'main', stat: ' a.ts | 1 +', diff: '+x' }
+          : { id: 'T1', branch: 'crew-2/fix' },
+    );
+    await call('get_diff', { task: 't1' });
+    expect(calls[1].path).toBe('/api/agents/captain/diff?branch=crew-2%2Ffix');
+    const r = await call('request_review', { task: 'T1', summary: 'looks good' });
+    expect(calls.at(-1)).toEqual({ path: '/api/tasks/T1/review', method: 'POST', body: { actor: 'captain', summary: 'looks good' } });
+    expect(r.text).toBe('T1 is ready for merge (crew-2/fix). The user has been notified.');
+    const missing = await call('request_review', { agent: 'crew-2', summary: 'x' });
+    expect(missing.text).toContain('Pass the task id instead');
+  });
   it('report_done resolves the held task', async () => {
     const { call, calls } = await connect('crew', (c) =>
       c.path === '/api/state'

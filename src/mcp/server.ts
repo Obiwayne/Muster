@@ -80,6 +80,12 @@ export function createMusterServer(opts: MusterServerOptions): McpServer {
   };
 
   const getState = async () => (await api<{ state: MusterState; paused: boolean }>('/api/state')).state;
+  const findTask = async (id: string) => {
+    const want = id.trim().toUpperCase();
+    const t = (await getState()).tasks.find((x) => x.id.toUpperCase() === want);
+    if (!t) throw new Error(`No task ${id}.`);
+    return t;
+  };
 
   const myTask = async (): Promise<Task> => {
     const state = await getState();
@@ -186,9 +192,20 @@ export function createMusterServer(opts: MusterServerOptions): McpServer {
       return truncateTail((r.text ?? '').trimEnd(), 20000) || '(no output)';
     });
 
-    tool("get_diff", "Show an agent's branch diff against the base branch (stat + patch).", { agent: z.string() }, async ({ agent }) => {
-      return formatDiff(await api(`/api/agents/${enc(agent)}/diff`));
-    });
+    tool(
+      'get_diff',
+      "Show a branch's diff against the base branch (stat + patch). Pass task (works even after its builder is gone) or agent.",
+      { task: z.string().optional(), agent: z.string().optional() },
+      async ({ task, agent }) => {
+        if (task) {
+          const t = await findTask(task);
+          if (!t.branch) throw new Error(`${t.id} has no branch yet.`);
+          return formatDiff(await api(`/api/agents/${enc(me)}/diff?branch=${enc(t.branch)}`));
+        }
+        if (!agent) throw new Error('Pass task or agent.');
+        return formatDiff(await api(`/api/agents/${enc(agent)}/diff`));
+      },
+    );
 
     tool('run_tests', "Run the project's test command in an agent's worktree (up to 10 min).", { agent: z.string() }, async ({ agent }) => {
       return formatTests(await api(`/api/agents/${enc(agent)}/tests`, { method: 'POST', body: {} }));
@@ -196,12 +213,17 @@ export function createMusterServer(opts: MusterServerOptions): McpServer {
 
     tool(
       'request_review',
-      "Mark the agent's task ready for merge after you reviewed the diff and tests pass. Pins a Ready-for-review note for the user.",
-      { agent: z.string(), summary: z.string().min(1).describe('What changed, test result, anything the user should check') },
-      async ({ agent, summary }) => {
+      'Mark a task ready for merge after you reviewed the diff and tests pass. Pass task (preferred; works even after its builder is gone) or agent. Pins a Ready-for-review note for the user.',
+      { task: z.string().optional(), agent: z.string().optional(), summary: z.string().min(1).describe('What changed, test result, anything the user should check') },
+      async ({ task: taskId, agent, summary }) => {
+        if (taskId) {
+          const t = await api<Task>(`/api/tasks/${enc((await findTask(taskId)).id)}/review`, { method: 'POST', body: { actor: me, summary } });
+          return `${t.id} is ready for merge (${t.branch ?? 'no branch'}). The user has been notified.`;
+        }
+        if (!agent) throw new Error('Pass task or agent.');
         const state = await getState();
         const a = state.agents.find((x) => x.id === agent);
-        if (!a) throw new Error(`No agent ${agent}.`);
+        if (!a) throw new Error(`No agent ${agent}. Pass the task id instead: request_review(task: "T1", summary).`);
         const task =
           (a.taskId && state.tasks.find((t) => t.id === a.taskId)) ||
           state.tasks.find((t) => t.status === 'review' && t.history?.some((h) => h.agentId === agent)) ||
