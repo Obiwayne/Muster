@@ -569,3 +569,5 @@ textarea.field { height: auto; min-height: 40px; padding: 10px 14px; resize: ver
 .se-error { padding: 22px; color: var(--color-stuck); font-size: var(--text-sm); }
 
 .se-presets { display: flex; flex-direction: column; gap: 4px; margin-bottom: 10px; font-size: var(--text-sm); }
+.se-item .btn.add { margin-left: auto; padding: 1px 8px; font-size: 11px; }
+.se-list .section-label { margin-top: 8px; }

@@ -9,7 +9,7 @@ const ROLES: { value: StationRole; label: string }[] = [
   { value: 'crew', label: 'Crew' },
   { value: 'design', label: 'Vellum design crew' },
   { value: 'captain', label: 'Captain' },
-  { value: 'human', label: 'Human (you approve)' },
+  { value: 'human', label: 'You (approval)' },
 ];
 const MAX_GUIDELINE = 20_000; // characters
 const NAME_RE = /^[a-z0-9][a-z0-9-]{0,29}$/;
@@ -17,6 +17,9 @@ const NAME_RE = /^[a-z0-9][a-z0-9-]{0,29}$/;
 export interface StationEditorOpts {
   /** Persist the new line order (names without 'review'; the caller appends it). */
   setOrder: (names: string[]) => Promise<void>;
+  /** Make a preset the default line (PATCH /api/config {defaultLine}). */
+  lineOrder: () => string[];
+  setDefaultLine: (name: string, names: string[]) => Promise<void>;
   /** Called after the modal closes, so the caller can refresh role colours and chips. */
   onClose: () => void;
 }
@@ -34,6 +37,9 @@ export function showStationEditor(opts: StationEditorOpts): void {
   let confirmDiscard = false;
   let adding = false;
   let lines: LineDef[] = [];
+  let defaultLine = '';
+  let viewLine = ''; // the preset the line was last applied from or matches
+  let others: string[] = []; // saved stations that are not in the line
   let presetsErr = false;
 
   const root = h('div.se');
@@ -51,10 +57,11 @@ export function showStationEditor(opts: StationEditorOpts): void {
 
   async function load(select?: string): Promise<void> {
     try {
-      try { lines = (await api.lines()).lines; presetsErr = false; } catch { lines = []; presetsErr = true; } // older server: no presets
+      try { const r = await api.lines(); lines = r.lines; defaultLine = r.defaultLine; presetsErr = false; } catch { lines = []; presetsErr = true; } // older server: no presets
       const list = await api.stations();
       saved = Object.fromEntries(list.map((s) => [s.name, s]));
-      order = list.map((s) => s.name).filter((n) => n !== 'review');
+      order = opts.lineOrder().filter((n) => n !== 'review' && saved[n]);
+      others = list.map((s) => s.name).filter((n) => n !== 'review' && !order.includes(n));
       for (const s of list) if (!isDirty(s.name)) drafts[s.name] = { role: s.role, guideline: s.guideline };
       for (const n of Object.keys(drafts)) if (!saved[n]) delete drafts[n];
       current = select && saved[select] ? select : saved[current] ? current : order[0] ?? 'review';
@@ -73,7 +80,7 @@ export function showStationEditor(opts: StationEditorOpts): void {
     [next[i], next[j]] = [next[j], next[i]];
     const prev = order;
     order = next; draw();
-    try { await opts.setOrder(next); } catch (e) { order = prev; draw(); errToast(e); }
+    try { await persistOrder(next); } catch (e) { order = prev; draw(); errToast(e); }
   }
 
   async function addStation(raw: string): Promise<void> {
@@ -84,9 +91,30 @@ export function showStationEditor(opts: StationEditorOpts): void {
     if (!NAME_RE.test(name)) { toast('Station names are lowercase letters, digits and dashes, up to 30', 'warn'); draw(); return; }
     try {
       await api.saveStation(name, { role: 'crew', guideline: '' });
-      await opts.setOrder([...order, name]);
+      await persistOrder([...order, name]);
       await load(name);
     } catch (e) { errToast(e); draw(); }
+  }
+
+  /** Persist a new line order, and the preset it was edited from. */
+  async function persistOrder(next: string[]): Promise<void> {
+    await opts.setOrder(next);
+    const l = lines.find((x) => x.name === viewLine);
+    if (l) {
+      try { l.stations = [...next, 'review']; await api.saveLine(l.name, { stations: l.stations, label: l.label }); } catch { /* older server */ }
+    }
+  }
+
+  async function addToLine(name: string): Promise<void> {
+    try { await persistOrder([...order, name]); await load(name); } catch (e) { errToast(e); }
+  }
+
+  async function removeFromLine(name: string): Promise<void> {
+    try { await persistOrder(order.filter((n) => n !== name)); await load(name); } catch (e) { errToast(e); }
+  }
+
+  async function makeDefault(): Promise<void> {
+    try { await opts.setDefaultLine(viewLine, order); defaultLine = viewLine; toast(`${lines.find((l) => l.name === viewLine)?.label ?? viewLine} is the default line`); draw(); } catch (e) { errToast(e); }
   }
 
   async function applyPreset(name: string): Promise<void> {
@@ -97,6 +125,7 @@ export function showStationEditor(opts: StationEditorOpts): void {
     if (!(await confirmDialog(`Use the ${line.label} line?`, `The line becomes ${[...names, 'review'].join(' → ')}. Tasks created from now on use it; existing tasks keep theirs. Station guidelines you already wrote are kept.`, 'Use this line'))) { draw(); return; }
     try {
       await opts.setOrder(names);
+      viewLine = line.name;
       for (const k of Object.keys(drafts)) delete drafts[k];
       await load(names[0]);
     } catch (e) { errToast(e); draw(); }
@@ -106,22 +135,26 @@ export function showStationEditor(opts: StationEditorOpts): void {
     if (!lines.length) return presetsErr ? h('div.se-presets.muted', null, 'Presets need the latest Muster build.') : null;
     const cur = [...order, 'review'].join('>');
     const match = lines.find((l) => [...l.stations.filter((n) => n !== 'review'), 'review'].join('>') === cur);
+    if (match && viewLine !== match.name) viewLine = match.name;
+    if (!match) viewLine = '';
     const sel = h('select', { onchange: (e: Event) => { const v = (e.target as HTMLSelectElement).value; if (v) void applyPreset(v); } },
       h('option', { value: '', selected: !match }, match ? 'Custom…' : 'Custom'),
       lines.map((l) => h('option', { value: l.name, selected: match?.name === l.name }, l.label))) as HTMLSelectElement;
-    return h('div.se-presets', null, h('div.section-label', null, 'Preset'), h('div.select-wrap', null, sel, icon('chevron', 14)));
+    const isDef = !!viewLine && viewLine === defaultLine;
+    return h('div.se-presets', null, h('div.section-label', null, 'Preset'), h('div.select-wrap', null, sel, icon('chevron', 14)),
+      viewLine ? (isDef ? h('div.muted', null, 'Default line for new tasks') : h('button.btn.sm', { onclick: () => void makeDefault() }, 'Make default')) : null);
   }
 
   async function removeStation(name: string): Promise<void> {
     const builtin = saved[name]?.builtin;
     const [title, text, ok] = builtin
       ? [`Reset ${name}?`, `${name} goes back to its default role and loses its guideline.`, 'Reset']
-      : [`Remove ${name}?`, `Tasks created from now on skip the ${name} station, and its guideline is deleted from this machine.`, 'Remove'];
+      : [`Delete ${name}?`, `The ${name} station is taken off every line and its guideline file is deleted from this machine.`, 'Delete'];
     if (!(await confirmDialog(title, text, ok, 'danger'))) return;
     try {
       await api.deleteStation(name);
       delete drafts[name];
-      if (!builtin) await opts.setOrder(order.filter((n) => n !== name));
+      if (!builtin && order.includes(name)) await persistOrder(order.filter((n) => n !== name));
       await load();
     } catch (e) { errToast(e); }
   }
@@ -172,7 +205,12 @@ export function showStationEditor(opts: StationEditorOpts): void {
     } else {
       add = h('button.st-add', { onclick: () => { adding = true; draw(); } }, '+ station');
     }
-    return h('div.se-list', null, presetBar(), h('div.section-label', null, 'Line'), items, review, add);
+    return h('div.se-list', null, presetBar(), h('div.section-label', null, `Line${viewLine ? ' · ' + (lines.find((l) => l.name === viewLine)?.label ?? viewLine) : ''}`), items, review,
+      others.length ? h('div.section-label', null, 'Other stations') : null,
+      others.map((n) => h('div.se-item', { class: [n === current && 'on', `r-${drafts[n]?.role ?? saved[n]?.role ?? 'crew'}`], onclick: () => { current = n; draw(); } },
+        h('span.dot'), h('span.nm', null, n), isDirty(n) ? h('span.unsaved', { title: 'Unsaved changes' }) : null,
+        h('button.btn.sm.add', { title: 'Add to line', onclick: (e: Event) => { e.stopPropagation(); void addToLine(n); } }, 'Add to line'))),
+      add);
   }
 
   function editCol(): HTMLElement {
@@ -196,7 +234,8 @@ export function showStationEditor(opts: StationEditorOpts): void {
       h('div.se-head', null,
         h('div.se-title', null, current, isDirty(current) ? h('span.unsaved', { title: 'Unsaved changes' }) : null),
         h('label.se-role', null, h('span.muted', null, 'Role'), h('div.select-wrap', null, roleSel, icon('chevron', 14))),
-        isReview ? null : h('button.btn.danger', { onclick: () => void removeStation(current) }, s.builtin ? 'Reset' : 'Remove')),
+        isReview ? null : order.includes(current) ? h('button.btn', { title: 'Takes it off the line; the station and its guideline stay on this machine', onclick: () => void removeFromLine(current) }, 'Remove from line') : h('button.btn', { onclick: () => void addToLine(current) }, 'Add to line'),
+        isReview ? null : h('button.btn.danger', { onclick: () => void removeStation(current) }, s.builtin ? 'Reset' : 'Delete')),
       h('div.se-tabs', null,
         h('button', { class: tab === 'edit' && 'on', onclick: () => { tab = 'edit'; draw(); } }, 'Edit'),
         h('button', { class: tab === 'preview' && 'on', onclick: () => { tab = 'preview'; draw(); } }, 'Preview'),

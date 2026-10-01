@@ -4,13 +4,14 @@ import { h, setChildren, showModal, toast } from '../dom';
 import type { Snapshot } from '../events';
 import type { Page } from '../page';
 import { api } from '../api';
-import { getDiffStat, mergeTask, run, showDiffModal } from '../actions';
+import { approveTask, getDiffStat, mergeTask, run, sendBackApproval, showDiffModal } from '../actions';
 import { branchOwnerId, ms, stationRole, statTotals, taskIsStuck } from '../util';
 
-const COLUMNS: { status: TaskStatus; label: string }[] = [
+const COLUMNS: { status: TaskStatus | 'awaiting_approval'; label: string }[] = [
   { status: 'blocked', label: 'Blocked' },
   { status: 'ready', label: 'Ready' },
   { status: 'in_progress', label: 'In progress' },
+  { status: 'awaiting_approval', label: 'Awaiting you' },
   { status: 'review', label: 'Captain review' },
   { status: 'ready_for_merge', label: 'Ready to merge' },
 ];
@@ -67,6 +68,15 @@ export function createTasks(): Page {
           h('button.btn.sm', { disabled: !owner, onclick: () => owner && showDiffModal(owner, t.branch) }, 'View diff'),
           h('button.btn.sm.merge', { onclick: () => mergeTask(state, t) }, 'Merge')));
     }
+    if ((t.status as string) === 'awaiting_approval') {
+      const owner = branchOwnerId(state, t);
+      return h('div.card.merge', { title: tip }, titleRow, stationBar(t, false),
+        h('div.mono-sub', null, `${t.branch ?? ''} · ${t.stations[t.stationIndex] ?? ''}`),
+        h('div.actions', null,
+          owner ? h('button.btn.sm', { onclick: () => showDiffModal(owner, t.branch) }, 'View diff') : null,
+          h('button.btn.sm', { onclick: () => void sendBackApproval(t) }, 'Send back'),
+          h('button.btn.sm.merge', { onclick: () => void approveTask(t) }, 'Approve')));
+    }
     // in progress / review
     const stuckNote = taskIsStuck(state, t);
     const station = t.stations[t.stationIndex] ?? '';
@@ -85,8 +95,8 @@ export function createTasks(): Page {
     const live = state.tasks.filter((t) => t.status !== 'cancelled');
     const merged = live.filter((t) => t.status === 'merged').length;
     summary.textContent = `${live.length} ${live.length === 1 ? 'task' : 'tasks'}${merged ? ` · ${merged} merged` : ''} · stations ${config.defaultStations.join(' → ')}`;
-    setChildren(kanban, COLUMNS.map((c) => {
-      const ts = live.filter((t) => t.status === c.status).sort((a, b) => ms(a.createdAt) - ms(b.createdAt));
+    setChildren(kanban, COLUMNS.filter((c) => c.status !== 'awaiting_approval' || live.some((t) => (t.status as string) === c.status)).map((c) => {
+      const ts = live.filter((t) => (t.status as string) === c.status).sort((a, b) => ms(a.createdAt) - ms(b.createdAt));
       return h('div.col', null,
         h('div.col-head', { class: c.status === 'ready_for_merge' && 'crew' }, h('span.section-label', null, c.label), h('span.n', null, String(ts.length))),
         ts.map((t) => card(state, t)),

@@ -35,6 +35,8 @@ export function createSettings(): Page {
   let cfg: MusterConfig | null = null;
   let lastJson = '';
   let apiRoles: Record<string, string> = {}; // station roles from GET /api/stations, when the server has it
+  let shownLabel = '';
+  let lineLabel = ''; // label of the default line preset, when the server has presets
   const body = h('div.settings');
   const el = h('div.page', null, body);
 
@@ -93,10 +95,12 @@ export function createSettings(): Page {
 
   function stationsEditor(c: MusterConfig): HTMLElement {
     const stations = c.defaultStations.filter((s) => s !== 'review');
+    const parts0: HTMLElement[] = [];
     const wrap = h('div.station-chips');
+    if (lineLabel) parts0.push(h('span.muted', { style: 'margin-right:8px' }, `${lineLabel} line`));
     const saveStations = (list: string[]) => save({ defaultStations: [...list, 'review'] });
     const draw = () => {
-      const parts: HTMLElement[] = [];
+      const parts: HTMLElement[] = [...parts0];
       stations.forEach((s, i) => {
         parts.push(h('span.st-chip', { class: `r-${apiRoles[s] ?? stationRole(s)}` }, s,
           h('button.x', { title: `Remove ${s}`, onclick: () => { stations.splice(i, 1); draw(); saveStations(stations); } }, '×')));
@@ -135,14 +139,22 @@ export function createSettings(): Page {
 
   async function loadRoles(): Promise<void> {
     try {
+      try {
+        const r = await api.lines();
+        const dl = (cfg as { defaultLine?: string } | null)?.defaultLine ?? r.defaultLine;
+        const l = r.lines.find((x) => x.name === dl);
+        lineLabel = l ? l.label : '';
+      } catch { lineLabel = ''; }
       const list = await api.stations();
       const next = Object.fromEntries(list.map((s) => [s.name, s.role]));
-      if (JSON.stringify(next) !== JSON.stringify(apiRoles)) { apiRoles = next; if (cfg) render(cfg); }
+      if (JSON.stringify(next) !== JSON.stringify(apiRoles) || lineLabel !== shownLabel) { apiRoles = next; shownLabel = lineLabel; if (cfg) render(cfg); }
     } catch { /* older server: chips keep their built-in colours */ }
   }
 
   function editLine(): void {
     showStationEditor({
+      lineOrder: () => cfg?.defaultStations ?? [],
+      setDefaultLine: async (name, names) => { await save({ defaultLine: name, defaultStations: [...names, 'review'] } as Partial<MusterConfig>); },
       setOrder: async (names) => { await save({ defaultStations: [...names, 'review'] }); },
       onClose: () => { void loadRoles(); },
     });

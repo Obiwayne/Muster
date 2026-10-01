@@ -4,8 +4,8 @@ import { h, icon, setChildren } from '../dom';
 import type { Snapshot } from '../events';
 import type { Page } from '../page';
 import { api } from '../api';
-import { approveTask, mergeTask, run, sendBackApproval } from '../actions';
-import { NOTE_BADGE, ageShort, ago, displayName, initial, isEscalated, isNeedsYou, ms, noteLabel, roleOf, taskById } from '../util';
+import { approveTask, mergeTask, run, sendBackApproval, showDiffModal } from '../actions';
+import { NOTE_BADGE, ageShort, ago, displayName, initial, isEscalated, isNeedsYou, branchOwnerId, ms, noteLabel, roleOf, taskById } from '../util';
 
 type Filter = 'open' | 'stuck' | 'question' | 'waiting' | 'review' | 'approval' | 'all' | 'needsYou';
 
@@ -96,7 +96,8 @@ export function createBoard(): Page {
   function metaLine(state: MusterState, n: Note): string {
     const parts = [n.to ? `${displayName(n.from)} → ${displayName(n.to)}` : displayName(n.from)];
     if (n.taskId) parts.push(n.taskId);
-    if (n.branch && !(n.to && n.type === 'waiting')) parts.push(n.branch);
+    const br = n.branch ?? ((n.type as string) === 'approval' ? taskById(state, n.taskId)?.branch : undefined);
+    if (br && !(n.to && n.type === 'waiting')) parts.push(br);
     if (n.open && (n.type === 'stuck' || n.type === 'question') && !isEscalated(state, n)) {
       const cap = n.replies.some((r) => roleOf(state, r.from) === 'captain');
       if (n.type === 'question' && !cap) parts.push('Captain answering');
@@ -162,6 +163,7 @@ export function createBoard(): Page {
     if (n.open && (n.type === 'stuck' || n.type === 'question' || n.type === 'waiting') && !isEscalated(state, n)) {
       items.push(h('div.banner', null, icon('users', 16), h('div.flex1', null, 'Being handled by the crew. This only reaches you if the Captain escalates it.')));
     } else if (isNeedsYou(n) || (n.open && isEscalated(state, n))) {
+      const diffOwner = task ? branchOwnerId(state, task) : undefined;
       const isApproval = (n.type as string) === 'approval' && (task?.status as string) === 'awaiting_approval';
       const msg = isApproval
         ? 'Waiting for your approval. Approve to move the task on, or send it back with what needs to change.'
@@ -170,6 +172,7 @@ export function createBoard(): Page {
         : 'Needs you: the Captain escalated this. Reply below; the answer goes to the agents involved.';
       const act = isApproval
         ? h('span.flex', { style: 'display:flex;gap:6px' },
+            diffOwner ? h('button.btn.sm', { onclick: () => void showDiffModal(diffOwner, task!.branch) }, 'View diff') : null,
             h('button.btn.sm', { onclick: () => void sendBackApproval(task!) }, 'Send back'),
             h('button.btn.sm.merge', { onclick: () => void approveTask(task!) }, 'Approve'))
         : n.type === 'review' && task?.status === 'ready_for_merge'
