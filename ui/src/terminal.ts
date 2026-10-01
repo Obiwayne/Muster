@@ -5,6 +5,7 @@ import { WebglAddon } from '@xterm/addon-webgl';
 import '@xterm/xterm/css/xterm.css';
 import type { TermClientMessage } from '../../src/types';
 import { wsUrl } from './events';
+import { frameOrTimeout, WriteBatcher } from './writebatch';
 
 const THEME = {
   background: '#0C0C0E',
@@ -49,6 +50,10 @@ export class TermView {
   private resizeTimer: number | undefined;
   private lastSize = '';
   private hadData = false;
+  private webgl: WebglAddon | null = null;
+  private glRetries = 0;
+  private dprQuery: MediaQueryList | null = null;
+  private out = new WriteBatcher((d) => this.term.write(d), frameOrTimeout());
   onConnectionChange?: (connected: boolean) => void;
 
   constructor(private host: HTMLElement, readonly agentId: string) {
@@ -71,6 +76,7 @@ export class TermView {
       if (this.disposed) return;
       this.term.open(this.host);
       this.useWebgl();
+      this.watchGlyphMetrics();
       this.ro.observe(this.host);
       this.doFit();
       this.connect();
@@ -85,29 +91,74 @@ export class TermView {
   private useWebgl(): void {
     try {
       const webgl = new WebglAddon();
-      webgl.onContextLoss(() => webgl.dispose());
+      webgl.onContextLoss(() => {
+        webgl.dispose();
+        if (this.webgl === webgl) this.webgl = null;
+        // The DOM renderer takes over; try WebGL again a couple of times (the GPU process may have just reset).
+        if (!this.disposed && this.glRetries++ < 3) setTimeout(() => !this.disposed && !this.webgl && this.useWebgl(), 500);
+        this.repaint();
+      });
       this.term.loadAddon(webgl);
+      this.webgl = webgl;
+      this.repaint();
     } catch {
       // DOM renderer stays in place
     }
   }
 
+  /** Throws away the glyph texture atlas and redraws, so smeared or wrongly sized glyphs are re-rasterized. */
+  private repaint(): void {
+    if (this.disposed || !this.term.element) return;
+    try {
+      this.term.clearTextureAtlas();
+      this.term.refresh(0, this.term.rows - 1);
+    } catch {
+      // not rendered yet
+    }
+  }
+
+  /** The atlas bakes glyphs at one font and pixel ratio; rebuild it when either changes after the fact. */
+  private watchGlyphMetrics(): void {
+    document.fonts.addEventListener('loadingdone', this.onFontsLoaded);
+    void document.fonts.ready.then(this.onFontsLoaded);
+    this.armDprWatch();
+  }
+
+  private onFontsLoaded = (): void => {
+    if (!this.disposed) this.repaint();
+  };
+
+  private armDprWatch(): void {
+    this.dprQuery?.removeEventListener('change', this.onDprChange);
+    this.dprQuery = window.matchMedia(`(resolution: ${window.devicePixelRatio}dppx)`);
+    this.dprQuery.addEventListener('change', this.onDprChange);
+  }
+
+  private onDprChange = (): void => {
+    if (this.disposed) return;
+    this.armDprWatch();
+    this.scheduleFit();
+    this.repaint();
+  };
+
   private connect(): void {
     if (this.disposed) return;
     const ws = new WebSocket(wsUrl(`/ws/term/${encodeURIComponent(this.agentId)}`));
+    ws.binaryType = 'arraybuffer'; // read synchronously, so chunks can't reorder
     this.ws = ws;
     ws.onopen = () => {
       this.retry = 0;
       this.onConnectionChange?.(true);
       // The server replays the backlog on connect; start from a clean screen.
+      this.out.clear();
       if (this.hadData) this.term.reset();
       this.lastSize = '';
       this.doFit();
     };
     ws.onmessage = (ev) => {
       this.hadData = true;
-      if (typeof ev.data === 'string') this.term.write(ev.data);
-      else if (ev.data instanceof Blob) ev.data.arrayBuffer().then((b) => this.term.write(new Uint8Array(b)));
+      if (typeof ev.data === 'string') this.out.push(ev.data);
+      else if (ev.data instanceof ArrayBuffer) this.out.push(new Uint8Array(ev.data));
     };
     ws.onclose = () => {
       if (this.ws !== ws) return;
@@ -140,7 +191,10 @@ export class TermView {
   }
 
   /** Re-fit after the tile is moved or shown again. */
-  refresh(): void { this.scheduleFit(); }
+  refresh(): void {
+    this.scheduleFit();
+    this.repaint();
+  }
 
   focus(): void { this.term.focus(); }
 
@@ -149,6 +203,9 @@ export class TermView {
     this.disposed = true;
     clearTimeout(this.resizeTimer);
     this.ro.disconnect();
+    document.fonts.removeEventListener('loadingdone', this.onFontsLoaded);
+    this.dprQuery?.removeEventListener('change', this.onDprChange);
+    this.out.clear();
     const ws = this.ws;
     this.ws = null;
     ws?.close();
