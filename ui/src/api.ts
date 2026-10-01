@@ -3,6 +3,9 @@ import type {
   Agent, FeedItem, InboxItem, MusterConfig, MusterState, Note, NoteType, Role, Task, UsageState, VellumStatus,
 } from '../../src/types';
 
+// TODO: import StationDef from src/types.ts once T9 (crew-6) merges.
+export interface StationDef { name: string; role: 'crew' | 'design' | 'captain'; guideline: string; builtin: boolean }
+
 /** Token: injected <meta name="muster-token">, else ?token= in the URL, else VITE_MUSTER_TOKEN (dev). */
 export function getToken(): string {
   const meta = document.querySelector<HTMLMetaElement>('meta[name="muster-token"]')?.content?.trim();
@@ -134,5 +137,9 @@ export const api = {
       if (e instanceof ApiError && e.status === 404) return { status: 'error', message: 'This Muster orchestrator has no /api/vellum yet. Restart it on the latest build.', checkedAt: new Date().toISOString(), files: [] };
       throw e;
     }),
+  stations: () => req<StationDef[]>('GET', '/api/stations'),
+  saveStation: (name: string, body: { role?: StationDef['role']; guideline?: string }) =>
+    req<StationDef>('PUT', `/api/stations/${enc(name)}`, body),
+  deleteStation: (name: string) => req<StationDef[]>('DELETE', `/api/stations/${enc(name)}`),
   usage: () => req<UsageState & { paused: boolean }>('GET', '/api/usage'),
 };

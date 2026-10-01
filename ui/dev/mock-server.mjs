@@ -26,6 +26,12 @@ const DIST = normalize(join(here, '..', '..', 'dist', 'ui'));
 const now = Date.now();
 const iso = (minAgo) => new Date(now - minAgo * 60_000).toISOString();
 
+const stationDefs = {
+  build: { role: 'crew', builtin: true, guideline: ['# Build', '', 'Implement the task in your worktree.', '', '- Keep changes small', '- Run `npm test` before handoff', ''].join('\n') },
+  test: { role: 'crew', builtin: true, guideline: '' },
+  design: { role: 'design', builtin: true, guideline: '' },
+  review: { role: 'captain', builtin: true, guideline: '' },
+};
 const config = {
   port: PORT,
   captainModel: 'opus',
@@ -290,6 +296,27 @@ async function api(req, url) {
     state.usage.paused = !!paused();
     broadcast();
     return config;
+  }
+  const sm = /^\/api\/stations\/([^/]+)$/.exec(p);
+  if (m === 'GET' && p === '/api/stations') {
+    const names = [...config.defaultStations.filter((n) => n !== 'review'), ...Object.keys(stationDefs).filter((n) => !config.defaultStations.includes(n)), 'review'];
+    return names.map((name) => ({ name, ...stationDefs[name] ?? { role: 'crew', guideline: '', builtin: false } }));
+  }
+  if (sm && m === 'PUT') {
+    const name = decodeURIComponent(sm[1]); const b = await body(req);
+    need(/^[a-z0-9-]{1,32}$/.test(name), 400, 'Station names are lowercase letters, digits and dashes, up to 32');
+    need(!(b.guideline && b.guideline.length > 20000), 400, 'Guideline is over 20000 characters');
+    const cur = stationDefs[name] ?? { role: 'crew', guideline: '', builtin: false };
+    stationDefs[name] = { ...cur, ...(b.role ? { role: b.role } : {}), ...(typeof b.guideline === 'string' ? { guideline: b.guideline } : {}) };
+    return { name, ...stationDefs[name] };
+  }
+  if (sm && m === 'DELETE') {
+    const name = decodeURIComponent(sm[1]);
+    need(name !== 'review', 400, 'The review station cannot be removed');
+    if (stationDefs[name]?.builtin) stationDefs[name] = { role: name === 'design' ? 'design' : 'crew', builtin: true, guideline: '' };
+    else { delete stationDefs[name]; config.defaultStations = config.defaultStations.filter((n) => n !== name); }
+    broadcast();
+    return [...config.defaultStations.filter((n) => n !== 'review'), 'review'].map((n) => ({ name: n, ...stationDefs[n] ?? { role: 'crew', guideline: '', builtin: false } }));
   }
   if (m === 'GET' && p === '/api/vellum') return { status: 'connected', checkedAt: new Date().toISOString(), files: [
     { id: 'wall', name: 'Wall Education', pages: 16 }, { id: 'mayhem', name: 'MayhemDeck', pages: 5 }, { id: 'muster', name: 'Muster', pages: 7 }] };

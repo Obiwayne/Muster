@@ -195,11 +195,14 @@ export interface ModalOpts {
   actions?: { label: string; kind?: string; onClick: (close: () => void) => void | Promise<void>; disabled?: boolean }[];
   cancelLabel?: string | null;
   onClose?: () => void;
+  /** Return false to keep the modal open (e.g. unsaved edits); call the `close` returned by showModal to force it. */
+  beforeClose?: () => boolean;
 }
 
 export function showModal(opts: ModalOpts): () => void {
   closeFloating();
   let closed = false;
+  const tryClose = () => { if (opts.beforeClose?.() !== false) close(); };
   const close = () => {
     if (closed) return;
     closed = true;
@@ -208,11 +211,11 @@ export function showModal(opts: ModalOpts): () => void {
     window.removeEventListener('hashchange', close);
     opts.onClose?.();
   };
-  const onKey = (e: KeyboardEvent) => { if (e.key === 'Escape') { e.stopPropagation(); close(); } };
+  const onKey = (e: KeyboardEvent) => { if (e.key === 'Escape') { e.stopPropagation(); tryClose(); } };
   const actions = opts.actions ?? [];
   const foot = (actions.length || opts.cancelLabel !== null)
     ? h('div.modal-foot', null,
-        opts.cancelLabel !== null ? h('button.btn.lg', { onclick: close }, opts.cancelLabel ?? 'Cancel') : null,
+        opts.cancelLabel !== null ? h('button.btn.lg', { onclick: tryClose }, opts.cancelLabel ?? 'Cancel') : null,
         actions.map((a) => {
           const b = h('button.btn.lg', { class: a.kind, disabled: a.disabled }, a.label) as HTMLButtonElement;
           b.onclick = async () => {
@@ -225,12 +228,12 @@ export function showModal(opts: ModalOpts): () => void {
   const modal = h('div.modal', { class: opts.wide && 'wide', role: 'dialog' },
     h('div.modal-head', null,
       h('div.modal-title', null, opts.title),
-      h('button.icon-btn', { onclick: close, title: 'Close' }, icon('x', 14)),
+      h('button.icon-btn', { onclick: tryClose, title: 'Close' }, icon('x', 14)),
     ),
     opts.body !== undefined ? (opts.wide ? opts.body : h('div.modal-body', null, opts.body)) : null,
     foot,
   );
-  const back = h('div.modal-back', { onmousedown: (e: MouseEvent) => { if (e.target === back) close(); } }, modal);
+  const back = h('div.modal-back', { onmousedown: (e: MouseEvent) => { if (e.target === back) tryClose(); } }, modal);
   document.body.appendChild(back);
   document.addEventListener('keydown', onKey, true);
   window.addEventListener('hashchange', close);
