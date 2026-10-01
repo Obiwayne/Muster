@@ -17,7 +17,9 @@
     "build:ui": "vite build ui",
     "dev:ui": "vite ui",
     "test": "vitest run",
-    "typecheck": "tsc -p tsconfig.json --noEmit"
+    "typecheck": "tsc -p tsconfig.json --noEmit",
+    "app": "electron .",
+    "shortcuts": "powershell -NoProfile -ExecutionPolicy Bypass -File scripts/make-shortcuts.ps1"
   },
   "dependencies": {
     "@modelcontextprotocol/sdk": "^1.17.0",
@@ -31,8 +33,10 @@
     "@types/ws": "^8.5.12",
     "@xterm/addon-fit": "^0.10.0",
     "@xterm/xterm": "^5.5.0",
+    "electron": "^44.5.1",
     "typescript": "^5.6.0",
     "vite": "^5.4.0",
     "vitest": "^2.1.0"
-  }
+  },
+  "main": "desktop/main.cjs"
 }

@@ -18,6 +18,14 @@ npm link          # puts `muster` on your PATH
 
 Needs Node 22+, git, and Claude Code (`claude`) logged in.
 
+### Desktop app (Windows)
+
+```powershell
+npm run shortcuts   # adds Muster to the Desktop and Start menu
+```
+
+Double-click **Muster**: pick a project folder (or a recent one), and the dashboard opens in its own window with the Captain running. **File** has Switch project, Stop the crew, and what closing the window does (ask / stop the crew / keep it running in the background). The app drives the same CLI, so `muster status` etc. still work in a terminal alongside it. The shortcut rebuilds Muster first if its sources changed.
+
 ## Use
 
 From inside any git repo with at least one commit:

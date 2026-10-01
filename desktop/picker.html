@@ -1,0 +1,145 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8" />
+<meta http-equiv="Content-Security-Policy" content="default-src 'self'; style-src 'self' 'unsafe-inline' https://fonts.googleapis.com; font-src https://fonts.gstatic.com; script-src 'self' 'unsafe-inline'; img-src 'self' data:" />
+<title>Muster</title>
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Geist:wght@400;500;600;650&family=Geist+Mono:wght@400;500&display=swap" />
+<style>
+  :root {
+    --bg: #111113; --surface: #19191C; --surface-2: #222226; --line: #2D2D32;
+    --text: #F4F4F5; --muted: #9B9BA4; --faint: #62626B;
+    --captain: #F5A524; --crew: #2DD4BF; --design: #A78BFA; --stuck: #F2555A; --success: #34C77B;
+    --glow-blue: #4F7BFF; --glow-violet: #8B5CF6;
+  }
+  * { box-sizing: border-box; }
+  html, body { margin: 0; height: 100%; background: var(--bg); color: var(--text); font-family: Geist, 'Segoe UI', sans-serif; -webkit-font-smoothing: antialiased; }
+  body { display: flex; align-items: flex-start; justify-content: center; overflow: auto; position: relative; }
+  .glow { position: fixed; left: 50%; top: -260px; width: 900px; height: 600px; transform: translateX(-30%); border-radius: 50%;
+    background: radial-gradient(closest-side, color-mix(in oklab, var(--glow-violet) 34%, transparent), color-mix(in oklab, var(--glow-blue) 12%, transparent) 55%, transparent);
+    filter: blur(30px); pointer-events: none; }
+  main { position: relative; width: 640px; padding: 96px 0 64px; display: flex; flex-direction: column; gap: 36px; }
+  .brand { display: flex; align-items: center; gap: 14px; }
+  .brand h1 { margin: 0; font-size: 28px; font-weight: 650; letter-spacing: -0.02em; }
+  .lede { margin: 0; font-size: 15px; line-height: 23px; color: var(--muted); }
+  .label { font-size: 12px; font-weight: 600; letter-spacing: 0.1em; color: var(--faint); }
+  .open { display: flex; align-items: center; gap: 12px; }
+  button { font: inherit; cursor: pointer; border: none; }
+  .primary { height: 42px; padding: 0 18px; border-radius: 8px; background: var(--text); color: var(--bg); font-size: 14px; font-weight: 600; display: inline-flex; align-items: center; gap: 8px; }
+  .primary:hover { background: #fff; }
+  .hint { font-size: 13px; color: var(--faint); }
+  .list { display: flex; flex-direction: column; border: 1px solid var(--line); border-radius: 12px; background: var(--surface); overflow: hidden; }
+  .row { display: flex; align-items: center; gap: 14px; padding: 14px 16px; border-top: 1px solid var(--line); cursor: pointer; }
+  .row:first-child { border-top: none; }
+  .row:hover { background: var(--surface-2); }
+  .dot { width: 8px; height: 8px; border-radius: 4px; background: var(--surface-2); flex-shrink: 0; }
+  .dot.on { background: var(--crew); box-shadow: 0 0 0 3px color-mix(in oklab, var(--crew) 20%, transparent); }
+  .names { flex: 1; min-width: 0; display: flex; flex-direction: column; gap: 3px; }
+  .name { font-size: 14px; font-weight: 550; }
+  .path { font-family: 'Geist Mono', Consolas, monospace; font-size: 11px; color: var(--faint); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+  .state { width: 92px; flex-shrink: 0; text-align: right; font-size: 12px; color: var(--muted); }
+  .state.on { color: var(--crew); }
+  .ghost { width: 28px; height: 28px; flex-shrink: 0; border-radius: 6px; background: transparent; color: var(--faint); display: flex; align-items: center; justify-content: center; }
+  .ghost:hover { background: var(--line); color: var(--text); }
+  .empty { padding: 28px 16px; text-align: center; font-size: 13px; color: var(--faint); }
+  .busy { position: fixed; inset: 0; background: color-mix(in oklab, var(--bg) 82%, transparent); display: none; align-items: center; justify-content: center; flex-direction: column; gap: 14px; }
+  .busy.show { display: flex; }
+  .spinner { width: 28px; height: 28px; border-radius: 50%; border: 3px solid var(--surface-2); border-top-color: var(--captain); animation: spin 0.9s linear infinite; }
+  @keyframes spin { to { transform: rotate(360deg); } }
+  .busy p { margin: 0; font-size: 14px; color: var(--muted); }
+  .error { display: none; padding: 12px 14px; border-radius: 8px; font-size: 13px; line-height: 19px; color: var(--stuck); background: color-mix(in oklab, var(--stuck) 12%, transparent); white-space: pre-wrap; }
+  .error.show { display: block; }
+</style>
+</head>
+<body>
+<div class="glow"></div>
+<main>
+  <div class="brand">
+    <svg width="36" height="36" viewBox="0 0 24 24" fill="none"><rect x="2" y="2" width="9" height="9" rx="2.5" fill="#F5A524"/><rect x="13" y="2" width="9" height="9" rx="2.5" fill="#2DD4BF"/><rect x="2" y="13" width="9" height="9" rx="2.5" fill="#2DD4BF"/><rect x="13" y="13" width="9" height="9" rx="2.5" fill="#A78BFA"/></svg>
+    <h1>Muster</h1>
+  </div>
+  <p class="lede">Pick a project. Muster starts a Captain for it, and you give the Captain a goal from the dashboard. Crew work on their own branches; nothing reaches main until you merge it.</p>
+  <div class="open">
+    <button class="primary" id="choose">
+      <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M3 7a2 2 0 0 1 2-2h4l2 2h8a2 2 0 0 1 2 2v8a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2z"/></svg>
+      Open a project folder
+    </button>
+    <span class="hint">Any git repo with at least one commit</span>
+  </div>
+  <div class="error" id="error"></div>
+  <div style="display:flex;flex-direction:column;gap:10px">
+    <div class="label">RECENT PROJECTS</div>
+    <div class="list" id="list"><div class="empty">Loading…</div></div>
+  </div>
+</main>
+<div class="busy" id="busy"><div class="spinner"></div><p id="busyText">Starting the Captain…</p></div>
+<script>
+  const $ = (id) => document.getElementById(id);
+  const busy = (text) => { $('busyText').textContent = text || ''; $('busy').classList.toggle('show', !!text); };
+  const showError = (text) => { $('error').textContent = text || ''; $('error').classList.toggle('show', !!text); };
+
+  async function open(root) {
+    showError('');
+    busy('Starting the Captain for ' + root.split(/[\\/]/).pop() + '…');
+    const r = await window.muster.open(root);
+    if (!r.ok) { busy(''); showError(r.error); render(); }
+  }
+
+  async function render() {
+    const items = await window.muster.recent();
+    const list = $('list');
+    list.textContent = '';
+    if (!items.length) {
+      const e = document.createElement('div');
+      e.className = 'empty';
+      e.textContent = 'No projects yet. Open a project folder to start.';
+      list.append(e);
+      return;
+    }
+    for (const p of items) {
+      const row = document.createElement('div');
+      row.className = 'row';
+      row.title = 'Open ' + p.root;
+      const dot = document.createElement('div');
+      dot.className = 'dot' + (p.running ? ' on' : '');
+      const names = document.createElement('div');
+      names.className = 'names';
+      const name = document.createElement('div');
+      name.className = 'name';
+      name.textContent = p.name;
+      const path = document.createElement('div');
+      path.className = 'path';
+      path.textContent = p.root;
+      names.append(name, path);
+      const state = document.createElement('div');
+      state.className = 'state' + (p.running ? ' on' : '');
+      state.textContent = p.running ? 'crew running' : 'stopped';
+      const forget = document.createElement('button');
+      forget.className = 'ghost';
+      forget.title = p.running ? 'Stop the crew' : 'Remove from this list';
+      forget.innerHTML = p.running
+        ? '<svg width="14" height="14" viewBox="0 0 24 24" fill="currentColor"><rect x="6" y="6" width="12" height="12" rx="2"/></svg>'
+        : '<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><path d="M18 6L6 18M6 6l12 12"/></svg>';
+      forget.onclick = async (e) => {
+        e.stopPropagation();
+        if (p.running) { busy('Stopping the crew…'); await window.muster.stop(p.root); busy(''); }
+        else await window.muster.forget(p.root);
+        render();
+      };
+      row.append(dot, names, state, forget);
+      row.onclick = () => open(p.root);
+      list.append(row);
+    }
+  }
+
+  $('choose').onclick = async () => {
+    showError('');
+    busy('Choose a folder…');
+    const r = await window.muster.choose();
+    busy('');
+    if (!r.ok && !r.canceled) render();
+  };
+  render();
+</script>
+</body>
+</html>
