@@ -1,6 +1,6 @@
 // Typed client for the orchestrator HTTP API (see docs/ARCHITECTURE.md).
 import type {
-  Agent, FeedItem, InboxItem, MusterConfig, MusterState, Note, NoteType, Role, Task, UsageState,
+  Agent, FeedItem, InboxItem, MusterConfig, MusterState, Note, NoteType, Role, Task, UsageState, VellumStatus,
 } from '../../src/types';
 
 /** Token: injected <meta name="muster-token">, else ?token= in the URL, else VITE_MUSTER_TOKEN (dev). */
@@ -97,5 +97,11 @@ export const api = {
     return req<FeedItem[]>('GET', `/api/feed?${p}`);
   },
   inbox: (agentId: string) => req<InboxItem[]>('GET', `/api/inbox/${enc(agentId)}`),
+  /** A 404 (older orchestrator without the route) is reported as status 'error', not thrown. */
+  vellum: (refresh = false): Promise<VellumStatus> =>
+    req<VellumStatus>('GET', `/api/vellum${refresh ? '?refresh=1' : ''}`).catch((e) => {
+      if (e instanceof ApiError && e.status === 404) return { status: 'error', message: 'This Muster orchestrator has no /api/vellum yet. Restart it on the latest build.', checkedAt: new Date().toISOString(), files: [] };
+      throw e;
+    }),
   usage: () => req<UsageState & { paused: boolean }>('GET', '/api/usage'),
 };
