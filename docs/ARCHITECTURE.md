@@ -113,6 +113,9 @@ export async function musterFetch<T>(path: string, opts?: { method?: string; bod
 | GET | /api/state | – | `{ state: MusterState, config: MusterConfig, paused: boolean }` |
 | GET | /api/config | – | `MusterConfig` |
 | PATCH | /api/config | partial MusterConfig | `MusterConfig` (saved to config.json) |
+| GET | /api/stations, /api/stations/:name | | `StationDef[]` / `StationDef` ({ name, role, builtin, guideline }); per machine (secrets dir: `stations.json` + `stations/<name>.md`), shared by every project |
+| PUT | /api/stations/:name | `{ role?, guideline? }` | `StationDef` — create or update (human only). `review` stays with the captain. Omitted fields keep their value |
+| DELETE | /api/stations/:name | | `StationDef[]` — removes an added station, resets a built-in (human only) |
 | POST | /api/shutdown | `{ clean?: boolean }` | `{ ok }` — stops every agent, removes merged worktrees if clean, exits |
 
 ### Vellum status (src/core/vellum.ts)

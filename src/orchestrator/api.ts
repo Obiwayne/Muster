@@ -7,6 +7,7 @@ import { badRequest, conflict, forbidden, HttpError, notFound } from '../core/er
 import * as gitOps from '../core/git.js';
 import type { MusterPaths } from '../core/paths.js';
 import type { Store } from '../core/store.js';
+import * as stations from '../core/stations.js';
 import * as tasks from '../core/tasks.js';
 import { createVellumChecker, type VellumCall } from '../core/vellum.js';
 import { applyUsage, refreshGuard, type RawUsage } from '../core/usage.js';
@@ -116,6 +117,18 @@ export function createApi(ctx: ApiContext) {
       }
       return config;
     });
+  });
+  // ------------------------------------------------------------------ stations (per machine, not per repo)
+  route('GET', '/api/stations', () => stations.listStations());
+  route('GET', '/api/stations/:name', ({ params }) => {
+    const s = stations.getStation(stations.stationName(decodeURIComponent(params.name)));
+    if (!s) throw notFound(`No station "${params.name}"`);
+    return s;
+  });
+  route('PUT', '/api/stations/:name', ({ params, body }) => stations.saveStation(decodeURIComponent(params.name), { role: body.role, guideline: body.guideline }));
+  route('DELETE', '/api/stations/:name', ({ params }) => {
+    stations.deleteStation(decodeURIComponent(params.name));
+    return stations.listStations();
   });
   route('GET', '/api/vellum', ({ query }) => vellum.check(ctx.config(), flag(query, 'refresh')));
   route('POST', '/api/shutdown', ({ body }) => {

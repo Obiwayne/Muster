@@ -1,12 +1,13 @@
 // Task board: creation, dependencies, claiming, stations, review and send-back.
 // Pure state mutations; git side effects (branch merges/renames) live in the API layer.
-import { STATION_ROLE, type Agent, type MusterConfig, type MusterState, type Note, type Role, type Task, type TaskBranchInput, type TaskEvent } from '../types.js';
+import { roleOfStation } from './stations.js';
+import { type Agent, type MusterConfig, type MusterState, type Note, type Role, type Task, type TaskBranchInput, type TaskEvent } from '../types.js';
 import { addFeed, addInbox, captainOf, closeNoteIfOpen, findAgent, HUMAN, idNum, isCaptain, nowIso, postNote, requireActor, requireAgent, SYSTEM } from './board.js';
 import { badRequest, conflict, forbidden, notFound } from './errors.js';
 import { nextId } from './store.js';
 import { assertNotPaused } from './usage.js';
 
-export const stationRole = (station: string): Role => STATION_ROLE[station] ?? 'crew';
+export const stationRole = (station: string): Role => roleOfStation(station);
 
 export function currentStation(task: Task): string {
   return task.stations[task.stationIndex] ?? 'review';
