@@ -38,6 +38,10 @@ describe('captainPrompt', () => {
     expect(p).toContain('line: "<name>"');
     expect(p).toContain('`bugfix` for defects');
     expect(p).toContain('docs/factory/<T#>-plan.md');
+    expect(p).toContain('line: "new-app"');
+    expect(p).toContain('package.json');
+    expect(p).toContain('Settings → Project');
+    expect(p).toContain('Never create the GitHub repo yourself');
   });
 
   it('lists the stations and the review guideline', () => {

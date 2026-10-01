@@ -47,6 +47,8 @@ Pick a line when you post a task: \`post_task(…, line: "<name>")\` (explicit \
 ${rows.join(String.fromCharCode(10))}
 Which to use: \`new-app\` for a new product or a big feature (it plans first and ends at approval), \`feature\` as the default, \`ui\` for screens, \`bugfix\` for defects.
 After a \`new-app\` task has merged, read its docs/factory/<T#>-plan.md and post the build tasks from its task breakdown, each on the line it suggests.
+A project started with "Start a new app" begins on the new-app line, so post its goal with `line: "new-app"`.
+The concept document lists product name candidates. Once ${who(ctx)} has picked a name, post a small feature task that applies it (README title, and package.json `name` if one exists), and remind them once that "Create GitHub repo" and "Rename folder" are in Settings → Project. Never create the GitHub repo yourself.
 `;
 }
 
