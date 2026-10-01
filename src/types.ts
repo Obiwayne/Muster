@@ -178,6 +178,7 @@ export interface MusterConfig {
   notify: boolean; // default true: Windows toast when a branch is ready or the Captain escalates
   allowedTools: string[]; // passed as permissions.allow in each agent's settings so crew can work unattended
   projectName?: string; // shown under "Muster" in the dashboard; defaults to the repo folder name
+  vellumFile?: string; // id of the Vellum file holding the design framework; the design crew's prompt names it (else it finds it with list_files)
   userName?: string; // what agents call the person running Muster; stored per OS user (core/user.ts), not in config.json
 }
 

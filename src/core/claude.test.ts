@@ -4,7 +4,7 @@ import { join } from 'node:path';
 import { describe, expect, it } from 'vitest';
 import { DEFAULT_CONFIG } from '../types.js';
 import { stripAnsi } from '../orchestrator/terminal.js';
-import { launchArgs, ptyArgs, ptyEnv, resolveClaudePath, spawnCommand, trustPromptKeys, writeAgentFiles } from './claude.js';
+import { launchArgs, ptyArgs, ptyEnv, resolveClaudePath, rolePrompt, spawnCommand, trustPromptKeys, writeAgentFiles } from './claude.js';
 import { musterPaths } from './paths.js';
 import { deriveAgentToken } from './tokens.js';
 import { makeAgent } from './testutil.js';
@@ -109,5 +109,16 @@ describe('spawning through a .cmd shim', () => {
     expect(ptyArgs(cmd.file, cmd.args)).toBe('/d /s /c ""C:/Program Files/My Tools/claude.cmd" --settings "C:/a b/settings.json" --name "muster crew-2""');
     expect(ptyArgs('C:/bin/claude.exe', ['--x'])).toEqual(['--x']);
     expect(() => spawnCommand('C:/x/claude.cmd', ['--name', 'a%PATH%'])).toThrow(/cmd\.exe/);
+  });
+});
+
+describe('rolePrompt vellumFile', () => {
+  const ctx = (vellumFile?: string) => ({ url: 'http://x', token: 't', repoRoot: 'F:/r', config: { ...DEFAULT_CONFIG, projectName: 'demo', vellumFile } });
+  const design = makeAgent('design', 'design', { worktree: 'F:/r/.muster/worktrees/design' });
+  it('names the configured Vellum file in the design crew prompt only', () => {
+    expect(rolePrompt(design, ctx(' 28BUsqILtGqq '))).toContain('`28BUsqILtGqq`');
+    expect(rolePrompt(design, ctx())).toContain('list_files');
+    expect(rolePrompt(design, ctx('  '))).toContain('list_files');
+    expect(rolePrompt(makeAgent('crew-2', 'crew', { worktree: 'F:/r/w' }), ctx('28BUsqILtGqq'))).not.toContain('28BUsqILtGqq');
   });
 });

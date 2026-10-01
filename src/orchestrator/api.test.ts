@@ -357,6 +357,17 @@ describe('orchestrator API', () => {
     expect(gitSync(repo, 'log', '-1', '--format=%s')).toMatch(/^Merge (crew-2|captain)\/invite-api \(T2 Invite API\)$/);
   });
 
+  it('saves and clears vellumFile', async () => {
+    expect((await ok('PATCH', '/api/config', { vellumFile: 'F1' })).vellumFile).toBe('F1');
+    expect((await ok('PATCH', '/api/config', { vellumFile: null })).vellumFile).toBeUndefined();
+    await ok('PATCH', '/api/config', { vellumFile: 'F2' });
+    expect((await ok('PATCH', '/api/config', { vellumFile: '' })).vellumFile).toBeUndefined();
+    await ok('PATCH', '/api/config', { vellumFile: 'F3' });
+    for (const bad of [5, { id: 'x' }, true, ['F1']]) expect((await call('PATCH', '/api/config', { vellumFile: bad })).status).toBe(400);
+    expect((await ok('GET', '/api/config')).vellumFile).toBe('F3'); // a rejected patch changes nothing
+    await ok('PATCH', '/api/config', { vellumFile: null });
+  });
+
   it('unsets config keys patched to null', async () => {
     await ok('PATCH', '/api/config', { vellum: { command: 'node', args: ['v.js'] }, maxCrew: 4 });
     expect((await ok('GET', '/api/config')).vellum).toEqual({ command: 'node', args: ['v.js'] });

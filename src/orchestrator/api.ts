@@ -46,7 +46,7 @@ const TEST_TIMEOUT_MS = 10 * 60_000;
 const MAX_BODY = 2 * 1024 * 1024;
 const CONFIG_KEYS = new Set<string>([
   'port', 'captainModel', 'crewModel', 'designModel', 'maxCrew', 'pauseAtFiveHourPct', 'warnAtWeeklyPct', 'shutdownIdleCrew',
-  'defaultStations', 'testCommand', 'baseBranch', 'permissionMode', 'claudePath', 'vellum', 'notify', 'allowedTools', 'projectName', 'userName',
+  'defaultStations', 'testCommand', 'baseBranch', 'permissionMode', 'claudePath', 'vellum', 'notify', 'allowedTools', 'projectName', 'userName', 'vellumFile',
 ]);
 
 const str = (v: unknown, name: string): string => {
@@ -90,6 +90,8 @@ export function createApi(ctx: ApiContext) {
   route('GET', '/api/config', () => ctx.config());
   route('PATCH', '/api/config', ({ body }) => {
     const patch = Object.fromEntries(Object.entries(body).filter(([k]) => CONFIG_KEYS.has(k))) as ConfigPatch;
+    if (patch.vellumFile !== undefined && patch.vellumFile !== null && typeof patch.vellumFile !== 'string') throw badRequest('vellumFile must be a string, or null to clear it');
+    if (patch.vellumFile === '') patch.vellumFile = null;
     const before = ctx.config().userName;
     const config = ctx.updateConfig(patch);
     return mutate(() => {
