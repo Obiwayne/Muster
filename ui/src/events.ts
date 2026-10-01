@@ -1,7 +1,7 @@
 // Reconnecting client for ws://<host>/ws/events. Holds the latest {state, config}
 // snapshot and forwards toast events.
 import type { MusterConfig, MusterEvent, MusterState } from '../../src/types';
-import { api, getToken } from './api';
+import { api, getToken, refreshToken } from './api';
 
 export interface Snapshot { state: MusterState; config: MusterConfig }
 
@@ -43,7 +43,8 @@ class EventClient {
       if (this.ws !== ws) return;
       this.setConn(false);
       const delay = Math.min(5000, 500 * 2 ** this.retry++);
-      setTimeout(() => this.connect(), delay);
+      // A restarted orchestrator has a new token: pick it up before trying again.
+      setTimeout(() => void refreshToken().finally(() => this.connect()), delay);
     };
     ws.onerror = () => ws.close();
   }

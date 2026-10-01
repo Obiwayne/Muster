@@ -12,11 +12,41 @@ export function getToken(): string {
   return (import.meta.env.VITE_MUSTER_TOKEN as string | undefined) ?? '';
 }
 
+/**
+ * The orchestrator makes a new token every time it starts, so after a restart this page holds a stale one
+ * and every request and socket is refused. The page the server serves always carries the current token:
+ * fetch it again and swap it in. Returns true when the token changed.
+ */
+let refreshing: Promise<boolean> | null = null;
+export function refreshToken(): Promise<boolean> {
+  refreshing ??= (async () => {
+    try {
+      const res = await fetch('/', { cache: 'no-store' });
+      if (!res.ok) return false;
+      const fresh = /<meta name="muster-token" content="([^"]*)"/.exec(await res.text())?.[1]?.trim();
+      if (!fresh || fresh === getToken()) return false;
+      let meta = document.querySelector<HTMLMetaElement>('meta[name="muster-token"]');
+      if (!meta) {
+        meta = document.createElement('meta');
+        meta.name = 'muster-token';
+        document.head.append(meta);
+      }
+      meta.content = fresh;
+      return true;
+    } catch {
+      return false;
+    } finally {
+      refreshing = null;
+    }
+  })();
+  return refreshing;
+}
+
 export class ApiError extends Error {
   constructor(message: string, public status: number) { super(message); }
 }
 
-async function req<T>(method: string, path: string, body?: unknown): Promise<T> {
+async function req<T>(method: string, path: string, body?: unknown, retried = false): Promise<T> {
   let res: Response;
   try {
     res = await fetch(path, {
@@ -30,6 +60,7 @@ async function req<T>(method: string, path: string, body?: unknown): Promise<T> 
   } catch {
     throw new ApiError('Cannot reach the Muster orchestrator', 0);
   }
+  if (res.status === 401 && !retried && (await refreshToken())) return req<T>(method, path, body, true);
   const text = await res.text();
   let data: any = null;
   try { data = text ? JSON.parse(text) : null; } catch { data = text; }
