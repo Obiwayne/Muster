@@ -4,7 +4,7 @@ import { serverInfo } from '../client.js';
 import type { FeedItem, MusterConfig, MusterEvent, MusterState, TermClientMessage } from '../types.js';
 import { api, CliError, NOT_RUNNING, repoRoot, requireServer, type Ctx } from './context.js';
 import { feed } from './commands.js';
-import { Coalescer, resizeDeduper } from './coalesce.js';
+import { Coalescer, resizeDeduper } from '../core/coalesce.js';
 import { formatFeedItem, idNum } from './format.js';
 
 const DETACH = 0x1d; // Ctrl+]
@@ -43,7 +43,7 @@ export async function attach(ctx: Ctx, agent: string): Promise<void> {
     }
     send({ type: 'input', data: buf.toString('utf8') });
   };
-  const out = new Coalescer((b) => stdout.write(b));
+  const out = new Coalescer((s) => stdout.write(s), { sync: true });
   let cleaned = false;
   const cleanup = () => {
     if (cleaned) return;
@@ -66,7 +66,7 @@ export async function attach(ctx: Ctx, agent: string): Promise<void> {
       sendResize();
     });
     ws.on('message', (data: WebSocket.RawData) => {
-      out.push(Array.isArray(data) ? Buffer.concat(data) : Buffer.from(data as ArrayBuffer));
+      out.push((Array.isArray(data) ? Buffer.concat(data) : Buffer.from(data as ArrayBuffer)).toString('utf8'));
     });
     ws.on('close', () => {
       cleanup();

@@ -16,6 +16,7 @@ import { AgentManager, type Timings } from './agents.js';
 import { createApi, sendJson } from './api.js';
 import { TokenBook, type Caller } from './auth.js';
 import { nodePtyLauncher, type PtyLauncher } from './terminal.js';
+import { Coalescer } from '../core/coalesce.js';
 
 export interface OrchestratorOptions {
   repoRoot: string;
@@ -238,7 +239,9 @@ export async function startOrchestrator(opts: OrchestratorOptions): Promise<Orch
     termWss.handleUpgrade(req, socket, head, (ws) => {
       const backlog = agents.backlog(id);
       if (backlog) ws.send(backlog);
-      const detach = agents.attach(id, (data) => ws.readyState === ws.OPEN && ws.send(data));
+      // Whole repaints only: a screen clear and its redraw arrive as separate PTY chunks ~16ms apart.
+      const frames = new Coalescer((data) => ws.readyState === ws.OPEN && ws.send(data));
+      const detach = agents.attach(id, (data) => frames.push(data));
       const releaseSize = owner ? agents.ownTerminal(id) : undefined;
       ws.on('message', (raw) => {
         let msg: TermClientMessage;
@@ -253,6 +256,7 @@ export async function startOrchestrator(opts: OrchestratorOptions): Promise<Orch
       });
       ws.on('close', () => {
         detach();
+        frames.clear();
         releaseSize?.();
       });
     });
