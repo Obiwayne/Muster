@@ -114,7 +114,7 @@ export async function musterFetch<T>(path: string, opts?: { method?: string; bod
 | GET | /api/config | – | `MusterConfig` |
 | PATCH | /api/config | partial MusterConfig | `MusterConfig` (saved to config.json) |
 | GET | /api/stations | | `StationDef[]` — `{ name, role, guideline, builtin }`, in `config.defaultStations` order, then other defined stations, `review` last. Backed by `.muster/stations/<name>.md` (per machine): optional `role:` frontmatter, the rest is the Markdown guideline. build/test/design/review.md are seeded at startup, only when the folder is missing, never overwritten |
-| GET / PUT | /api/stations/:name | `{ role?, guideline? }` | `StationDef` — PUT creates or updates (human only); omitted fields keep their value. `review` stays with the captain; names `[a-z0-9-]{1,30}`, guideline ≤ 20000 chars |
+| GET / PUT | /api/stations/:name | `{ role?: 'captain', 'crew', 'design' or 'human', guideline? }` | `StationDef` — PUT creates or updates (human only); omitted fields keep their value. `review` stays with the captain; names `[a-z0-9-]{1,30}`, guideline ≤ 20000 chars |
 | DELETE | /api/stations/:name | | `StationDef[]` — human only; also removed from `config.defaultStations`; `review` is refused (400), unknown is 404. Claiming and handoff resolve a station's role from these files (tasks.ts stays pure: roles are passed in) |
 | POST | /api/shutdown | `{ clean?: boolean }` | `{ ok }` — stops every agent, removes merged worktrees if clean, exits |
 
@@ -159,6 +159,8 @@ Muster acts as a read-only MCP client to the Vellum server (`vellumServer(config
 | POST | /api/tasks/:id/assign | `{ agentId, actor }` | `Task` — refused when paused |
 | POST | /api/tasks/:id/handoff | `{ actor, to?, note }` | `Task` — advances stationIndex; `to` = agent id, or omitted = task becomes `ready` for any agent of the next station's role. Receiver's worktree merges the sender's branch (orchestrator runs `git merge --no-edit <senderBranch>` in the receiver worktree). Next station "review" → status `review`, assignee = captain. |
 | POST | /api/tasks/:id/done | `{ actor, summary }` | `Task` — shortcut: jump to the review station (status review, assignee captain), posts a Done note |
+| POST | /api/tasks/:id/approve | `{ actor: "you", note? }` | `Task` — human only. A task at a station whose role is `human` has status `awaiting_approval`, no assignee (nobody can claim it) and an open `approval` note to you (toast + notification). Approve closes the note and moves the task to the next station (a free agent of its role, another approval, or the Captain's review); the Captain gets an inbox item. 409 unless `awaiting_approval`. A human station can be a task's first station: the task is created `awaiting_approval` |
+| POST | /api/tasks/:id/reject | `{ actor: "you", note }` | `Task` — human only, note required (400). Sends the task back to the previous station (stationIndex − 1) and the agent that last handed it in; if that agent is gone, stopped or busy, or the previous station is human, the task is `ready` for the role (or awaiting approval again). Replies on and closes the approval note; the Captain gets an inbox item. 409 unless `awaiting_approval`, or when there is no earlier station. `sendback` still jumps to `build` |
 | POST | /api/tasks/:id/review | `{ actor, summary }` | `Task` — Captain only: status `ready_for_merge`, posts a `review` note (open, "Needs you"), notifies you |
 | POST | /api/tasks/:id/sendback | `{ actor, note }` | `Task` — Captain or you: back to the build station, assignee = previous builder, note delivered |
 
@@ -176,7 +178,7 @@ Task readiness: `blocked` while any `dependsOn` task is not `ready_for_merge`/`m
 | GET | /api/feed | `?limit=200&before=F120&agent=crew-2` | `FeedItem[]` oldest→newest |
 | GET | /api/inbox/:agentId | `?unread=1` | `InboxItem[]`; `POST /api/inbox/:agentId/read { ids? }` marks read (all when ids missing) |
 
-"Needs you" = open notes of type `escalation` or `review` (and any note addressed `to: "you"`).
+"Needs you" = open notes of type `escalation`, `review` or `approval` (and any note addressed `to: "you"`).
 
 ### Usage
 | POST | /api/usage | `{ agentId, rate_limits?, cost? }` | `UsageState` — raw status-line fields: `rate_limits.five_hour.used_percentage`, `.resets_at` (unix seconds or ISO), same for `seven_day`; `cost.total_cost_usd` |

@@ -1,7 +1,7 @@
 // Task board: creation, dependencies, claiming, stations, review and send-back.
 // Pure state mutations; git side effects (branch merges/renames) live in the API layer.
 import { STATION_ROLE, type Agent, type MusterConfig, type MusterState, type Note, type Role, type Task, type TaskBranchInput, type TaskEvent } from '../types.js';
-import { addFeed, addInbox, captainOf, closeNoteIfOpen, findAgent, HUMAN, idNum, isCaptain, nowIso, postNote, requireActor, requireAgent, SYSTEM } from './board.js';
+import { addFeed, addInbox, captainOf, closeNoteIfOpen, findAgent, HUMAN, idNum, isCaptain, nowIso, postNote, replyNote, requireActor, requireAgent, SYSTEM } from './board.js';
 import { badRequest, conflict, forbidden, notFound } from './errors.js';
 import { nextId } from './store.js';
 import { assertNotPaused } from './usage.js';
@@ -76,7 +76,7 @@ export interface TaskInput {
   actor: string;
 }
 
-export function createTask(state: MusterState, config: MusterConfig, input: TaskInput): Task {
+export function createTask(state: MusterState, config: MusterConfig, input: TaskInput, roles?: Record<string, Role>): Task {
   const actor = requireActor(state, input.actor);
   if (!input.title?.trim()) throw badRequest('Task title is empty');
   const dependsOn = (input.dependsOn ?? []).map((d) => requireTask(state, d).id);
@@ -104,7 +104,8 @@ export function createTask(state: MusterState, config: MusterConfig, input: Task
   event(task, actor, 'created');
   state.tasks.push(task);
   addFeed(state, { kind: 'event', from: actor, taskId: task.id, text: `posted ${task.id} ${task.title}` });
-  if (input.assignee) assignTask(state, task.id, input.assignee, actor);
+  if (stationRole(currentStation(task), roles) === 'human') awaitApproval(state, task, actor, 'the task starts at an approval station');
+  else if (input.assignee) assignTask(state, task.id, input.assignee, actor);
   recomputeReadiness(state);
   return task;
 }
@@ -193,6 +194,106 @@ function toReview(state: MusterState, task: Task, from: string, text: string): v
   if (captain) addInbox(state, { agentId: captain.id, from, kind: 'review', taskId: task.id, text });
 }
 
+/** Tell free agents of the station's role, so the task doesn't wait for the Captain to route it. */
+function announceReady(state: MusterState, task: Task, actor: string, roles?: Record<string, Role>): void {
+  const station = currentStation(task);
+  const role = stationRole(station, roles);
+  for (const a of state.agents) {
+    if (a.id === actor || a.role !== role || a.status === 'stopped' || a.taskId) continue;
+    addInbox(state, { agentId: a.id, from: actor, kind: 'handoff', taskId: task.id, text: `${task.id} ${task.title} is ready at the ${station} station: call claim_task` });
+  }
+}
+
+const closeApprovals = (state: MusterState, task: Task): void => {
+  for (const n of state.notes) if (n.type === 'approval' && n.taskId === task.id) closeNoteIfOpen(n);
+};
+
+/** The task reached a 'human' station: nobody holds or claims it; an open approval note waits for you (Approve / Reject). */
+function awaitApproval(state: MusterState, task: Task, actor: string, noteText: string): Note {
+  release(state, task);
+  task.assignee = undefined;
+  task.status = 'awaiting_approval';
+  closeApprovals(state, task);
+  const station = currentStation(task);
+  const note = postNote(state, { actor, type: 'approval', taskId: task.id, to: HUMAN, text: `${task.id} ${task.title} waits for your approval at the ${station} station: ${noteText}` });
+  addFeed(state, { kind: 'event', from: actor, to: HUMAN, taskId: task.id, text: `${task.id} waits for your approval (${station})` });
+  return note;
+}
+
+/** The task's open approval note (what the board shows Approve / Reject on). */
+export const approvalNote = (state: MusterState, task: Task): Note | undefined =>
+  [...state.notes].reverse().find((n) => n.type === 'approval' && n.taskId === task.id && n.open);
+
+function requireAwaitingApproval(state: MusterState, taskId: string, actor: string, what: string): Task {
+  if (actor !== HUMAN) throw forbidden(`Only you can ${what}`);
+  const task = requireTask(state, taskId);
+  if (task.status !== 'awaiting_approval') throw conflict(`${task.id} is ${task.status}, not awaiting approval`);
+  return task;
+}
+
+/** Puts the task at its (new) current station: the human's approval, a free agent of the role, or the Captain's review. */
+function arrive(state: MusterState, task: Task, actor: string, text: string, roles?: Record<string, Role>): void {
+  const station = currentStation(task);
+  if (station === 'review') toReview(state, task, actor, `${actor} approved ${task.id} ${task.title}: ${text}`);
+  else if (stationRole(station, roles) === 'human') awaitApproval(state, task, actor, text);
+  else {
+    release(state, task);
+    task.assignee = undefined;
+    task.status = 'ready';
+    announceReady(state, task, actor, roles);
+  }
+}
+
+/** You approve the task at a 'human' station; it moves on to the next station (or the Captain's review). Only you. */
+export function approveTask(state: MusterState, taskId: string, actor: string, note: string, roles?: Record<string, Role>): Task {
+  const task = requireAwaitingApproval(state, taskId, actor, 'approve');
+  const text = note?.trim() || 'Approved';
+  closeApprovals(state, task);
+  task.stationIndex = Math.min(task.stationIndex + 1, task.stations.length - 1);
+  const station = currentStation(task);
+  event(task, actor, 'handoff', `approved, to ${station === 'review' ? 'review' : 'any ' + stationRole(station, roles)}: ${text}`);
+  addFeed(state, { kind: 'event', from: actor, taskId: task.id, text: `approved ${task.id} ${task.title}: ${text}` });
+  const captain = captainOf(state);
+  if (captain && station !== 'review') addInbox(state, { agentId: captain.id, from: actor, kind: 'system', taskId: task.id, text: `${actor} approved ${task.id} ${task.title}: ${text}` });
+  arrive(state, task, actor, text, roles);
+  recomputeReadiness(state);
+  return task;
+}
+
+/** Who last handed the task into its current station, if that agent can still take it back. */
+export function rejectTarget(state: MusterState, task: Task, roles?: Record<string, Role>): Agent | undefined {
+  const prev = task.stations[task.stationIndex - 1];
+  if (!prev || prev === 'review' || stationRole(prev, roles) === 'human') return undefined;
+  const last = [...task.history].reverse().find((e) => e.kind === 'handoff' && e.agentId !== HUMAN && e.agentId !== SYSTEM);
+  const a = last && findAgent(state, last.agentId);
+  if (!a || a.status === 'stopped' || a.role !== stationRole(prev, roles) || heldTask(state, a)) return undefined;
+  return a;
+}
+
+/** You reject the task at a 'human' station: it goes back to the previous station and that station's last holder (else any agent of its role). */
+export function rejectTask(state: MusterState, taskId: string, actor: string, note: string, roles?: Record<string, Role>): Task {
+  const task = requireAwaitingApproval(state, taskId, actor, 'reject');
+  const text = note?.trim();
+  if (!text) throw badRequest('Say what needs to change: a reject note is required');
+  if (task.stationIndex < 1) throw conflict(`${task.id} has no earlier station to go back to`);
+  const approval = approvalNote(state, task);
+  const holder = rejectTarget(state, task, roles);
+  if (approval) replyNote(state, approval.id, actor, text, true);
+  closeApprovals(state, task);
+  task.stationIndex -= 1;
+  const station = currentStation(task);
+  event(task, actor, 'note', `rejected, back to ${station}: ${text}`);
+  addFeed(state, { kind: 'event', from: actor, to: holder?.id, taskId: task.id, text: `rejected ${task.id} ${task.title}, back to ${station}: ${text}` });
+  const captain = captainOf(state);
+  if (captain && captain.id !== holder?.id) addInbox(state, { agentId: captain.id, from: actor, kind: 'system', taskId: task.id, text: `${actor} rejected ${task.id} ${task.title}, back to ${station}: ${text}` });
+  if (holder) {
+    takeTask(state, task, holder);
+    addInbox(state, { agentId: holder.id, from: actor, kind: 'handoff', taskId: task.id, text: `${actor} rejected ${task.id} ${task.title} and sent it back to you (${station}): ${text}` });
+  } else arrive(state, task, actor, text, roles);
+  recomputeReadiness(state);
+  return task;
+}
+
 export interface HandoffResult {
   task: Task;
   /** Branch that carried the work before the handoff; the receiver's worktree should merge it. */
@@ -230,17 +331,16 @@ export function handoffTask(state: MusterState, taskId: string, actor: string, t
 
   release(state, task);
   task.assignee = undefined;
+  if (stationRole(station, roles) === 'human') {
+    awaitApproval(state, task, actor, noteText);
+    return { task, fromBranch };
+  }
   if (receiver) {
     takeTask(state, task, receiver);
     addInbox(state, { agentId: receiver.id, from: actor, kind: 'handoff', taskId: task.id, text: `${actor} handed you ${task.id} ${task.title} (${station}): ${noteText}` });
   } else {
     task.status = 'ready';
-    // Tell free agents of the next station's role, so the task doesn't wait for the Captain to route it.
-    const role = stationRole(station, roles);
-    for (const a of state.agents) {
-      if (a.id === actor || a.role !== role || a.status === 'stopped' || a.taskId) continue;
-      addInbox(state, { agentId: a.id, from: actor, kind: 'handoff', taskId: task.id, text: `${task.id} ${task.title} is ready at the ${station} station: call claim_task` });
-    }
+    announceReady(state, task, actor, roles);
   }
   addFeed(state, { kind: 'event', from: actor, to: receiver?.id, taskId: task.id, text: `handed ${task.id} to ${receiver?.id ?? 'the ' + station + ' station'}: ${noteText}` });
   return { task, fromBranch, receiver };
@@ -357,7 +457,7 @@ export function sendBack(state: MusterState, taskId: string, actor: string, note
   release(state, task);
   task.reviewedSha = undefined;
   task.stationIndex = Math.max(0, task.stations.indexOf('build'));
-  for (const n of state.notes) if (n.type === 'review' && n.taskId === task.id) closeNoteIfOpen(n);
+  for (const n of state.notes) if ((n.type === 'review' || n.type === 'approval') && n.taskId === task.id) closeNoteIfOpen(n);
   event(task, actor, 'note', `sent back: ${text}`);
 
   if (builder) {

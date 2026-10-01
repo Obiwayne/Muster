@@ -118,7 +118,7 @@ export function bar(pct: number, width = 20): string {
 // ---------------------------------------------------------------- domain views
 
 export function needsYou(n: Note): boolean {
-  return n.open && (n.type === 'escalation' || n.type === 'review' || n.to === 'you');
+  return n.open && (n.type === 'escalation' || n.type === 'review' || n.type === 'approval' || n.to === 'you');
 }
 
 function statusCell(c: Colors, a: Agent): string {
@@ -155,7 +155,7 @@ export function formatStatus(
   if (!state.agents.length) {
     out.push('No agents yet. Run `muster up` to start the Captain, `muster add` for crew.');
   } else {
-    const order: Record<Role, number> = { captain: 0, crew: 1, design: 2 };
+    const order: Record<Role, number> = { captain: 0, crew: 1, design: 2, human: 3 };
     const agents = [...state.agents].sort((a, b) => order[a.role] - order[b.role]);
     const rows = agents.map((a) => {
       const color = roleColor(c, a.role);
@@ -200,7 +200,7 @@ export function formatTasks(tasks: Task[], c: Colors, now: Date = new Date()): s
   if (!tasks.length) return 'No tasks yet.';
   const rows = tasks.map((t) => {
     const station = t.stations.length ? `${t.stations[t.stationIndex] ?? '?'} ${t.stationIndex + 1}/${t.stations.length}` : '-';
-    const status = t.status === 'ready_for_merge' ? c.amber(t.status) : t.status === 'merged' || t.status === 'cancelled' ? c.dim(t.status) : t.status;
+    const status = t.status === 'ready_for_merge' || t.status === 'awaiting_approval' ? c.amber(t.status) : t.status === 'merged' || t.status === 'cancelled' ? c.dim(t.status) : t.status;
     return [t.id, status, station, t.assignee ?? '-', t.dependsOn.length ? t.dependsOn.join(',') : '-', relativeTime(t.updatedAt, now), truncate(t.title, 60)];
   });
   return table(['TASK', 'STATUS', 'STATION', 'ASSIGNEE', 'DEPENDS', 'UPDATED', 'TITLE'], rows, c);

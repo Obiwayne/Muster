@@ -89,6 +89,14 @@ ${block}`;
     }
   };
 
+  /** A task that just reached a 'human' station: toast and notify you, the way review does. */
+  const announceApproval = (task: Task) => {
+    const note = task.status === 'awaiting_approval' ? tasks.approvalNote(state(), task) : undefined;
+    if (!note) return;
+    ctx.notify('Muster: needs your approval', note.text);
+    ctx.toast('info', note.text);
+  };
+
   /** After a task lands on an agent: fix up its branch, and wake the agent if it was stopped. */
   const afterTake = async (agent: Agent | undefined, task: Task) => {
     if (!agent) return;
@@ -242,8 +250,9 @@ ${block}`;
         stations: body.stations,
         assignee: body.assignee || undefined,
         actor: str(body.actor, 'actor'),
-      }),
+      }, stations.stationRoles(ctx.paths)),
     );
+    announceApproval(task);
     if (task.assignee) await afterTake(board.findAgent(state(), task.assignee), task);
     attachGuideline(task.assignee, task, ['assignment']);
     return task;
@@ -267,6 +276,7 @@ ${block}`;
     const from = await agents.stationBranch(current); // 409 unless it contains the earlier stations' work
     if (body.to) await agents.assertCanTakeBranch(body.to, current);
     const r = mutate(() => tasks.handoffTask(state(), params.id, str(body.actor, 'actor'), body.to || undefined, body.note ?? '', from, stations.stationRoles(ctx.paths)));
+    announceApproval(r.task);
     if (r.receiver) await afterTake(r.receiver, r.task);
     attachGuideline(r.task.assignee, r.task, ['handoff', 'review']);
     return r.task;
@@ -274,6 +284,7 @@ ${block}`;
   route('POST', '/api/tasks/:id/done', async ({ params, body }) => {
     const from = await agents.stationBranch(tasks.requireTask(state(), params.id));
     const done = mutate(() => tasks.doneTask(state(), params.id, str(body.actor, 'actor'), body.summary ?? '', from, stations.stationRoles(ctx.paths)));
+    announceApproval(done);
     attachGuideline(done.assignee, done, ['review', 'handoff']);
     return done;
   });
@@ -289,6 +300,22 @@ ${block}`;
   route('POST', '/api/tasks/:id/cancel', ({ params, body }) =>
     mutate(() => tasks.cancelTask(state(), params.id, str(body.actor, 'actor'), body.reason ?? '')),
   );
+  route('POST', '/api/tasks/:id/approve', async ({ params, body }) => {
+    const task = mutate(() => tasks.approveTask(state(), params.id, str(body.actor, 'actor'), body.note ?? '', stations.stationRoles(ctx.paths)));
+    announceApproval(task);
+    attachGuideline(task.assignee, task, ['handoff', 'review']);
+    return task;
+  });
+  route('POST', '/api/tasks/:id/reject', async ({ params, body }) => {
+    const roles = stations.stationRoles(ctx.paths);
+    const current = tasks.requireTask(state(), params.id);
+    await agents.assertCanTakeBranch(tasks.rejectTarget(state(), current, roles)?.id, current);
+    const task = mutate(() => tasks.rejectTask(state(), params.id, str(body.actor, 'actor'), body.note ?? '', roles));
+    if (task.assignee) await afterTake(board.findAgent(state(), task.assignee), task);
+    announceApproval(task);
+    attachGuideline(task.assignee, task, ['handoff']);
+    return task;
+  });
   route('POST', '/api/tasks/:id/sendback', async ({ params, body }) => {
     const current = tasks.requireTask(state(), params.id);
     await agents.assertCanTakeBranch(tasks.builderOf(state(), current)?.id, current);

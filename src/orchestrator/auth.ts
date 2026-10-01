@@ -45,6 +45,7 @@ const HUMAN_ONLY: [string, RegExp, string][] = [
   ['DELETE', /^\/api\/agents\/[^/]+$/, 'remove agents'],
   ['POST', /^\/api\/agents\/[^/]+\/input$/, 'type into terminals'],
   ['POST', /^\/api\/agents\/[^/]+\/merge$/, 'merge'],
+  ['POST', /^\/api\/tasks\/[^/]+\/approve$/, 'approve'],
 ];
 
 const agentParam = (path: string, re: RegExp): string | undefined => {

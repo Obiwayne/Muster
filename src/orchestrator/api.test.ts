@@ -417,6 +417,31 @@ describe('orchestrator API', () => {
     expect((await ok<any[]>('DELETE', '/api/stations/lint')).map((s) => s.name)).not.toContain('lint');
   });
 
+  it('human stations: approve and reject are human-only and need a task awaiting approval', async () => {
+    await ok('PUT', '/api/stations/signoff', { role: 'human', guideline: 'You approve this.' });
+    const t = await ok<Task>('POST', '/api/tasks', { title: 'Sign off the plan', stations: ['signoff', 'build'], actor: 'captain' });
+    expect(t).toMatchObject({ status: 'awaiting_approval', stationIndex: 0 });
+    expect(t.assignee).toBeUndefined();
+    const note = (await state()).notes.find((n) => n.type === 'approval' && n.taskId === t.id)!;
+    expect(note).toMatchObject({ open: true, to: 'you' });
+
+    const agentCall = (action: string, body: object, id = t.id) => call('POST', `/api/tasks/${id}/${action}`, body, orch.agentToken('captain'));
+    expect((await agentCall('approve', { note: 'ok' })).status).toBe(403);
+    expect((await agentCall('reject', { note: 'no' })).status).toBe(403);
+    const merged = await ok<Task>('POST', '/api/tasks', { title: 'Plain task', stations: ['build'], actor: 'captain' }); // ready, not awaiting approval
+    expect((await call('POST', `/api/tasks/${merged.id}/approve`, { actor: 'you' })).status).toBe(409);
+    expect((await call('POST', `/api/tasks/${merged.id}/reject`, { actor: 'you', note: 'x' })).status).toBe(409);
+    expect((await call('POST', `/api/tasks/${t.id}/reject`, { actor: 'you' })).status).toBe(400); // note required
+    expect((await call('POST', `/api/tasks/${t.id}/reject`, { actor: 'you', note: 'x' })).status).toBe(409); // nothing before the first station
+
+    const approved = await ok<Task>('POST', `/api/tasks/${t.id}/approve`, { actor: 'you', note: 'go' });
+    expect(approved).toMatchObject({ status: 'ready', stationIndex: 1 });
+    expect((await state()).notes.find((n) => n.id === note.id)!.open).toBe(false);
+    expect((await call('POST', `/api/tasks/${t.id}/approve`, { actor: 'you' })).status).toBe(409);
+    for (const id of [t.id, merged.id]) await ok('POST', `/api/tasks/${id}/cancel`, { actor: 'you', reason: 'test over' });
+    await ok('DELETE', '/api/stations/signoff');
+  });
+
   it('shuts down, then resumes the agents that were running on the next start', async () => {
     const running = orch.store.state.agents.filter((a) => a.status !== 'stopped').map((a) => a.id).sort();
     await orch.shutdown();
