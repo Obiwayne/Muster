@@ -61,6 +61,17 @@
   .hello b { color: var(--text); font-weight: 600; }
   .link { background: none; color: var(--faint); font-size: 13px; padding: 0 0 0 6px; text-decoration: underline; text-underline-offset: 3px; }
   .link:hover { color: var(--text); }
+  .newapp { display: none; flex-direction: column; gap: 12px; padding: 20px; border-radius: 16px; border: 1px solid var(--line); background: var(--surface); }
+  .newapp.show { display: flex; }
+  .newapp h2 { margin: 0; font-size: 16px; font-weight: 600; }
+  .newapp textarea { min-height: 96px; resize: vertical; padding: 12px 14px; border-radius: 8px; border: 1px solid var(--line); background: var(--bg); color: var(--text); font: inherit; font-size: 14px; line-height: 21px; outline: none; }
+  .newapp textarea:focus, .newapp .name-input:focus { border-color: color-mix(in oklab, #FF7A1A 60%, var(--line)); }
+  .newapp .name-input { flex: none; width: 100%; }
+  .newapp .where { display: flex; align-items: center; gap: 8px; font-size: 13px; color: var(--muted); min-width: 0; }
+  .newapp .where .path { flex: 1; }
+  .newapp .actions { display: flex; gap: 10px; }
+  .secondary { height: 42px; padding: 0 18px; border-radius: 8px; background: var(--surface-2); color: var(--text); font-size: 14px; font-weight: 500; }
+  .secondary:hover { background: var(--line); }
   .gated.hidden { display: none !important; }
 </style>
 </head>
@@ -86,8 +97,19 @@
       <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M3 7a2 2 0 0 1 2-2h4l2 2h8a2 2 0 0 1 2 2v8a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2z"/></svg>
       Open a project folder
     </button>
-    <span class="hint">Any git repo with at least one commit</span>
+    <button class="secondary" id="newBtn">Start a new app</button>
+    <span class="hint">Or open any git repo with a commit</span>
   </div>
+  <form class="newapp gated" id="newForm">
+    <h2>What do you want to build?</h2>
+    <textarea id="newIdea" placeholder="e.g. A habit tracker that nudges me at 9pm" required></textarea>
+    <input class="name-input" id="newTitle" maxlength="60" placeholder="Working title (optional)" />
+    <div class="where"><span>Create in</span><span class="path" id="newDir"></span><button type="button" class="link" id="newDirBtn">Change…</button></div>
+    <div class="actions">
+      <button class="primary" type="submit" id="newGo">Create and open</button>
+      <button class="secondary" type="button" id="newCancel">Cancel</button>
+    </div>
+  </form>
   <div class="error" id="error"></div>
   <div style="display:flex;flex-direction:column;gap:10px">
     <div class="label gated" id="recentLabel">RECENT PROJECTS</div>
@@ -160,6 +182,38 @@
     const r = await window.muster.choose();
     busy('');
     if (!r.ok && !r.canceled) render();
+  };
+  // Start a new app: `muster new` in the remembered parent folder, then open the result.
+  let newDir = null;
+  function showNewDir() {
+    $('newDir').textContent = newDir || 'No folder chosen yet';
+    $('newDirBtn').textContent = newDir ? 'Change…' : 'Choose…';
+  }
+  async function pickDir() {
+    const d = await window.muster.pickNewAppDir();
+    if (d) { newDir = d; showNewDir(); }
+    return newDir;
+  }
+  $('newBtn').onclick = async () => {
+    showError('');
+    newDir = await window.muster.newAppDir();
+    if (!newDir && !(await pickDir())) return;
+    showNewDir();
+    $('newForm').classList.add('show');
+    $('openRow').classList.add('hidden');
+    $('newIdea').focus();
+  };
+  $('newDirBtn').onclick = pickDir;
+  $('newCancel').onclick = () => { $('newForm').classList.remove('show'); $('openRow').classList.remove('hidden'); showError(''); };
+  $('newForm').onsubmit = async (e) => {
+    e.preventDefault();
+    showError('');
+    const idea = $('newIdea').value.trim();
+    if (!idea) { $('newIdea').focus(); return; }
+    if (!newDir && !(await pickDir())) return;
+    busy('Creating your app…');
+    const r = await window.muster.newApp({ idea, title: $('newTitle').value.trim(), dir: newDir });
+    if (!r.ok) { busy(''); showError(r.error); }
   };
   // First launch: ask for a name before anything else.
   function showHello(name) {

@@ -170,6 +170,8 @@ export function createBoard(): Page {
         : n.type === 'review'
         ? 'Ready for review: the Captain has checked this branch. Merge it from Tasks or Branches, or reply to send it back.'
         : 'Needs you: the Captain escalated this. Reply below; the answer goes to the agents involved.';
+      const hint = isApproval && task?.line === 'new-app'
+        ? h('div.faint', { style: 'font-size:12px;margin-top:4px' }, 'Pick the product name in Settings → Project, then Create GitHub repo.') : null;
       const act = isApproval
         ? h('span.flex', { style: 'display:flex;gap:6px' },
             diffOwner ? h('button.btn.sm', { onclick: () => void showDiffModal(diffOwner, task!.branch) }, 'View diff') : null,
@@ -177,7 +179,7 @@ export function createBoard(): Page {
             h('button.btn.sm.merge', { onclick: () => void approveTask(task!) }, 'Approve'))
         : n.type === 'review' && task?.status === 'ready_for_merge'
         ? h('button.btn.sm.merge', { onclick: () => mergeTask(state, task) }, 'Merge') : null;
-      items.push(h('div.banner.warm', null, icon('alert', 16), h('div.flex1', null, msg), act));
+      items.push(h('div.banner.warm', null, icon('alert', 16), h('div.flex1', null, msg, hint), act));
     }
     setChildren(replies, items);
     if (wasBottom) replies.scrollTop = replies.scrollHeight;
