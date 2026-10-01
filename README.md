@@ -72,3 +72,7 @@ npm test                          # vitest, 140+ tests
 npm run build                     # tsc → dist/, vite → dist/ui/
 node ui/dev/mock-server.mjs       # dashboard against a mock orchestrator (token: dev-token)
 ```
+
+## License
+
+[MIT](LICENSE)

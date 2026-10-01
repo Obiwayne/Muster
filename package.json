@@ -3,7 +3,7 @@
   "version": "0.1.0",
   "description": "Run a crew of Claude Code agents in parallel on one project, led by a Captain agent.",
   "type": "module",
-  "license": "UNLICENSED",
+  "license": "MIT",
   "private": true,
   "bin": {
     "muster": "bin/muster.js"
