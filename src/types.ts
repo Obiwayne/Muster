@@ -1,7 +1,7 @@
 // Shared types for Muster. This file is the contract between the orchestrator,
 // the CLI, muster-mcp, the hooks and the dashboard. Change it deliberately.
 
-export type Role = 'captain' | 'crew' | 'design';
+export type Role = 'captain' | 'crew' | 'design' | 'human'; // human = an approval station: nobody claims it, you Approve or Send back from the board
 
 export type AgentStatus =
   | 'starting' // PTY spawned, claude booting
@@ -77,6 +77,7 @@ export type NoteType =
   | 'progress'
   | 'done'
   | 'review' // Ready for review: posted by the Captain, acted on by the human
+  | 'approval' // a task waits at a 'human' station: acted on by the human (Approve / Send back)
   | 'escalation' // Captain asking the human
   | 'message' // direct message between agents; shown on the board, never "open"
   | 'system'; // posted by the orchestrator (usage warnings, pauses, crashes)
@@ -211,7 +212,7 @@ export type TermClientMessage =
   | { type: 'input'; data: string }
   | { type: 'resize'; cols: number; rows: number };
 
-export const OPEN_BY_DEFAULT: NoteType[] = ['stuck', 'question', 'waiting', 'review', 'escalation'];
+export const OPEN_BY_DEFAULT: NoteType[] = ['stuck', 'question', 'waiting', 'review',  'approval', 'escalation'];
 
 export const DEFAULT_CONFIG: MusterConfig = {
   port: 47800,

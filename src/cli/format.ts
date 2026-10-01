@@ -118,7 +118,7 @@ export function bar(pct: number, width = 20): string {
 // ---------------------------------------------------------------- domain views
 
 export function needsYou(n: Note): boolean {
-  return n.open && (n.type === 'escalation' || n.type === 'review' || n.to === 'you');
+  return n.open && (n.type === 'escalation' || n.type === 'review' || n.type === 'approval' || n.to === 'you');
 }
 
 function statusCell(c: Colors, a: Agent): string {
@@ -155,7 +155,7 @@ export function formatStatus(
   if (!state.agents.length) {
     out.push('No agents yet. Run `muster up` to start the Captain, `muster add` for crew.');
   } else {
-    const order: Record<Role, number> = { captain: 0, crew: 1, design: 2 };
+    const order: Record<Role, number> = { captain: 0, crew: 1, design: 2, human: 3 };
     const agents = [...state.agents].sort((a, b) => order[a.role] - order[b.role]);
     const rows = agents.map((a) => {
       const color = roleColor(c, a.role);

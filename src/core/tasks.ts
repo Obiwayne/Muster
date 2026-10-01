@@ -193,6 +193,56 @@ function toReview(state: MusterState, task: Task, from: string, text: string): v
   if (captain) addInbox(state, { agentId: captain.id, from, kind: 'review', taskId: task.id, text });
 }
 
+/** Tell free agents of the station's role, so the task doesn't wait for the Captain to route it. */
+function announceReady(state: MusterState, task: Task, actor: string, roles?: Record<string, Role>): void {
+  const station = currentStation(task);
+  const role = stationRole(station, roles);
+  for (const a of state.agents) {
+    if (a.id === actor || a.role !== role || a.status === 'stopped' || a.taskId) continue;
+    addInbox(state, { agentId: a.id, from: actor, kind: 'handoff', taskId: task.id, text: `${task.id} ${task.title} is ready at the ${station} station: call claim_task` });
+  }
+}
+
+const closeApprovals = (state: MusterState, task: Task): void => {
+  for (const n of state.notes) if (n.type === 'approval' && n.taskId === task.id) closeNoteIfOpen(n);
+};
+
+/** The task reached a 'human' station: nobody holds or claims it; an open approval note waits for you (Approve / Send back). */
+function awaitApproval(state: MusterState, task: Task, actor: string, noteText: string): Note {
+  task.assignee = undefined;
+  task.status = 'ready';
+  closeApprovals(state, task);
+  const station = currentStation(task);
+  const note = postNote(state, { actor, type: 'approval', taskId: task.id, to: HUMAN, text: `${task.id} ${task.title} waits for your approval at the ${station} station: ${noteText}` });
+  addFeed(state, { kind: 'event', from: actor, to: HUMAN, taskId: task.id, text: `${task.id} waits for your approval (${station})` });
+  return note;
+}
+
+/** True while the task sits unclaimed at a station worked by 'human'. */
+export const awaitingApproval = (task: Task, roles?: Record<string, Role>): boolean =>
+  task.status === 'ready' && !task.assignee && stationRole(currentStation(task), roles) === 'human';
+
+/** You approve the task at a 'human' station; it moves on to the next station (or the Captain's review). Only you. */
+export function approveTask(state: MusterState, taskId: string, actor: string, note: string, roles?: Record<string, Role>): Task {
+  if (actor !== HUMAN) throw forbidden('Only you can approve');
+  const task = requireTask(state, taskId);
+  if (!awaitingApproval(task, roles)) throw conflict(`${task.id} is not waiting for approval`);
+  const text = note?.trim() || 'Approved';
+  closeApprovals(state, task);
+  task.stationIndex = Math.min(task.stationIndex + 1, task.stations.length - 1);
+  const station = currentStation(task);
+  event(task, actor, 'handoff', `approved, to ${station === 'review' ? 'review' : 'any ' + stationRole(station, roles)}: ${text}`);
+  addFeed(state, { kind: 'event', from: actor, taskId: task.id, text: `approved ${task.id} ${task.title}: ${text}` });
+  if (station === 'review') toReview(state, task, actor, `${actor} approved ${task.id} ${task.title}: ${text}`);
+  else if (stationRole(station, roles) === 'human') awaitApproval(state, task, actor, text);
+  else {
+    task.status = 'ready';
+    announceReady(state, task, actor, roles);
+  }
+  recomputeReadiness(state);
+  return task;
+}
+
 export interface HandoffResult {
   task: Task;
   /** Branch that carried the work before the handoff; the receiver's worktree should merge it. */
@@ -230,17 +280,16 @@ export function handoffTask(state: MusterState, taskId: string, actor: string, t
 
   release(state, task);
   task.assignee = undefined;
+  if (stationRole(station, roles) === 'human') {
+    awaitApproval(state, task, actor, noteText);
+    return { task, fromBranch };
+  }
   if (receiver) {
     takeTask(state, task, receiver);
     addInbox(state, { agentId: receiver.id, from: actor, kind: 'handoff', taskId: task.id, text: `${actor} handed you ${task.id} ${task.title} (${station}): ${noteText}` });
   } else {
     task.status = 'ready';
-    // Tell free agents of the next station's role, so the task doesn't wait for the Captain to route it.
-    const role = stationRole(station, roles);
-    for (const a of state.agents) {
-      if (a.id === actor || a.role !== role || a.status === 'stopped' || a.taskId) continue;
-      addInbox(state, { agentId: a.id, from: actor, kind: 'handoff', taskId: task.id, text: `${task.id} ${task.title} is ready at the ${station} station: call claim_task` });
-    }
+    announceReady(state, task, actor, roles);
   }
   addFeed(state, { kind: 'event', from: actor, to: receiver?.id, taskId: task.id, text: `handed ${task.id} to ${receiver?.id ?? 'the ' + station + ' station'}: ${noteText}` });
   return { task, fromBranch, receiver };
@@ -357,7 +406,7 @@ export function sendBack(state: MusterState, taskId: string, actor: string, note
   release(state, task);
   task.reviewedSha = undefined;
   task.stationIndex = Math.max(0, task.stations.indexOf('build'));
-  for (const n of state.notes) if (n.type === 'review' && n.taskId === task.id) closeNoteIfOpen(n);
+  for (const n of state.notes) if ((n.type === 'review' || n.type === 'approval') && n.taskId === task.id) closeNoteIfOpen(n);
   event(task, actor, 'note', `sent back: ${text}`);
 
   if (builder) {

@@ -2,7 +2,7 @@ import { beforeEach, describe, expect, it } from 'vitest';
 import { DEFAULT_CONFIG, type MusterState } from '../types.js';
 import { inboxFor, listNotes, postNote } from './board.js';
 import { emptyState } from './store.js';
-import { assignTask, cancelTask, claimTask, createTask, doneTask, handoffTask, hasReportedDone, markMerged, MERGE_CONFLICT, requestReview, sendBack, untake } from './tasks.js';
+import { approveTask, assignTask, cancelTask, claimTask, createTask, doneTask, handoffTask, hasReportedDone, markMerged, MERGE_CONFLICT, requestReview, sendBack, untake } from './tasks.js';
 import { makeAgent } from './testutil.js';
 
 let s: MusterState;
@@ -231,5 +231,37 @@ describe('cancelTask', () => {
     expect(s.notes.every((n) => n.taskId !== t.id || !n.open)).toBe(true);
     expect(claimTask(s, 'crew-3')).toBeNull();
     expect(() => cancelTask(s, t.id, 'you', 'again')).toThrow(/already cancelled/);
+  });
+});
+
+describe('human approval stations', () => {
+  const roles = { signoff: 'human' as const };
+
+  it('parks the task with an open approval note; nobody can claim it; Approve moves it on', () => {
+    const t = createTask(s, config, { title: 'Ship', stations: ['build', 'signoff'], actor: 'captain' });
+    claimTask(s, 'crew-2', roles);
+    doneTask(s, t.id, 'crew-2', 'built', undefined, roles);
+    expect(t.status).toBe('ready');
+    expect(t.assignee).toBeUndefined();
+    const note = listNotes(s, { open: true, type: 'approval' })[0];
+    expect(note.to).toBe('you');
+    expect(note.taskId).toBe(t.id);
+    for (const a of ['crew-3', 'design', 'captain']) expect(claimTask(s, a, roles)).toBeNull();
+    expect(() => approveTask(s, t.id, 'captain', '', roles)).toThrow(/Only you/);
+    approveTask(s, t.id, 'you', 'ok', roles);
+    expect(note.open).toBe(false);
+    expect(t.status).toBe('review');
+    expect(t.assignee).toBe('captain');
+    expect(() => approveTask(s, t.id, 'you', '', roles)).toThrow(/not waiting/);
+  });
+
+  it('Send back closes the approval note and returns the task to build', () => {
+    const t = createTask(s, config, { title: 'Ship', stations: ['build', 'signoff'], actor: 'captain' });
+    claimTask(s, 'crew-2', roles);
+    doneTask(s, t.id, 'crew-2', 'built', undefined, roles);
+    sendBack(s, t.id, 'you', 'redo the copy');
+    expect(listNotes(s, { open: true, type: 'approval' })).toHaveLength(0);
+    expect(t.assignee).toBe('crew-2');
+    expect(t.stations[t.stationIndex]).toBe('build');
   });
 });

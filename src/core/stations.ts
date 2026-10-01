@@ -12,7 +12,7 @@ import { badRequest, notFound } from './errors.js';
 import type { MusterPaths } from './paths.js';
 
 export const MAX_GUIDELINE = 20_000;
-const ROLES: Role[] = ['captain', 'crew', 'design'];
+const ROLES: Role[] = ['captain', 'crew', 'design', 'human'];
 const NAME_RE = /^[a-z0-9][a-z0-9-]{0,29}$/;
 const REVIEW = 'review';
 const BUILT_IN = Object.keys(STATION_ROLE);
@@ -98,7 +98,7 @@ export const readGuideline = (p: MusterPaths, name: string): string => getStatio
 /** Creates or updates a station. Omitted fields keep their value (a new station defaults to role crew, empty guideline). */
 export function saveStation(p: MusterPaths, rawName: unknown, patch: { role?: unknown; guideline?: unknown }): StationDef {
   const name = stationName(rawName);
-  if (patch.role !== undefined && (typeof patch.role !== 'string' || !ROLES.includes(patch.role as Role))) throw badRequest('role must be "captain", "crew" or "design"');
+  if (patch.role !== undefined && (typeof patch.role !== 'string' || !ROLES.includes(patch.role as Role))) throw badRequest('role must be "captain", "crew", "design" or "human"');
   if (name === REVIEW && patch.role !== undefined && patch.role !== 'captain') throw badRequest('The review station is always worked by the captain');
   if (patch.guideline !== undefined) {
     if (typeof patch.guideline !== 'string') throw badRequest('guideline must be a string');

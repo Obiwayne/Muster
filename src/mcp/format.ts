@@ -30,7 +30,7 @@ export function formatNoteLine(n: Note, now: number = Date.now(), maxText = 140)
   parts.push(relTime(n.createdAt, now));
   let line = `${parts.join(' · ')} · "${clip(n.text, maxText)}"`;
   if (n.replies?.length) line += ` (${replies(n.replies.length)})`;
-  if (!n.open && ['stuck', 'question', 'waiting', 'review', 'escalation'].includes(n.type)) line += ' [closed]';
+  if (!n.open && ['stuck', 'question', 'waiting', 'review', 'approval', 'escalation'].includes(n.type)) line += ' [closed]';
   return line;
 }
 
@@ -52,7 +52,7 @@ export function formatBoard(notes: Note[], now: number = Date.now(), opts: { lim
 
 export const BOARD_FILTERS = [
   'open', 'all', 'mine', 'to-me', 'needs-you',
-  'stuck', 'question', 'waiting', 'progress', 'done', 'review', 'escalation', 'message', 'system',
+  'stuck', 'question', 'waiting', 'progress', 'done', 'review', 'approval', 'escalation', 'message', 'system',
 ] as const;
 export type BoardFilter = (typeof BOARD_FILTERS)[number];
 

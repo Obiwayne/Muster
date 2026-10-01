@@ -4,7 +4,7 @@ import { OPEN_BY_DEFAULT, type Agent, type FeedItem, type InboxItem, type Muster
 import { badRequest, forbidden, notFound } from './errors.js';
 import { nextId } from './store.js';
 
-export const NOTE_TYPES: NoteType[] = ['stuck', 'question', 'waiting', 'progress', 'done', 'review', 'escalation', 'message', 'system'];
+export const NOTE_TYPES: NoteType[] = ['stuck', 'question', 'waiting', 'progress', 'done', 'review', 'approval', 'escalation', 'message', 'system'];
 export const HUMAN = 'you';
 export const SYSTEM = 'muster';
 
@@ -55,7 +55,7 @@ export function addInbox(state: MusterState, item: Omit<InboxItem, 'id' | 'at' |
 }
 
 export function isNeedsYou(n: Note): boolean {
-  return n.open && (n.type === 'escalation' || n.type === 'review' || n.to === HUMAN);
+  return n.open && (n.type === 'escalation' || n.type === 'review' || n.type === 'approval' || n.to === HUMAN);
 }
 
 export interface NoteInput {

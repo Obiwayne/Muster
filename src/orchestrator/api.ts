@@ -289,6 +289,9 @@ ${block}`;
   route('POST', '/api/tasks/:id/cancel', ({ params, body }) =>
     mutate(() => tasks.cancelTask(state(), params.id, str(body.actor, 'actor'), body.reason ?? '')),
   );
+  route('POST', '/api/tasks/:id/approve', ({ params, body }) =>
+    mutate(() => tasks.approveTask(state(), params.id, str(body.actor, 'actor'), body.note ?? '', stations.stationRoles(ctx.paths))),
+  );
   route('POST', '/api/tasks/:id/sendback', async ({ params, body }) => {
     const current = tasks.requireTask(state(), params.id);
     await agents.assertCanTakeBranch(tasks.builderOf(state(), current)?.id, current);
