@@ -254,14 +254,14 @@ export function confirmDialog(title: string, text: string, okLabel: string, kind
   });
 }
 
-export function promptDialog(title: string, text: string, okLabel: string, placeholder = ''): Promise<string | null> {
+export function promptDialog(title: string, text: string, okLabel: string, placeholder = '', optional = false): Promise<string | null> {
   return new Promise((resolve) => {
     let val: string | null = null;
     const input = h('textarea.field', { rows: 3, placeholder }) as HTMLTextAreaElement;
     showModal({
       title,
       body: [h('p', null, text), input],
-      actions: [{ label: okLabel, kind: 'primary', onClick: (close) => { if (!input.value.trim()) return; val = input.value.trim(); close(); } }],
+      actions: [{ label: okLabel, kind: 'primary', onClick: (close) => { if (!optional && !input.value.trim()) return; val = input.value.trim(); close(); } }],
       onClose: () => resolve(val),
     });
   });

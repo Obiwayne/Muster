@@ -73,6 +73,7 @@ a { color: inherit; text-decoration: none; }
 .r-captain { --role: var(--color-captain); }
 .r-crew { --role: var(--color-crew); }
 .r-design { --role: var(--color-design); }
+.r-human { --role: var(--color-warm); }
 .r-you { --role: var(--color-muted); }
 .r-muster { --role: var(--color-faint); }
 
@@ -566,3 +567,7 @@ textarea.field { height: auto; min-height: 40px; padding: 10px 14px; resize: ver
 .se-warn { display: flex; align-items: center; gap: 10px; padding: 10px 22px; background: color-mix(in oklab, var(--color-captain) 14%, transparent); color: var(--color-captain); font-size: var(--text-sm); }
 .se-warn span { flex: 1; }
 .se-error { padding: 22px; color: var(--color-stuck); font-size: var(--text-sm); }
+
+.se-presets { display: flex; flex-direction: column; gap: 4px; margin-bottom: 10px; font-size: var(--text-sm); }
+.se-item .btn.add { margin-left: auto; padding: 1px 8px; font-size: 11px; }
+.se-list .section-label { margin-top: 8px; }
