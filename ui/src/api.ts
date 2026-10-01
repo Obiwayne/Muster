@@ -44,6 +44,9 @@ const enc = encodeURIComponent;
 const YOU = 'you';
 
 export interface DiffResult { branch: string; base: string; stat: string; diff: string }
+/** GET /api/vellum: read-only MCP client for Vellum. `status` is "connected" when the server answered. */
+export interface VellumFile { id: string; name: string; pages: number; updated?: string }
+export interface VellumInfo { status: string; message?: string; checkedAt: string; files: VellumFile[] }
 export interface TestResult { command: string; exitCode: number; output: string }
 
 export const api = {
@@ -97,5 +100,6 @@ export const api = {
     return req<FeedItem[]>('GET', `/api/feed?${p}`);
   },
   inbox: (agentId: string) => req<InboxItem[]>('GET', `/api/inbox/${enc(agentId)}`),
+  vellum: () => req<VellumInfo>('GET', '/api/vellum'),
   usage: () => req<UsageState & { paused: boolean }>('GET', '/api/usage'),
 };

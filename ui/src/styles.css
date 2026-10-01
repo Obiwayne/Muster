@@ -471,6 +471,7 @@ textarea.field { height: auto; min-height: 40px; padding: 10px 14px; resize: ver
 .v-sec { display: flex; flex-direction: column; gap: 8px; }
 .v-text { font-size: 13px; line-height: 21px; color: var(--color-muted); }
 .agent-card { display: flex; align-items: center; gap: 12px; padding: 12px; border-radius: var(--radius-md); border: 1px solid color-mix(in oklab, var(--color-design) 55%, transparent); background: color-mix(in oklab, var(--color-design) 6%, transparent); }
+.agent-card.plain { border-color: var(--color-line); background: transparent; }
 .agent-card .sw { width: 44px; height: 32px; flex-shrink: 0; border-radius: 4px; background: linear-gradient(135deg, #2a2048, var(--color-design)); }
 .agent-card .t { font-size: 13px; font-weight: 600; }
 .agent-card .s { font-size: 12px; color: var(--color-muted); }

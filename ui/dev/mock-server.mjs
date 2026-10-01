@@ -291,6 +291,8 @@ async function api(req, url) {
     broadcast();
     return config;
   }
+  if (m === 'GET' && p === '/api/vellum') return { status: 'connected', checkedAt: new Date().toISOString(), files: [
+    { id: 'wall', name: 'Wall Education', pages: 16 }, { id: 'mayhem', name: 'MayhemDeck', pages: 5 }, { id: 'muster', name: 'Muster', pages: 7 }] };
   if (m === 'GET' && p === '/api/usage') return { ...state.usage, paused: !!paused() };
 
   if (m === 'POST' && p === '/api/agents') {
