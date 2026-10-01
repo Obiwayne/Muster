@@ -52,10 +52,10 @@ export const STARTER_GUIDELINES: Record<string, string> = {
     read: ['The note on the board and the documents the earlier stations committed under docs/factory/.'],
     produce: ['Approve to move on, or Reject with a note saying what to change (it goes back to the previous station).'],
     done: [
-      'The goal in the document is the one you want.',
-      'The scope is right: nothing missing, nothing extra.',
-      'Risks and open questions have an answer or an owner.',
-      'For a plan: each task has acceptance criteria and a sensible line.',
+      'The concept fits the goal you set.',
+      'The scope and the non-goals are right: nothing missing, nothing extra.',
+      'The plan breakdown: each task is small, has acceptance criteria and a sensible line.',
+      'The design (artboards) matches the concept, if the line has a design station.',
     ],
     hand: 'Approving moves the task to the next station (usually the Captain\'s review). Rejecting sends it back with your note.',
   }),
@@ -83,7 +83,7 @@ export const STARTER_GUIDELINES: Record<string, string> = {
   'design-check': section({
     purpose: 'Compare the UI the build station produced against the Vellum design framework and report PASS or DRIFT.',
     read: ['The task description and the design artboards.', 'The design framework file in Vellum.', 'The UI diff.'],
-    produce: ['One line per check in the form "PASS <check>" or "DRIFT <check>: what differs and where (file:line)".', 'No edits to the UI; the build station fixes drift.'],
+    produce: ['One line per check as "PASS T# <check>" or "DRIFT T# path:line <what differs from the design>" (T# = this task id).', 'No edits to the UI; the build station fixes drift.'],
     done: ['Colour, type, spacing, states and copy were each checked.', 'Every DRIFT names the file and what the design says.'],
     hand: 'Hand on with the PASS/DRIFT list. If anything drifted, say so first so the Captain can send it back.',
   }),
