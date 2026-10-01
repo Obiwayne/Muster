@@ -26,10 +26,18 @@ const DIST = normalize(join(here, '..', '..', 'dist', 'ui'));
 const now = Date.now();
 const iso = (minAgo) => new Date(now - minAgo * 60_000).toISOString();
 
+const GUIDE = (title, lines) => [`# ${title}`, '', ...lines, ''].join(String.fromCharCode(10));
 const stationDefs = {
-  build: { role: 'crew', builtin: true, guideline: ['# Build', '', 'Implement the task in your worktree.', '', '- Keep changes small', '- Run `npm test` before handoff', ''].join('\n') },
-  test: { role: 'crew', builtin: true, guideline: '' },
-  design: { role: 'design', builtin: true, guideline: '' },
+  discover: { role: 'crew', builtin: true, guideline: GUIDE('Discover', ['Find out what the task really needs. Write findings, not code.', '', '- Cite the files you read', '- List unknowns as questions']) },
+  concept: { role: 'crew', builtin: true, guideline: GUIDE('Concept', ['Two or three options with a recommendation.']) },
+  plan: { role: 'crew', builtin: true, guideline: GUIDE('Plan', ['Turn the chosen concept into small tasks the Captain can post.', '', '- One item per task, with acceptance criteria', '- Suggest a line for each task (new-app, feature, ui or bugfix)', '- Commit the plan to docs/factory/']) },
+  approval: { role: 'human', builtin: true, guideline: GUIDE('Approval', ['The task pauses here until you approve it or send it back.']) },
+  design: { role: 'design', builtin: true, guideline: GUIDE('Design', ['Sketch the screen in Vellum before anyone builds it.']) },
+  build: { role: 'crew', builtin: true, guideline: GUIDE('Build', ['Implement the task in your worktree.', '', '- Keep changes small', '- Run `npm test` before handoff', '- Hand on to the test station with a two-line summary']) },
+  test: { role: 'crew', builtin: true, guideline: GUIDE('Test', ['Write and run tests for the change. Do not change the code under test.']) },
+  'design-check': { role: 'design', builtin: true, guideline: GUIDE('Design check', ['Compare the built UI with the Vellum framework.', '', 'Post PASS or DRIFT with the task and file:line.']) },
+  reproduce: { role: 'crew', builtin: true, guideline: GUIDE('Reproduce', ['Write a failing test that shows the bug.']) },
+  fix: { role: 'crew', builtin: true, guideline: GUIDE('Fix', ['Make the failing test pass with the smallest change.']) },
   review: { role: 'captain', builtin: true, guideline: '' },
 };
 const config = {
@@ -41,19 +49,30 @@ const config = {
   pauseAtFiveHourPct: 80,
   warnAtWeeklyPct: 75,
   shutdownIdleCrew: true,
-  defaultStations: ['build', 'test', 'design', 'review'],
+  defaultStations: ['plan', 'build', 'test', 'review'],
+  defaultLine: 'feature',
+  vellumFile: 'muster',
+  vellumEdit: 'ask',
+  userName: 'Alex',
   testCommand: 'npm test',
   baseBranch: 'main',
   permissionMode: 'acceptEdits',
-  vellum: { command: 'node', args: ['F:/Vellum/mcp/dist/index.js'] },
+  vellum: { command: 'node', args: ['/path/to/vellum/mcp/index.js'] },
   notify: true,
   allowedTools: ['Bash(npm *)', 'mcp__muster__*'],
-  projectName: 'wall-education',
+  projectName: 'acme-app',
 };
+
+const lineDefs = [
+  { name: 'new-app', label: 'New app / big feature', stations: ['discover', 'concept', 'design', 'plan', 'approval', 'review'], builtin: true },
+  { name: 'feature', label: 'Feature', stations: ['plan', 'build', 'test', 'review'], builtin: true },
+  { name: 'ui', label: 'UI change', stations: ['design', 'build', 'design-check', 'review'], builtin: true },
+  { name: 'bugfix', label: 'Bug fix', stations: ['reproduce', 'fix', 'test', 'review'], builtin: true },
+];
 
 const agent = (id, role, branch, status, taskId, minAgo, model) => ({
   id, role, model: model ?? (role === 'captain' ? 'opus' : 'sonnet'), branch,
-  worktree: role === 'captain' ? 'F:/wall-education' : `F:/wall-education/.muster/worktrees/${id}`,
+  worktree: role === 'captain' ? '/work/acme-app' : `/work/acme-app/.muster/worktrees/${id}`,
   status, taskId, sessionId: crypto.randomUUID(), pid: 4000 + Math.floor(Math.random() * 4000),
   startedAt: iso(minAgo), lastActivityAt: iso(status === 'stuck' ? 4 : 0.3), costUsd: +(Math.random() * 3).toFixed(2),
 });
@@ -64,10 +83,11 @@ const task = (id, title, status, stations, stationIndex, extra = {}) => ({
   history: extra.history ?? [{ at: iso(extra.created ?? 40), agentId: 'captain', kind: 'created' }],
 });
 
-const S4 = ['build', 'test', 'design', 'review'];
+const S4 = ['plan', 'build', 'test', 'review'];
+const SUI = ['design', 'build', 'design-check', 'review'];
 const state = {
   version: 1,
-  repoRoot: 'F:/wall-education',
+  repoRoot: '/work/acme-app',
   agents: EMPTY ? [] : [
     agent('captain', 'captain', 'main', 'working', undefined, 45),
     agent('crew-2', 'crew', 'crew-2/invite-api', 'working', undefined, 44),
@@ -79,11 +99,12 @@ const state = {
     task('T1', 'Invites table + migration', 'ready_for_merge', ['build', 'review'], 1, { branch: 'crew-2/invites-db', assignee: 'captain', created: 44, updated: 3,
       history: [{ at: iso(44), agentId: 'captain', kind: 'created' }, { at: iso(3), agentId: 'captain', kind: 'review_requested', text: 'Migration adds the invites table with a unique token index. Tests pass. Safe to merge.' }] }),
     task('T2', 'Invite token generator', 'review', S4, 3, { branch: 'crew-2/tokens', assignee: 'captain', created: 43 }),
-    task('T3', 'Invite API endpoints', 'in_progress', S4, 1, { branch: 'crew-2/invite-api', assignee: 'crew-5', created: 42, dependsOn: ['T2'] }),
-    task('T4', 'Share dialog UI', 'in_progress', S4, 0, { branch: 'crew-3/share-dialog', assignee: 'crew-3', created: 41, dependsOn: ['T3'] }),
+    task('T3', 'Invite API endpoints', 'in_progress', S4, 2, { branch: 'crew-2/invite-api', assignee: 'crew-5', created: 42, dependsOn: ['T2'] }),
+    task('T4', 'Share dialog UI', 'in_progress', SUI, 1, { branch: 'crew-3/share-dialog', assignee: 'crew-3', created: 41, dependsOn: ['T3'] }),
     task('T5', 'Revoke invite link', 'ready', S4, 0, { created: 30 }),
-    task('T6', 'Invite email template', 'blocked', S4, 0, { dependsOn: ['T3', 'T4'], created: 30 }),
+    task('T6', 'Invite email template', 'blocked', SUI, 0, { dependsOn: ['T3', 'T4'], created: 30 }),
     task('T7', 'End-to-end invite test', 'blocked', ['build', 'test', 'review'], 0, { dependsOn: ['T6'], created: 29 }),
+    task('T9', 'Concept: sharing beyond invite links', 'awaiting_approval', ['discover', 'concept', 'approval', 'review'], 2, { branch: 'crew-2/sharing-concept', assignee: 'you', created: 36, updated: 1 }),
     task('T8', 'Invite model', 'merged', ['build', 'review'], 1, { branch: 'crew-2/invite-model', created: 120, updated: 62 }),
   ],
   notes: EMPTY ? [] : [
@@ -100,6 +121,7 @@ const state = {
     { id: 'N17', type: 'progress', from: 'design', to: 'crew-3', taskId: 'T4', branch: 'crew-3/share-dialog', text: 'DRIFT T4 ShareDialog primary button is #2563EB; framework uses var(--color-primary)\nsrc/ui/ShareDialog.tsx:42 — hard-coded #2563EB', createdAt: iso(3), open: false, replies: [] },
     { id: 'N18', type: 'question', from: 'design', taskId: 'T4', text: 'DRIFT T4 Share dialog has no matching board in Vellum. Ask the Captain before adding one?', createdAt: iso(3.5), open: false, replies: [{ at: iso(3), from: 'captain', text: 'Not yet, flag it in the review.' }] },
     { id: 'N19', type: 'done', from: 'design', taskId: 'T2', text: 'PASS T2 Token copy UI matches the framework tokens', createdAt: iso(16), open: false, replies: [] },
+    { id: 'N21', type: 'approval', from: 'crew-2', taskId: 'T9', branch: 'crew-2/sharing-concept', text: 'Concept for sharing beyond invite links is ready: three options (public link, per-team link, email-only) with a recommendation. Approve to start planning.', createdAt: iso(1), open: true, replies: [] },
     { id: 'N20', type: 'message', from: 'crew-2', to: 'crew-3', text: 'Heads up: the invite API now returns expiresAt as an ISO string, not a number.', createdAt: iso(33), open: false, replies: [] },
   ],
   feed: [],
@@ -110,7 +132,7 @@ const state = {
     updatedAt: iso(0.2), perAgentCostUsd: {}, paused: false, weeklyWarned: false,
   },
   goal: EMPTY ? undefined : { text: 'Build the invite-link sharing flow', at: iso(42) },
-  nextIds: { agent: 6, task: 9, note: 21, feed: 1, inbox: 1 },
+  nextIds: { agent: 6, task: 10, note: 22, feed: 1, inbox: 1 },
 };
 
 function nextMonday() {
@@ -162,7 +184,7 @@ const C = { dim: '\x1b[38;2;155;155;164m', text: '\x1b[38;2;244;244;245m', amber
 const dot = (c) => `${c}●${C.reset} `;
 const BACKLOG = {
   captain: [
-    `${C.faint}╭─ muster captain · opus · F:/wall-education ─────────────╮${C.reset}`,
+    `${C.faint}╭─ muster captain · opus · /work/acme-app ─────────────╮${C.reset}`,
     `${dot(C.dim)}${C.dim}read_board(open) → 1 stuck, 1 question${C.reset}`,
     `${C.text}crew-3 is stuck on the invite token format. Answering first.${C.reset}`,
     `${dot(C.dim)}${C.dim}reply(N14, "Use the 22-char base62 token from T2")${C.reset}`,
@@ -298,10 +320,14 @@ async function api(req, url) {
     return config;
   }
   const sm = /^\/api\/stations\/([^/]+)$/.exec(p);
-  if (m === 'GET' && p === '/api/lines') return { defaultLine: 'standard', lines: [
-    { name: 'standard', label: 'Standard', stations: ['build', 'review'], builtin: true },
-    { name: 'tested', label: 'Build + test', stations: ['build', 'test', 'review'], builtin: true },
-    { name: 'designed', label: 'Design, build, approve', stations: ['design', 'build', 'approve', 'review'], builtin: true }] };
+  if (m === 'GET' && p === '/api/lines') return { defaultLine: config.defaultLine, lines: lineDefs };
+  let lm;
+  if ((lm = /^\/api\/lines\/([^/]+)$/.exec(p)) && m === 'PUT') {
+    const b = await body(req); const l = lineDefs.find((x) => x.name === lm[1]);
+    need(l, 404, 'No such line');
+    if (b.stations) l.stations = b.stations; if (b.label) l.label = b.label;
+    return l;
+  }
   const am = /^\/api\/tasks\/([^/]+)\/(approve|reject)$/.exec(p);
   if (am && m === 'POST') {
     const b = await body(req); const t = state.tasks.find((x) => x.id === am[1]);
@@ -332,7 +358,8 @@ async function api(req, url) {
     return [...config.defaultStations.filter((n) => n !== 'review'), 'review'].map((n) => ({ name: n, ...stationDefs[n] ?? { role: 'crew', guideline: '', builtin: false } }));
   }
   if (m === 'GET' && p === '/api/vellum') return { status: 'connected', checkedAt: new Date().toISOString(), files: [
-    { id: 'wall', name: 'Wall Education', pages: 16 }, { id: 'mayhem', name: 'MayhemDeck', pages: 5 }, { id: 'muster', name: 'Muster', pages: 7 }] };
+    { id: 'muster', name: 'Muster', pages: 9, updated: iso(120) }, { id: 'scratch', name: 'Scratchpad', pages: 3, updated: iso(60 * 30) },
+    { id: 'wall', name: 'Wall Education', pages: 16, updated: iso(60 * 50) }, { id: 'mayhem', name: 'MayhemDeck', pages: 5, updated: iso(60 * 24 * 6) }] };
   if (m === 'GET' && p === '/api/usage') return { ...state.usage, paused: !!paused() };
 
   if (m === 'POST' && p === '/api/agents') {
