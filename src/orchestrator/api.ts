@@ -119,7 +119,7 @@ export function createApi(ctx: ApiContext) {
     });
   });
   // ------------------------------------------------------------------ stations (files in .muster/stations)
-  route('GET', '/api/stations', () => ({ stations: stations.listStations(ctx.paths, ctx.config()) }));
+  route('GET', '/api/stations', () => stations.listStations(ctx.paths, ctx.config()));
   route('GET', '/api/stations/:name', ({ params }) => {
     const s = stations.getStation(ctx.paths, stations.stationName(decodeURIComponent(params.name)));
     if (!s) throw notFound(`No station "${params.name}"`);
@@ -127,8 +127,11 @@ export function createApi(ctx: ApiContext) {
   });
   route('PUT', '/api/stations/:name', ({ params, body }) => stations.saveStation(ctx.paths, decodeURIComponent(params.name), { role: body.role, guideline: body.guideline }));
   route('DELETE', '/api/stations/:name', ({ params }) => {
-    stations.deleteStation(ctx.paths, decodeURIComponent(params.name));
-    return { stations: stations.listStations(ctx.paths, ctx.config()) };
+    const name = stations.stationName(decodeURIComponent(params.name));
+    stations.deleteStation(ctx.paths, name);
+    const defaults = ctx.config().defaultStations;
+    if (defaults.includes(name)) ctx.updateConfig({ defaultStations: defaults.filter((n) => n !== name) });
+    return stations.listStations(ctx.paths, ctx.config());
   });
   route('GET', '/api/vellum', ({ query }) => vellum.check(ctx.config(), flag(query, 'refresh')));
   route('POST', '/api/shutdown', ({ body }) => {

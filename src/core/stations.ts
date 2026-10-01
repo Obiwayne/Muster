@@ -21,7 +21,7 @@ const DEFAULT_GUIDELINE: Record<string, string> = {
   build: 'Implement the task as described. Keep the change small and reviewable, run the tests, and commit before handing on.',
   test: 'Verify the build station\'s work: run the tests, add missing tests for the new behaviour, and report anything that fails.',
   design: 'Compare the UI changes against the design framework and report pass or drift for each check.',
-  review: 'Read the diff, run the tests, and check the acceptance criteria before flagging the branch ready for merge.',
+  review: "Extra checks for the Captain's review. The fixed rules (tests pass, diff matches the task, only the human merges) always apply and can't be relaxed here.",
 };
 
 const dirOf = (p: MusterPaths) => join(p.dir, 'stations');
@@ -53,8 +53,9 @@ function read(p: MusterPaths, name: string): { role?: Role; guideline: string } 
 
 const roleFor = (name: string, file?: { role?: Role }): Role => (name === REVIEW ? 'captain' : (file?.role ?? STATION_ROLE[name] ?? 'crew'));
 
-/** Writes build/test/design/review.md when missing; existing files are never touched. */
+/** Writes build/test/design/review.md when .muster/stations doesn't exist yet; existing files are never touched. */
 export function seedStations(p: MusterPaths): void {
+  if (existsSync(dirOf(p))) return;
   mkdirSync(dirOf(p), { recursive: true });
   for (const name of BUILT_IN) {
     if (!existsSync(fileOf(p, name))) writeFileSync(fileOf(p, name), serialise(STATION_ROLE[name], DEFAULT_GUIDELINE[name] + '\n'));
@@ -68,7 +69,7 @@ export function stationRoles(p: MusterPaths): Record<string, Role> {
   return roles;
 }
 
-/** Stations in config.defaultStations order (plus review), then the other files alphabetically. */
+/** Stations in config.defaultStations order, then the other defined ones alphabetically, with review last. */
 export function listStations(p: MusterPaths, config: Pick<MusterConfig, 'defaultStations'> | undefined): StationDef[] {
   let files: string[] = [];
   try {
@@ -76,14 +77,15 @@ export function listStations(p: MusterPaths, config: Pick<MusterConfig, 'default
   } catch {
     /* no folder yet */
   }
-  const ordered = [...(config?.defaultStations ?? []), REVIEW].filter((n) => NAME_RE.test(n));
-  const names = [...new Set([...ordered, ...files.sort()])].filter((n) => files.includes(n) || BUILT_IN.includes(n));
+  const ordered = (config?.defaultStations ?? []).filter((n) => NAME_RE.test(n));
+  const names = [...new Set([...ordered, ...files.sort(), REVIEW])].filter((n) => files.includes(n) || BUILT_IN.includes(n));
+  names.splice(0, names.length, ...names.filter((n) => n !== REVIEW), REVIEW);
   return names.map((n) => describe(p, n));
 }
 
 function describe(p: MusterPaths, name: string): StationDef {
   const file = read(p, name);
-  return { name, role: roleFor(name, file), guideline: file?.guideline ?? DEFAULT_GUIDELINE[name] ?? '', builtIn: BUILT_IN.includes(name) };
+  return { name, role: roleFor(name, file), guideline: file?.guideline ?? DEFAULT_GUIDELINE[name] ?? '', builtin: BUILT_IN.includes(name) };
 }
 
 export function getStation(p: MusterPaths, name: string): StationDef | undefined {

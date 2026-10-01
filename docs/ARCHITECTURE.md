@@ -113,9 +113,9 @@ export async function musterFetch<T>(path: string, opts?: { method?: string; bod
 | GET | /api/state | – | `{ state: MusterState, config: MusterConfig, paused: boolean }` |
 | GET | /api/config | – | `MusterConfig` |
 | PATCH | /api/config | partial MusterConfig | `MusterConfig` (saved to config.json) |
-| GET | /api/stations | | `{ stations: StationDef[] }` — `{ name, role, guideline, builtIn }`, in `config.defaultStations` order then `review`, then other station files. Backed by `.muster/stations/<name>.md` (per machine): optional `role:` frontmatter, the rest is the Markdown guideline. build/test/design/review.md are seeded at startup, never overwritten |
+| GET | /api/stations | | `{ stations: StationDef[] }` — `{ name, role, guideline, builtIn }`, in `config.defaultStations` order then `review`, then other station files. Backed by `.muster/stations/<name>.md` (per machine): optional `role:` frontmatter, the rest is the Markdown guideline. build/test/design/review.md are seeded at startup, only when the folder is missing, never overwritten |
 | GET / PUT | /api/stations/:name | `{ role?, guideline? }` | `StationDef` — PUT creates or updates (human only); omitted fields keep their value. `review` stays with the captain; names `[a-z0-9-]{1,30}`, guideline ≤ 20000 chars |
-| DELETE | /api/stations/:name | | `{ stations }` — human only; `review` is refused (400), unknown is 404. Claiming and handoff resolve a station's role from these files (tasks.ts stays pure: roles are passed in) |
+| DELETE | /api/stations/:name | | `StationDef[]` — human only; also removed from `config.defaultStations`; `review` is refused (400), unknown is 404. Claiming and handoff resolve a station's role from these files (tasks.ts stays pure: roles are passed in) |
 | POST | /api/shutdown | `{ clean?: boolean }` | `{ ok }` — stops every agent, removes merged worktrees if clean, exits |
 
 ### Vellum status (src/core/vellum.ts)
