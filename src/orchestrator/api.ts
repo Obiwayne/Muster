@@ -7,6 +7,7 @@ import { badRequest, conflict, forbidden, HttpError, notFound } from '../core/er
 import * as gitOps from '../core/git.js';
 import type { MusterPaths } from '../core/paths.js';
 import type { Store } from '../core/store.js';
+import * as lines from '../core/lines.js';
 import * as stations from '../core/stations.js';
 import * as tasks from '../core/tasks.js';
 import { createVellumChecker, type VellumCall } from '../core/vellum.js';
@@ -47,7 +48,7 @@ const TEST_TIMEOUT_MS = 10 * 60_000;
 const MAX_BODY = 2 * 1024 * 1024;
 const CONFIG_KEYS = new Set<string>([
   'port', 'captainModel', 'crewModel', 'designModel', 'maxCrew', 'pauseAtFiveHourPct', 'warnAtWeeklyPct', 'shutdownIdleCrew',
-  'defaultStations', 'testCommand', 'baseBranch', 'permissionMode', 'claudePath', 'vellum', 'notify', 'allowedTools', 'projectName', 'userName', 'vellumFile', 'vellumEdit',
+  'defaultStations', 'testCommand', 'baseBranch', 'permissionMode', 'claudePath', 'vellum', 'notify', 'allowedTools', 'projectName', 'userName', 'vellumFile', 'vellumEdit', 'defaultLine',
 ]);
 
 const str = (v: unknown, name: string): string => {
@@ -89,6 +90,12 @@ ${block}`;
     }
   };
 
+  const lineOrThrow = (name: unknown): string[] => {
+    const found = typeof name === 'string' ? lines.lineStations(ctx.paths, name) : undefined;
+    if (!found) throw notFound(`No line "${name}"`);
+    return found;
+  };
+
   /** A task that just reached a 'human' station: toast and notify you, the way review does. */
   const announceApproval = (task: Task) => {
     const note = task.status === 'awaiting_approval' ? tasks.approvalNote(state(), task) : undefined;
@@ -106,6 +113,8 @@ ${block}`;
   };
 
   // ------------------------------------------------------------------ state
+  route('GET', '/api/lines', () => ({ lines: lines.listLines(ctx.paths), defaultLine: lines.defaultLineName(ctx.config()) }));
+  route('PUT', '/api/lines/:name', ({ params, body }) => lines.saveLine(ctx.paths, decodeURIComponent(params.name), { stations: body.stations, label: body.label }));
   route('GET', '/api/health', () => ({ ok: true, version: ctx.version }));
   route('GET', '/api/state', () => ({ state: state(), config: ctx.config(), paused: state().usage.paused }));
   route('GET', '/api/config', () => ctx.config());
@@ -115,6 +124,11 @@ ${block}`;
     if (patch.vellumFile === '') patch.vellumFile = null;
     if (patch.vellumEdit !== undefined && patch.vellumEdit !== null && !['ask', 'always', 'never'].includes(patch.vellumEdit)) {
       throw badRequest('vellumEdit must be "ask", "always" or "never"');
+    }
+    if (patch.defaultLine !== undefined) {
+      const line = typeof patch.defaultLine === 'string' ? lines.getLine(ctx.paths, patch.defaultLine) : undefined;
+      if (!line) throw badRequest(`No line "${patch.defaultLine}"`);
+      if (!patch.defaultStations) patch.defaultStations = line.stations; // the default line decides the default stations
     }
     const before = ctx.config().userName;
     const beforeEdit = ctx.config().vellumEdit;
@@ -247,7 +261,7 @@ ${block}`;
         title: str(body.title, 'title'),
         description: body.description,
         dependsOn: body.dependsOn,
-        stations: body.stations,
+        stations: body.line ? lineOrThrow(body.line) : body.stations,
         assignee: body.assignee || undefined,
         actor: str(body.actor, 'actor'),
       }, stations.stationRoles(ctx.paths)),

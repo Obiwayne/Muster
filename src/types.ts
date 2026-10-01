@@ -185,6 +185,7 @@ export interface MusterConfig {
   projectName?: string; // shown under "Muster" in the dashboard; defaults to the repo folder name
   vellumEdit: VellumEdit; // whether the design crew may change Vellum designs; 'never' is enforced by denying Vellum's editing tools
   vellumFile?: string; // id of the Vellum file holding the design framework; the design crew's prompt names it (else it finds it with list_files)
+  defaultLine?: string; // name of the line preset behind defaultStations (GET /api/lines); default "standard"
   userName?: string; // what agents call the person running Muster; stored per OS user (core/user.ts), not in config.json
 }
 
@@ -225,6 +226,7 @@ export const DEFAULT_CONFIG: MusterConfig = {
   warnAtWeeklyPct: 75,
   shutdownIdleCrew: true,
   defaultStations: ['build', 'review'],
+  defaultLine: 'standard',
   testCommand: 'npm test',
   baseBranch: 'main',
   permissionMode: 'auto',
@@ -251,6 +253,10 @@ export const STATION_ROLE: Record<string, Role> = {
   test: 'crew',
   design: 'design',
   review: 'captain',
+  approve: 'human',
+  discover: 'crew',
+  concept: 'crew',
+  plan: 'crew',
 };
 
 /** One station as defined on this machine (GET /api/stations). */
@@ -259,4 +265,12 @@ export interface StationDef {
   role: Role; // which role works it
   builtin: boolean; // build, test, design, review
   guideline: string; // Markdown shown to the agent working the station; '' when none
+}
+
+/** A line preset: a named station order (GET /api/lines). stations always ends with "review". */
+export interface LineDef {
+  name: string;
+  label: string;
+  stations: string[];
+  builtin: boolean; // shipped with Muster (edits are still saved per machine)
 }

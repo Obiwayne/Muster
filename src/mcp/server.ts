@@ -159,16 +159,17 @@ export function createMusterServer(opts: MusterServerOptions): McpServer {
 
     tool(
       'post_task',
-      'Post a task to the board. Keep tasks small (one branch, one reviewable change). dependsOn = task ids that must be done first. stations = ordered stations, e.g. ["build","test","design"] ("review" is appended). assignee = agent id to hand it to directly.',
+      'Post a task to the board. Keep tasks small (one branch, one reviewable change). dependsOn = task ids that must be done first. stations = ordered stations, e.g. ["build","test","design"] ("review" is appended); or line = a line preset name (standard, tested, designed, planning, or a custom one) instead. assignee = agent id to hand it to directly.',
       {
         title: z.string().min(1),
         description: z.string().min(1).describe('What to build, acceptance criteria, files/areas involved'),
         dependsOn: z.array(z.string()).optional(),
         stations: z.array(z.string()).optional(),
+        line: z.string().optional().describe('Name of a line preset; used instead of stations'),
         assignee: z.string().optional(),
       },
-      async ({ title, description, dependsOn, stations, assignee }) => {
-        const t = await api<Task>('/api/tasks', { method: 'POST', body: { title, description, dependsOn, stations, assignee, actor: me } });
+      async ({ title, description, dependsOn, stations, line, assignee }) => {
+        const t = await api<Task>('/api/tasks', { method: 'POST', body: { title, description, dependsOn, stations, line, assignee, actor: me } });
         return `Posted ${formatTaskLine(t)}`;
       },
     );

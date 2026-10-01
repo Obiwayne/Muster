@@ -442,6 +442,26 @@ describe('orchestrator API', () => {
     await ok('DELETE', '/api/stations/signoff');
   });
 
+  it('serves line presets: agents read, only you write; tasks and the default line follow them', async () => {
+    const r = await ok<{ lines: any[]; defaultLine: string }>('GET', '/api/lines');
+    expect(r.defaultLine).toBe('standard');
+    expect(r.lines.find((l) => l.name === 'designed')).toMatchObject({ stations: ['design', 'build', 'approve', 'review'], builtin: true });
+    expect((await call('GET', '/api/lines', undefined, orch.agentToken('crew-2'))).status).toBe(200);
+    expect((await call('PUT', '/api/lines/mine', { stations: ['build'], actor: 'crew-2' })).status).toBe(403);
+    expect((await call('PUT', '/api/lines/mine', { stations: ['nope'] })).status).toBe(400);
+    expect(await ok('PUT', '/api/lines/mine', { stations: ['plan', 'approve'], label: 'Mine' })).toMatchObject({ label: 'Mine', stations: ['plan', 'approve', 'review'], builtin: false });
+
+    const t = await ok<Task>('POST', '/api/tasks', { title: 'Plan it', line: 'mine', actor: 'captain' });
+    expect(t.stations).toEqual(['plan', 'approve', 'review']);
+    expect((await call('POST', '/api/tasks', { title: 'Bad', line: 'nope', actor: 'captain' })).status).toBe(404);
+    await ok('POST', `/api/tasks/${t.id}/cancel`, { actor: 'you', reason: 'test over' });
+
+    expect((await call('PATCH', '/api/config', { defaultLine: 'nope' })).status).toBe(400);
+    const cfg = await ok<any>('PATCH', '/api/config', { defaultLine: 'tested' });
+    expect(cfg).toMatchObject({ defaultLine: 'tested', defaultStations: ['build', 'test', 'review'] });
+    await ok('PATCH', '/api/config', { defaultLine: 'standard' });
+  });
+
   it('shuts down, then resumes the agents that were running on the next start', async () => {
     const running = orch.store.state.agents.filter((a) => a.status !== 'stopped').map((a) => a.id).sort();
     await orch.shutdown();

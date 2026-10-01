@@ -31,6 +31,13 @@ describe('captainPrompt', () => {
     expect(p).toContain('F:/Proj');
     expect(p).toContain('Proj');
   });
+  it('lists the lines, marks the default and says humans approve', () => {
+    const p = captainPrompt({ ...ctx, agentId: 'captain', worktree: ctx.repoRoot, branch: 'main', stations: [{ name: 'approve', role: 'human', guideline: 'You approve.' }], lines: [{ name: 'standard', label: 'Standard', stations: ['build', 'review'] }, { name: 'planning', label: 'Plan', stations: ['plan', 'approve', 'review'] }], defaultLine: 'standard' });
+    expect(p).toContain('`standard` (Standard) — default: build → review');
+    expect(p).toContain('`planning` (Plan): plan → approve → review');
+    expect(p).toContain('line: "<name>"');
+  });
+
   it('lists the stations and the review guideline', () => {
     const withStations = captainPrompt({ ...ctx, agentId: 'captain', worktree: ctx.repoRoot, branch: 'main', stations: [{ name: 'test', role: 'crew', guideline: '# Test' + String.fromCharCode(10) + 'Verify the build.' }, { name: 'review', role: 'captain', guideline: 'Check the docs too.' }] });
     expect(withStations).toContain('## Stations');
