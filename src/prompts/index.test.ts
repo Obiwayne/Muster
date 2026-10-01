@@ -71,3 +71,19 @@ describe('designPrompt', () => {
     expect(designPrompt({ ...ctx, vellumFile: undefined })).toContain('list_files');
   });
 });
+
+describe('the user’s name', () => {
+  it('tells every role to use the name and never "the human"', () => {
+    for (const make of [captainPrompt, crewPrompt, designPrompt]) {
+      const p = make({ ...ctx, userName: 'Wayne' });
+      expect(p).toContain('The person you work for is **Wayne**');
+      expect(p).not.toMatch(/\bthe human\b(?!")/i);
+    }
+    expect(captainPrompt({ ...ctx, userName: 'Wayne' })).toContain('Wayne talks only to you');
+  });
+  it('falls back to "the user" without a name', () => {
+    const p = captainPrompt({ ...ctx, userName: undefined });
+    expect(p).toContain('The user talks only to you');
+    expect(p).toContain('never "the human"');
+  });
+});

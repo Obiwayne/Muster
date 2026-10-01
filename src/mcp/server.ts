@@ -196,8 +196,8 @@ export function createMusterServer(opts: MusterServerOptions): McpServer {
 
     tool(
       'request_review',
-      "Mark the agent's task ready for merge after you reviewed the diff and tests pass. Pins a Ready-for-review note for the human.",
-      { agent: z.string(), summary: z.string().min(1).describe('What changed, test result, anything the human should check') },
+      "Mark the agent's task ready for merge after you reviewed the diff and tests pass. Pins a Ready-for-review note for the user.",
+      { agent: z.string(), summary: z.string().min(1).describe('What changed, test result, anything the user should check') },
       async ({ agent, summary }) => {
         const state = await getState();
         const a = state.agents.find((x) => x.id === agent);
@@ -208,7 +208,7 @@ export function createMusterServer(opts: MusterServerOptions): McpServer {
           state.tasks.find((t) => t.branch === a.branch);
         if (!task) throw new Error(`${agent} holds no task to review.`);
         const t = await api<Task>(`/api/tasks/${enc(task.id)}/review`, { method: 'POST', body: { actor: me, summary } });
-        return `${t.id} is ready for merge (${t.branch ?? a.branch}). The human has been notified.`;
+        return `${t.id} is ready for merge (${t.branch ?? a.branch}). The user has been notified.`;
       },
     );
 
@@ -219,11 +219,11 @@ export function createMusterServer(opts: MusterServerOptions): McpServer {
 
     tool(
       'escalate',
-      'Ask the human. Only for decisions only they can make (product/scope, credentials, money, destructive ops). note = the board note it relates to.',
+      'Ask the user. Only for decisions only they can make (product/scope, credentials, money, destructive ops). note = the board note it relates to.',
       { text: z.string().min(1), note: z.string().optional() },
       async ({ text, note }) => {
         const n = await api<Note>('/api/escalate', { method: 'POST', body: { actor: me, text, noteId: note?.trim().toUpperCase() } });
-        return `Escalated as ${n.id}. The human was notified; carry on with other work meanwhile.`;
+        return `Escalated as ${n.id}. The user was notified; carry on with other work meanwhile.`;
       },
     );
   }

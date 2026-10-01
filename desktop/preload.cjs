@@ -8,4 +8,6 @@ if (location.protocol === 'file:') contextBridge.exposeInMainWorld('muster', {
   open: (root) => ipcRenderer.invoke('muster:open', root),
   forget: (root) => ipcRenderer.invoke('muster:forget', root),
   stop: (root) => ipcRenderer.invoke('muster:stop', root),
+  getName: () => ipcRenderer.invoke('muster:getName'),
+  setName: (name) => ipcRenderer.invoke('muster:setName', name),
 });

@@ -4,6 +4,16 @@ import { STATION_ROLE } from '../../src/types';
 
 export const YOU = 'you';
 
+// The name the person running Muster gave (Settings → Your name). "you" is still the actor id.
+let userName: string | undefined;
+export function setUserName(name: string | undefined): void {
+  userName = name?.trim() || undefined;
+}
+/** Display name for an actor id: the user's own name instead of "you". */
+export function displayName(id: string): string {
+  return id === YOU ? (userName ?? 'you') : id;
+}
+
 export function roleOf(state: MusterState, who: string): Role | 'you' | 'muster' {
   if (who === 'you') return 'you';
   const a = state.agents.find((x) => x.id === who);
@@ -19,6 +29,7 @@ export function stationRole(station: string): Role {
 
 /** Avatar initial: captain → C, crew-2 → 2, design → D, you → Y. */
 export function initial(who: string): string {
+  if (who === YOU && userName) return userName[0].toUpperCase();
   const m = /-(\w+)$/.exec(who);
   if (m && m[1].length <= 2) return m[1].toUpperCase();
   return (who[0] ?? '?').toUpperCase();

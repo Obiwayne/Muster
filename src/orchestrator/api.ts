@@ -43,7 +43,7 @@ const TEST_TIMEOUT_MS = 10 * 60_000;
 const MAX_BODY = 2 * 1024 * 1024;
 const CONFIG_KEYS = new Set<string>([
   'port', 'captainModel', 'crewModel', 'designModel', 'maxCrew', 'pauseAtFiveHourPct', 'warnAtWeeklyPct', 'shutdownIdleCrew',
-  'defaultStations', 'testCommand', 'baseBranch', 'permissionMode', 'claudePath', 'vellum', 'notify', 'allowedTools', 'projectName',
+  'defaultStations', 'testCommand', 'baseBranch', 'permissionMode', 'claudePath', 'vellum', 'notify', 'allowedTools', 'projectName', 'userName',
 ]);
 
 const str = (v: unknown, name: string): string => {
@@ -86,8 +86,19 @@ export function createApi(ctx: ApiContext) {
   route('GET', '/api/config', () => ctx.config());
   route('PATCH', '/api/config', ({ body }) => {
     const patch = Object.fromEntries(Object.entries(body).filter(([k]) => CONFIG_KEYS.has(k))) as ConfigPatch;
+    const before = ctx.config().userName;
     const config = ctx.updateConfig(patch);
-    return mutate(() => (refreshGuard(state(), config), config));
+    return mutate(() => {
+      refreshGuard(state(), config);
+      // Running agents learned the old name from their launch prompt; tell them now.
+      if ('userName' in patch && config.userName !== before) {
+        const text = config.userName
+          ? `The person you work for is called ${config.userName}. Call them ${config.userName} from now on, never "the human".`
+          : 'Refer to the person you work for as "the user", never "the human".';
+        for (const a of state().agents) if (a.status !== 'stopped') board.addInbox(state(), { agentId: a.id, from: board.SYSTEM, kind: 'system', text });
+      }
+      return config;
+    });
   });
   route('POST', '/api/shutdown', ({ body }) => {
     setImmediate(() => ctx.shutdown(Boolean(body.clean)));

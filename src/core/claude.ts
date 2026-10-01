@@ -126,6 +126,7 @@ export function rolePrompt(agent: Agent, ctx: LaunchContext): string {
     baseBranch: ctx.config.baseBranch,
     testCommand: ctx.config.testCommand,
     projectName: ctx.config.projectName ?? '',
+    userName: ctx.config.userName,
   };
   return agent.role === 'captain' ? captainPrompt(p) : agent.role === 'design' ? designPrompt(p) : crewPrompt(p);
 }

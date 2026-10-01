@@ -4,7 +4,7 @@ import type { Agent } from '../../src/types';
 import { h, icon, logo, setChildren, toast } from './dom';
 import { events, type Snapshot } from './events';
 import { openAddAgent } from './actions';
-import { agentStatusWord, agoLong, resetsIn, sortedAgents } from './util';
+import { agentStatusWord, agoLong, resetsIn, setUserName, sortedAgents } from './util';
 import type { Page } from './page';
 import { createDashboard } from './pages/dashboard';
 import { createBoard } from './pages/board';
@@ -106,6 +106,7 @@ window.addEventListener('hashchange', onHash);
 
 // ---------- shell render ----------
 function renderShell(s: Snapshot): void {
+  setUserName(s.config.userName);
   const { state, config } = s;
   const project = config.projectName || state.repoRoot.split(/[\\/]/).filter(Boolean).pop() || '';
   projectEl.textContent = project;

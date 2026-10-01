@@ -277,7 +277,9 @@ describe('AgentManager after the first live run', () => {
     store.commit();
     await sleep(80);
     expect(pty.written).toBe('h');
-    await until(() => pty.written.includes('Call read_inbox'), 2000);
+    await until(() => pty.written.includes('Call read_inbox') && pty.written.endsWith('\r'), 2000); // the nudge's Enter too
+    agents.handleEvent('crew-2', 'prompt'); // confirms the nudge, so no repeat lands in the next check
+    await sleep(20);
 
     pty.written = '';
     await agents.type('crew-2', 'a\x1b[Ab\x03c\nd', true, { human: true }); // a human's own line is not held, but is sanitized

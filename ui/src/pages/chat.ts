@@ -5,7 +5,7 @@ import type { Snapshot } from '../events';
 import type { Page } from '../page';
 import { api } from '../api';
 import { errToast, run } from '../actions';
-import { NOTE_BADGE, dayLabel, hhmm, idNum, initial, ms, noteLabel, roleOf, sortedAgents } from '../util';
+import { NOTE_BADGE, dayLabel, displayName, hhmm, idNum, initial, ms, noteLabel, roleOf, sortedAgents } from '../util';
 
 const SHOW_EVENTS_KEY = 'muster.chat.showEvents';
 
@@ -124,12 +124,12 @@ export function createChat(): Page {
           }, text),
           h('span.tm', null, hhmm(f.at))));
       } else {
-        const target = f.kind === 'reply' ? `↳ ${f.noteId ?? ''}` : f.to ? `→ ${f.to}` : '';
+        const target = f.kind === 'reply' ? `↳ ${f.noteId ?? ''}` : f.to ? `→ ${displayName(f.to)}` : '';
         out.push(h('div.msg', null,
           h('div.avatar', { class: `r-${roleOf(state, f.from)}` }, initial(f.from)),
           h('div.content', { style: 'gap:3px' },
             h('div.who', null,
-              h('span.n', null, f.from),
+              h('span.n', null, displayName(f.from)),
               target ? h('span.t', {
                 style: f.kind === 'reply' && f.noteId ? 'cursor:pointer' : '',
                 onclick: () => { if (f.kind === 'reply' && f.noteId) location.hash = `#/board?note=${f.noteId}`; },
@@ -165,6 +165,7 @@ export function createChat(): Page {
     update(s) {
       const first = !snap;
       snap = s;
+      input.placeholder = `Message the crew as ${displayName('you')}…`;
       s.state.feed.forEach((f) => items.set(f.id, f));
       if (s.state.feed.length) loaded = true;
       renderChips(s.state);

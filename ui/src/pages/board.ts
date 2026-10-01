@@ -5,7 +5,7 @@ import type { Snapshot } from '../events';
 import type { Page } from '../page';
 import { api } from '../api';
 import { mergeTask, run } from '../actions';
-import { NOTE_BADGE, ageShort, ago, initial, isEscalated, isNeedsYou, ms, noteLabel, roleOf, taskById } from '../util';
+import { NOTE_BADGE, ageShort, ago, displayName, initial, isEscalated, isNeedsYou, ms, noteLabel, roleOf, taskById } from '../util';
 
 type Filter = 'open' | 'stuck' | 'question' | 'waiting' | 'review' | 'all' | 'needsYou';
 
@@ -93,7 +93,7 @@ export function createBoard(): Page {
   }
 
   function metaLine(state: MusterState, n: Note): string {
-    const parts = [n.to ? `${n.from} → ${n.to}` : n.from];
+    const parts = [n.to ? `${displayName(n.from)} → ${displayName(n.to)}` : displayName(n.from)];
     if (n.taskId) parts.push(n.taskId);
     if (n.branch && !(n.to && n.type === 'waiting')) parts.push(n.branch);
     if (n.open && (n.type === 'stuck' || n.type === 'question') && !isEscalated(state, n)) {
@@ -144,7 +144,7 @@ export function createBoard(): Page {
     setChildren(head,
       h('div.row', null,
         h('span.badge', { class: NOTE_BADGE[n.type] }, noteLabel(n.type)),
-        h('span.ref', null, [n.id, n.to ? `${n.from} → ${n.to}` : n.from, task ? `${task.id} ${task.title}` : n.taskId].filter(Boolean).join(' · ')),
+        h('span.ref', null, [n.id, n.to ? `${displayName(n.from)} → ${displayName(n.to)}` : displayName(n.from), task ? `${task.id} ${task.title}` : n.taskId].filter(Boolean).join(' · ')),
         author ? h('button.btn.sm', { onclick: () => { location.hash = `#/dashboard?agent=${encodeURIComponent(author.id)}`; } }, 'Open terminal') : null),
       h('div.thread-title', null, title),
       rest ? h('div.thread-text', null, rest) : null,
@@ -152,7 +152,7 @@ export function createBoard(): Page {
     const items: HTMLElement[] = n.replies.map((r) => h('div.msg', null,
       h('div.avatar', { class: `r-${roleOf(state, r.from)}` }, initial(r.from)),
       h('div.content', null,
-        h('div.who', null, h('span.n', null, r.from), h('span.t', null, ago(r.at))),
+        h('div.who', null, h('span.n', null, displayName(r.from)), h('span.t', null, ago(r.at))),
         h('div.txt', null, r.text))));
     if (!n.replies.length) items.push(h('div.faint', { style: 'font-size:13px' }, 'No replies yet.'));
     if (n.open && (n.type === 'stuck' || n.type === 'question' || n.type === 'waiting') && !isEscalated(state, n)) {
@@ -183,7 +183,7 @@ export function createBoard(): Page {
 
   return {
     el,
-    update(s) { snap = s; render(); },
+    update(s) { snap = s; replyInput.placeholder = `Reply as ${displayName('you')}…`; render(); },
     params(p) {
       const id = p.get('note');
       if (id) {

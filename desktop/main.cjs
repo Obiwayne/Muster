@@ -232,7 +232,36 @@ async function chooseAndOpen() {
   return res;
 }
 
+// ---------------------------------------------------------------- the user's name
+// Same file as src/core/user.ts: one name per OS user, shared by every project and the CLI.
+function userFile() {
+  const base = process.env.MUSTER_SECRETS_DIR
+    ? path.resolve(process.env.MUSTER_SECRETS_DIR)
+    : process.platform === 'win32'
+      ? path.join(process.env.LOCALAPPDATA || path.join(require('node:os').homedir(), 'AppData', 'Local'), 'muster')
+      : path.join(require('node:os').homedir(), '.muster');
+  return path.join(base, 'user.json');
+}
+
+function readUserName() {
+  try {
+    const name = JSON.parse(fs.readFileSync(userFile(), 'utf8')).name;
+    return typeof name === 'string' && name.trim() ? name.trim() : null;
+  } catch {
+    return null;
+  }
+}
+
+function writeUserName(name) {
+  const clean = String(name ?? '').replace(/[\u0000-\u001f\u007f]/g, '').trim().slice(0, 40) || null;
+  fs.mkdirSync(path.dirname(userFile()), { recursive: true });
+  fs.writeFileSync(userFile(), JSON.stringify({ name: clean }, null, 2));
+  return clean;
+}
+
 // ---------------------------------------------------------------- picker IPC
+ipcMain.handle('muster:getName', () => readUserName());
+ipcMain.handle('muster:setName', (_e, name) => writeUserName(name));
 
 ipcMain.handle('muster:recent', async () => {
   const { recent } = loadSettings();

@@ -49,6 +49,19 @@
   .busy p { margin: 0; font-size: 14px; color: var(--muted); }
   .error { display: none; padding: 12px 14px; border-radius: 8px; font-size: 13px; line-height: 19px; color: var(--stuck); background: color-mix(in oklab, var(--stuck) 12%, transparent); white-space: pre-wrap; }
   .error.show { display: block; }
+  .welcome { display: none; flex-direction: column; gap: 14px; padding: 22px; border-radius: 16px; border: 1px solid color-mix(in oklab, #FF7A1A 40%, var(--line)); background: color-mix(in oklab, #FF7A1A 6%, var(--surface)); }
+  .welcome.show { display: flex; }
+  .welcome h2 { margin: 0; font-size: 18px; font-weight: 600; }
+  .welcome p { margin: 0; font-size: 13px; line-height: 20px; color: var(--muted); }
+  .name-row { display: flex; gap: 10px; }
+  .name-input { flex: 1; height: 42px; padding: 0 14px; border-radius: 8px; border: 1px solid var(--line); background: var(--bg); color: var(--text); font: inherit; font-size: 14px; outline: none; }
+  .name-input:focus { border-color: color-mix(in oklab, #FF7A1A 60%, var(--line)); }
+  .hello { margin: 0; font-size: 14px; color: var(--muted); display: none; }
+  .hello.show { display: block; }
+  .hello b { color: var(--text); font-weight: 600; }
+  .link { background: none; color: var(--faint); font-size: 13px; padding: 0 0 0 6px; text-decoration: underline; text-underline-offset: 3px; }
+  .link:hover { color: var(--text); }
+  .gated.hidden { display: none !important; }
 </style>
 </head>
 <body>
@@ -59,7 +72,16 @@
     <h1>Muster</h1>
   </div>
   <p class="lede">Pick a project. Muster starts a Captain for it, and you give the Captain a goal from the dashboard. Crew work on their own branches; nothing reaches main until you merge it.</p>
-  <div class="open">
+  <p class="hello" id="hello"></p>
+  <div class="welcome" id="welcome">
+    <h2>What should the crew call you?</h2>
+    <p>The Captain and crew use your name in their updates, notes and questions. You can change it any time in Settings.</p>
+    <div class="name-row">
+      <input class="name-input" id="nameInput" maxlength="40" placeholder="Your name" autocomplete="given-name" />
+      <button class="primary" id="nameSave">Continue</button>
+    </div>
+  </div>
+  <div class="open gated" id="openRow">
     <button class="primary" id="choose">
       <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M3 7a2 2 0 0 1 2-2h4l2 2h8a2 2 0 0 1 2 2v8a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2z"/></svg>
       Open a project folder
@@ -68,8 +90,8 @@
   </div>
   <div class="error" id="error"></div>
   <div style="display:flex;flex-direction:column;gap:10px">
-    <div class="label">RECENT PROJECTS</div>
-    <div class="list" id="list"><div class="empty">Loading…</div></div>
+    <div class="label gated" id="recentLabel">RECENT PROJECTS</div>
+    <div class="list gated" id="list"><div class="empty">Loading…</div></div>
   </div>
 </main>
 <div class="busy" id="busy"><div class="spinner"></div><p id="busyText">Starting the Captain…</p></div>
@@ -139,7 +161,40 @@
     busy('');
     if (!r.ok && !r.canceled) render();
   };
-  render();
+  // First launch: ask for a name before anything else.
+  function showHello(name) {
+    const hello = $('hello');
+    hello.textContent = '';
+    const b = document.createElement('b');
+    b.textContent = name;
+    const change = document.createElement('button');
+    change.className = 'link';
+    change.textContent = 'Change';
+    change.onclick = () => askName(name);
+    hello.append('Hi ', b, '.', change);
+    hello.classList.add('show');
+  }
+  function askName(current) {
+    $('welcome').classList.add('show');
+    $('hello').classList.remove('show');
+    for (const el of document.querySelectorAll('.gated')) el.classList.add('hidden');
+    $('nameInput').value = current || '';
+    $('nameInput').focus();
+  }
+  async function saveName() {
+    const name = await window.muster.setName($('nameInput').value);
+    if (!name) { $('nameInput').focus(); return; }
+    $('welcome').classList.remove('show');
+    for (const el of document.querySelectorAll('.gated')) el.classList.remove('hidden');
+    showHello(name);
+    render();
+  }
+  $('nameSave').onclick = saveName;
+  $('nameInput').addEventListener('keydown', (e) => { if (e.key === 'Enter') saveName(); });
+  window.muster.getName().then((name) => {
+    if (name) { showHello(name); render(); }
+    else askName('');
+  });
 </script>
 </body>
 </html>
