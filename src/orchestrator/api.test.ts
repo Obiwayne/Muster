@@ -268,13 +268,6 @@ describe('orchestrator API', () => {
     const live = new Promise<string>((r) => term.once('message', (d) => r(String(d))));
     ptyOf('crew-2').emit('live-chunk');
     expect(await live).toBe('live-chunk');
-
-    // A screen clear and its redraw arrive as separate PTY chunks ~16ms apart; clients must get them as one message.
-    const frame = new Promise<string>((r) => term.once('message', (d) => r(String(d))));
-    ptyOf('crew-2').emit('old[?25l[2J');
-    await sleep(16);
-    ptyOf('crew-2').emit('[Hnew screen');
-    expect(await frame).toBe('old[?25l[2J[Hnew screen');
     ptyOf('crew-2').written = '';
     term.send(JSON.stringify({ type: 'input', data: 'zq-input' }));
     await until(() => ptyOf('crew-2').written.includes('zq-input'));

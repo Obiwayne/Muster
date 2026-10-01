@@ -72,7 +72,6 @@ interface Runtime {
   pendingNudge?: { ids: string[]; at: number; attempt: number };
   lastOutputAt?: number;
   typing: Promise<void>;
-  size: string; // 'COLSxROWS' last applied to the pty; identical resizes still make Claude repaint the whole screen
 }
 
 const RESTING: AgentStatus[] = ['idle', 'done', 'stuck', 'waiting'];
@@ -111,8 +110,6 @@ export class AgentManager {
   private runtimes = new Map<string, Runtime>();
   private buffers = new Map<string, RingBuffer>(); // outlive the process so a crashed agent's last output stays readable
   private listeners = new Map<string, Set<(data: string) => void>>(); // per agent id, so terminals survive restarts
-  private termOwners = new Map<string, number>(); // agent id → attached CLIs that own the pty size
-  private wantedSize = new Map<string, { cols: number; rows: number }>(); // last size a non-owner asked for
   private humanInputAt = new Map<string, number>(); // last human keystroke per agent
   private zombies = new Map<string, number>(); // agent id → pid that survived stop()
   private starting = new Map<string, Promise<Agent>>();
@@ -300,7 +297,6 @@ export class AgentManager {
       trustAnswered: false,
       firstPrompt,
       typing: Promise.resolve(),
-      size: '120x32',
     };
     // A log file that can't be written (folder gone, disk full) must not take the orchestrator down.
     rt.logFile.on('error', (e) => this.log(`${agent.id}: terminal log not written: ${errText(e)}`));
@@ -738,42 +734,8 @@ export class AgentManager {
     for (let left = this.humanHoldLeft(id); left > 0; left = this.humanHoldLeft(id)) await sleep(left);
   }
 
-  /**
-   * Resizes an agent's pty. No-op sizes are dropped, and while an owning client (an attached CLI) is
-   * connected, other clients' sizes are only remembered and restored once the last owner leaves.
-   */
-  resize(id: string, cols: number, rows: number, owner = false): void {
-    if (!(cols > 0 && rows > 0)) return;
-    const size = { cols: Math.floor(cols), rows: Math.floor(rows) };
-    if (!owner) this.wantedSize.set(id, size);
-    if (!owner && this.termOwners.get(id)) return;
-    this.applySize(id, size);
-  }
-
-  private applySize(id: string, { cols, rows }: { cols: number; rows: number }): void {
-    const rt = this.runtimes.get(id);
-    const key = `${cols}x${rows}`;
-    if (!rt || rt.size === key) return;
-    rt.size = key;
-    rt.pty.resize(cols, rows);
-  }
-
-  /** Marks a client as the size owner of an agent's terminal; returns its release function. */
-  ownTerminal(id: string): () => void {
-    this.termOwners.set(id, (this.termOwners.get(id) ?? 0) + 1);
-    let released = false;
-    return () => {
-      if (released) return;
-      released = true;
-      const left = (this.termOwners.get(id) ?? 1) - 1;
-      if (left > 0) {
-        this.termOwners.set(id, left);
-        return;
-      }
-      this.termOwners.delete(id);
-      const want = this.wantedSize.get(id);
-      if (want) this.applySize(id, want);
-    };
+  resize(id: string, cols: number, rows: number): void {
+    if (cols > 0 && rows > 0) this.runtimes.get(id)?.pty.resize(Math.floor(cols), Math.floor(rows));
   }
 
   backlog(id: string): string {
