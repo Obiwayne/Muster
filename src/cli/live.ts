@@ -4,6 +4,7 @@ import { serverInfo } from '../client.js';
 import type { FeedItem, MusterConfig, MusterEvent, MusterState, TermClientMessage } from '../types.js';
 import { api, CliError, NOT_RUNNING, repoRoot, requireServer, type Ctx } from './context.js';
 import { feed } from './commands.js';
+import { Coalescer, resizeDeduper } from '../core/coalesce.js';
 import { formatFeedItem, idNum } from './format.js';
 
 const DETACH = 0x1d; // Ctrl+]
@@ -20,15 +21,16 @@ export async function attach(ctx: Ctx, agent: string): Promise<void> {
     throw new CliError(`No agent "${agent}" (agents: ${ids}).`);
   }
   const info = requireServer(ctx);
-  const ws = new WebSocket(wsUrl(info.url, `/ws/term/${encodeURIComponent(agent)}`, info.token));
+  const ws = new WebSocket(wsUrl(info.url, `/ws/term/${encodeURIComponent(agent)}`, info.token) + '&owner=1');
   const stdin = process.stdin;
   const stdout = process.stdout;
 
   const send = (m: TermClientMessage) => {
     if (ws.readyState === WebSocket.OPEN) ws.send(JSON.stringify(m));
   };
+  const resizeWorthSending = resizeDeduper();
   const sendResize = () => {
-    if (stdout.columns && stdout.rows) send({ type: 'resize', cols: stdout.columns, rows: stdout.rows });
+    if (resizeWorthSending(stdout.columns, stdout.rows)) send({ type: 'resize', cols: stdout.columns, rows: stdout.rows });
   };
   let detached = false;
   const onData = (buf: Buffer) => {
@@ -41,10 +43,12 @@ export async function attach(ctx: Ctx, agent: string): Promise<void> {
     }
     send({ type: 'input', data: buf.toString('utf8') });
   };
+  const out = new Coalescer((s) => stdout.write(s), { sync: true });
   let cleaned = false;
   const cleanup = () => {
     if (cleaned) return;
     cleaned = true;
+    out.flush();
     stdin.off('data', onData);
     stdout.off('resize', sendResize);
     if (stdin.isTTY) stdin.setRawMode(false);
@@ -62,7 +66,7 @@ export async function attach(ctx: Ctx, agent: string): Promise<void> {
       sendResize();
     });
     ws.on('message', (data: WebSocket.RawData) => {
-      stdout.write(Array.isArray(data) ? Buffer.concat(data) : Buffer.from(data as ArrayBuffer));
+      out.push((Array.isArray(data) ? Buffer.concat(data) : Buffer.from(data as ArrayBuffer)).toString('utf8'));
     });
     ws.on('close', () => {
       cleanup();
