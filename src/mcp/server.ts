@@ -3,7 +3,8 @@
 import { McpServer } from '@modelcontextprotocol/sdk/server/mcp.js';
 import { z } from 'zod';
 import { musterFetch } from '../client.js';
-import type { Agent, FeedItem, InboxItem, MusterState, Note, Role, Task } from '../types.js';
+import { formatGuideline } from '../core/stations.js';
+import type { Agent, FeedItem, InboxItem, MusterState, Note, Role, StationDef, Task } from '../types.js';
 import {
   BOARD_FILTERS,
   boardQuery,
@@ -261,7 +262,9 @@ export function createMusterServer(opts: MusterServerOptions): McpServer {
     tool('claim_task', 'Claim the next ready task for your role (oldest first). Returns the task, or nothing if none is ready.', {}, async () => {
       const t = await api<Task | null>('/api/tasks/claim', { method: 'POST', body: { actor: me } });
       if (!t) return 'No ready task for you right now. Check read_board for questions you can answer, or wait for an assignment.';
-      return `Claimed ${formatTaskDetail(t)}`;
+      const st = await api<StationDef | null>(`/api/stations/${enc(t.stations[t.stationIndex] ?? 'build')}`).catch(() => null);
+      const guide = typeof st?.guideline === 'string' ? formatGuideline(st.name, st.guideline) : '';
+      return `Claimed ${formatTaskDetail(t)}${guide ? `\n\n${guide}` : ''}`;
     });
 
     tool(

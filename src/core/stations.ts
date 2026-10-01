@@ -119,3 +119,24 @@ export function deleteStation(p: MusterPaths, rawName: unknown): void {
   if (!existsSync(fileOf(p, name))) throw notFound(`No station "${name}"`);
   rmSync(fileOf(p, name), { force: true });
 }
+
+export const MAX_DELIVERED = 8_000;
+
+/** The block handed to an agent working `station`: heading plus guideline, cut at ~8 KB. '' when the guideline is empty. */
+export function formatGuideline(station: string, guideline: string): string {
+  const text = guideline.trim();
+  if (!text) return '';
+  const body = text.length > MAX_DELIVERED ? `${text.slice(0, MAX_DELIVERED)}
+(guideline cut, ${text.length - MAX_DELIVERED} more characters in .muster/stations/${station}.md)` : text;
+  return `## Station: ${station} guidelines
+${body}`;
+}
+
+/** Read fresh from .muster/stations at delivery time. */
+export const guidelineBlock = (p: MusterPaths, station: string): string => formatGuideline(station, readGuideline(p, station));
+
+/** One line saying what a station is for: the first non-heading, non-empty line of its guideline. */
+export function stationPurpose(guideline: string): string {
+  const line = guideline.split(String.fromCharCode(10)).map((l) => l.trim()).find((l) => l && !l.startsWith('#'));
+  return line && line.length > 140 ? line.slice(0, 137) + '...' : (line ?? '');
+}

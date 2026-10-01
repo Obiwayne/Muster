@@ -246,7 +246,11 @@ describe('orchestrator API', () => {
     expect(t).toMatchObject({ status: 'in_progress', assignee: 'crew-2', branch: 'crew-2/invite-api' }); // a fresh branch: T1's is merged
     commitFile((await agent('crew-2')).worktree, 'invite.ts', 'export const invite = 1;\n');
 
+    await ok('PUT', '/api/stations/test', { guideline: 'Run the full suite twice.' });
     const handed = await ok<Task>('POST', `/api/tasks/${t.id}/handoff`, { actor: 'crew-2', to: 'crew-3', note: 'please test' });
+    const item = (await state()).inbox.filter((i) => i.agentId === 'crew-3' && i.kind === 'handoff').at(-1)!;
+    expect(item.text).toContain('## Station: test guidelines');
+    expect(item.text).toContain('Run the full suite twice.');
     const crew3 = await agent('crew-3');
     expect(crew3.branch).toBe('crew-3/invite-api');
     expect(handed).toMatchObject({ stationIndex: 1, assignee: 'crew-3', branch: 'crew-3/invite-api' });

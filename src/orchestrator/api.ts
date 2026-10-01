@@ -77,6 +77,18 @@ export function createApi(ctx: ApiContext) {
     if (typeof branch !== 'string' || branch.startsWith('-') || !(await gitOps.branchExists(ctx.paths.root, branch))) throw notFound(`No branch "${branch}"`);
   };
 
+  /** Appends the current station's guideline to the newest inbox item the task just produced for `agentId`. */
+  const attachGuideline = (agentId: string | undefined, task: Task, kinds: string[]) => {
+    const block = stations.guidelineBlock(ctx.paths, tasks.currentStation(task));
+    const item = block && agentId ? [...state().inbox].reverse().find((i) => i.agentId === agentId && i.taskId === task.id && kinds.includes(i.kind) && !i.read) : undefined;
+    if (item && !item.text.includes(block)) {
+      item.text += `
+
+${block}`;
+      store.commit();
+    }
+  };
+
   /** After a task lands on an agent: fix up its branch, and wake the agent if it was stopped. */
   const afterTake = async (agent: Agent | undefined, task: Task) => {
     if (!agent) return;
@@ -233,6 +245,7 @@ export function createApi(ctx: ApiContext) {
       }),
     );
     if (task.assignee) await afterTake(board.findAgent(state(), task.assignee), task);
+    attachGuideline(task.assignee, task, ['assignment']);
     return task;
   });
   route('POST', '/api/tasks/claim', async ({ body }) => {
@@ -246,6 +259,7 @@ export function createApi(ctx: ApiContext) {
     await agents.assertCanTakeBranch(body.agentId, tasks.requireTask(state(), params.id));
     const task = mutate(() => tasks.assignTask(state(), params.id, str(body.agentId, 'agentId'), str(body.actor, 'actor')));
     await afterTake(board.findAgent(state(), body.agentId), task);
+    attachGuideline(task.assignee, task, ['assignment']);
     return task;
   });
   route('POST', '/api/tasks/:id/handoff', async ({ params, body }) => {
@@ -254,11 +268,14 @@ export function createApi(ctx: ApiContext) {
     if (body.to) await agents.assertCanTakeBranch(body.to, current);
     const r = mutate(() => tasks.handoffTask(state(), params.id, str(body.actor, 'actor'), body.to || undefined, body.note ?? '', from, stations.stationRoles(ctx.paths)));
     if (r.receiver) await afterTake(r.receiver, r.task);
+    attachGuideline(r.task.assignee, r.task, ['handoff', 'review']);
     return r.task;
   });
   route('POST', '/api/tasks/:id/done', async ({ params, body }) => {
     const from = await agents.stationBranch(tasks.requireTask(state(), params.id));
-    return mutate(() => tasks.doneTask(state(), params.id, str(body.actor, 'actor'), body.summary ?? '', from, stations.stationRoles(ctx.paths)));
+    const done = mutate(() => tasks.doneTask(state(), params.id, str(body.actor, 'actor'), body.summary ?? '', from, stations.stationRoles(ctx.paths)));
+    attachGuideline(done.assignee, done, ['review', 'handoff']);
+    return done;
   });
   route('POST', '/api/tasks/:id/review', async ({ params, body }) => {
     const reviewed = await agents.stationBranch(tasks.requireTask(state(), params.id)); // records the commit the merge will take
@@ -277,6 +294,7 @@ export function createApi(ctx: ApiContext) {
     await agents.assertCanTakeBranch(tasks.builderOf(state(), current)?.id, current);
     const task = mutate(() => tasks.sendBack(state(), params.id, str(body.actor, 'actor'), body.note ?? ''));
     if (task.assignee) await afterTake(board.findAgent(state(), task.assignee), task);
+    attachGuideline(task.assignee, task, ['handoff']);
     return task;
   });
 

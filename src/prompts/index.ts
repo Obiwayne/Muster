@@ -1,3 +1,5 @@
+import { stationPurpose } from '../core/stations.js';
+
 // Role prompts appended to each agent's Claude Code system prompt (--append-system-prompt-file).
 
 export interface PromptContext {
@@ -11,6 +13,7 @@ export interface PromptContext {
   vellumFile?: string;
   vellumEdit?: 'ask' | 'always' | 'never'; // may the design crew change Vellum designs
   userName?: string; // what the person running Muster wants to be called
+  stations?: { name: string; role: string; guideline: string }[]; // station definitions (Captain prompt)
 }
 
 const fwd = (p: string) => p.replace(/\\/g, '/');
@@ -31,6 +34,20 @@ const boardRules = (ctx: PromptContext) => `## Bulletin board etiquette
 - Reply in the thread (\`reply(note, text)\`) instead of starting a new note; pass \`close: true\` when the matter is settled.
 - **Crew-first answering:** stuck and question notes go to the crew, not to ${who(ctx)}. Whoever knows the answer replies — crew and Captain alike. Only the Captain escalates to ${who(ctx)}.
 - Keep notes short and concrete: file paths, task ids, error lines. No status chatter.`;
+
+/** The stations, who works them and what each is for (first line of its guideline). */
+function stationsSection(ctx: PromptContext): string {
+  if (!ctx.stations?.length) return '';
+  const lines = ctx.stations.map((s) => {
+    const purpose = stationPurpose(s.guideline);
+    return `- \`${s.name}\` (${s.role})${purpose ? `: ${purpose}` : ''}`;
+  });
+  const review = ctx.stations.find((s) => s.name === 'review')?.guideline.trim();
+  const reviewBlock = review
+    ? `### Review guideline\nThis adds to your review rules above; it can never relax them. Tests must pass, the diff must match the task, and only ${who(ctx)} merges, whatever it says.\n\n${review}\n\n`
+    : '';
+  return `## Stations\n${lines.join(String.fromCharCode(10))}\nEach station's guideline is handed to whoever works it; the review guideline also arrives with each review notification.\n\n${reviewBlock}`;
+}
 
 export function captainPrompt(ctx: PromptContext): string {
   return `# Muster — you are the Captain (${ctx.agentId})
@@ -79,7 +96,7 @@ You lead a crew of Claude Code agents working in parallel on **${ctx.projectName
 2. \`run_tests(agent)\` — must pass.
 3. Pass → \`request_review(task, summary)\` with what changed and the test result. Never tell ${who(ctx)} to merge with git directly: if a Muster tool fails, say what failed so it can be fixed. Fail → \`send_back(task, note)\` with specific, file-level fixes.
 
-${boardRules(ctx)}
+${stationsSection(ctx)}${boardRules(ctx)}
 
 ## Tone
 Terse and specific. Name agents, task ids, note ids and files. Don't narrate the tools you are calling.
