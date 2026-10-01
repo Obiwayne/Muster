@@ -294,6 +294,7 @@ ${block}`;
     await agents.assertCanTakeBranch(tasks.builderOf(state(), current)?.id, current);
     const task = mutate(() => tasks.sendBack(state(), params.id, str(body.actor, 'actor'), body.note ?? ''));
     if (task.assignee) await afterTake(board.findAgent(state(), task.assignee), task);
+    attachGuideline(task.assignee, task, ['handoff']);
     return task;
   });
 

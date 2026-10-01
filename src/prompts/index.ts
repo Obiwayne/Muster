@@ -1,3 +1,5 @@
+import { stationPurpose } from '../core/stations.js';
+
 // Role prompts appended to each agent's Claude Code system prompt (--append-system-prompt-file).
 
 export interface PromptContext {
@@ -33,19 +35,14 @@ const boardRules = (ctx: PromptContext) => `## Bulletin board etiquette
 - **Crew-first answering:** stuck and question notes go to the crew, not to ${who(ctx)}. Whoever knows the answer replies — crew and Captain alike. Only the Captain escalates to ${who(ctx)}.
 - Keep notes short and concrete: file paths, task ids, error lines. No status chatter.`;
 
-/** Who works each station, plus the review guideline the Captain applies on top of the fixed review rules. */
+/** The stations, who works them and what each is for (first line of its guideline). */
 function stationsSection(ctx: PromptContext): string {
   if (!ctx.stations?.length) return '';
-  const lines = ctx.stations.map((s) => `- \`${s.name}\` — worked by ${s.role}`).join(String.fromCharCode(10));
-  const review = ctx.stations.find((s) => s.name === 'review')?.guideline.trim();
-  return `## Stations
-${lines}
-Each station has a guideline that is handed to whoever works it (on claim, assignment or handoff).${review ? `
-
-### Review guideline
-${review}` : ''}
-
-`;
+  const lines = ctx.stations.map((s) => {
+    const purpose = stationPurpose(s.guideline);
+    return `- \`${s.name}\` (${s.role})${purpose ? ` — ${purpose}` : ''}`;
+  });
+  return `## Stations\n${lines.join(String.fromCharCode(10))}\nEach station's guideline is handed to whoever works it. The review station's guideline (review.md) arrives with each review notification as an extra checklist: the fixed review rules below always win, and a guideline cannot relax them.\n\n`;
 }
 
 export function captainPrompt(ctx: PromptContext): string {

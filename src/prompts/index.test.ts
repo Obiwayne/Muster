@@ -32,10 +32,10 @@ describe('captainPrompt', () => {
     expect(p).toContain('Proj');
   });
   it('lists the stations and the review guideline', () => {
-    const withStations = captainPrompt({ ...ctx, agentId: 'captain', worktree: ctx.repoRoot, branch: 'main', stations: [{ name: 'test', role: 'crew', guideline: '' }, { name: 'review', role: 'captain', guideline: 'Check the docs too.' }] });
+    const withStations = captainPrompt({ ...ctx, agentId: 'captain', worktree: ctx.repoRoot, branch: 'main', stations: [{ name: 'test', role: 'crew', guideline: '# Test' + String.fromCharCode(10) + 'Verify the build.' }, { name: 'review', role: 'captain', guideline: 'Check the docs too.' }] });
     expect(withStations).toContain('## Stations');
-    expect(withStations).toContain('worked by crew');
-    expect(withStations).toContain('### Review guideline' + String.fromCharCode(10) + 'Check the docs too.');
+    expect(withStations).toContain('`test` (crew) — Verify the build.');
+    expect(withStations).toContain('fixed review rules below always win');
     expect(p).not.toContain('## Stations');
   });
   it('is reasonably tight', () => {

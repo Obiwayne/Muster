@@ -249,7 +249,7 @@ describe('orchestrator API', () => {
     await ok('PUT', '/api/stations/test', { guideline: 'Run the full suite twice.' });
     const handed = await ok<Task>('POST', `/api/tasks/${t.id}/handoff`, { actor: 'crew-2', to: 'crew-3', note: 'please test' });
     const item = (await state()).inbox.filter((i) => i.agentId === 'crew-3' && i.kind === 'handoff').at(-1)!;
-    expect(item.text).toContain('Station guideline (test):');
+    expect(item.text).toContain('## Station: test guidelines');
     expect(item.text).toContain('Run the full suite twice.');
     const crew3 = await agent('crew-3');
     expect(crew3.branch).toBe('crew-3/invite-api');

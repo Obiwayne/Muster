@@ -3,6 +3,7 @@
 import { McpServer } from '@modelcontextprotocol/sdk/server/mcp.js';
 import { z } from 'zod';
 import { musterFetch } from '../client.js';
+import { formatGuideline } from '../core/stations.js';
 import type { Agent, FeedItem, InboxItem, MusterState, Note, Role, StationDef, Task } from '../types.js';
 import {
   BOARD_FILTERS,
@@ -262,11 +263,8 @@ export function createMusterServer(opts: MusterServerOptions): McpServer {
       const t = await api<Task | null>('/api/tasks/claim', { method: 'POST', body: { actor: me } });
       if (!t) return 'No ready task for you right now. Check read_board for questions you can answer, or wait for an assignment.';
       const st = await api<StationDef | null>(`/api/stations/${enc(t.stations[t.stationIndex] ?? 'build')}`).catch(() => null);
-      const guide = typeof st?.guideline === 'string' && st.guideline.trim() ? `
-
-Station guideline (${st.name}):
-${st.guideline.trim()}` : '';
-      return `Claimed ${formatTaskDetail(t)}${guide}`;
+      const guide = typeof st?.guideline === 'string' ? formatGuideline(st.name, st.guideline) : '';
+      return `Claimed ${formatTaskDetail(t)}${guide ? `\n\n${guide}` : ''}`;
     });
 
     tool(
