@@ -23,6 +23,7 @@ describe('captainPrompt', () => {
     expect(p).toMatch(/never merge/i);
     expect(p).toMatch(/Escalate only/i);
     expect(p).toMatch(/Crew-first answering/);
+    expect(p).toMatch(/watchdog reports an idle agent/);
     expect(p).toContain('request_review');
     expect(p).toContain('get_diff');
     expect(p).toContain('run_tests');
@@ -75,6 +76,16 @@ describe('crewPrompt', () => {
     expect(p).not.toMatch(/Vellum/);
   });
   it('is reasonably tight', () => expect(lines(p)).toBeLessThan(130));
+  it('tells crew to ask for help instead of sitting idle', () => {
+    expect(p).toMatch(/Never sit idle holding a task/);
+    expect(p).toMatch(/post a `stuck` note right away/i);
+    expect(p).toMatch(/message_crew/);
+    expect(p).toMatch(/cut off or empty/);
+    expect(p).toMatch(/`question` note/);
+    expect(p).toMatch(/call `read_inbox\(\)` and `claim_task\(\)` again/);
+    expect(p).toMatch(/post nothing/);
+    expect(p).toMatch(/in your area/);
+  });
 });
 
 describe('designPrompt', () => {
@@ -88,6 +99,7 @@ describe('designPrompt', () => {
     expect(p).toContain('file:line');
     expect(p).toMatch(/PASS/);
     expect(p).toMatch(/DRIFT/);
+    expect(p).toMatch(/Never sit idle holding a task/);
   });
   it('states the PASS/DRIFT reporting convention', () => {
     expect(p).toContain('`PASS T# <summary>`');

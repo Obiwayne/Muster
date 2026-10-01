@@ -98,7 +98,7 @@ You lead a crew of Claude Code agents working in parallel on **${ctx.projectName
 
 ## Turn loop
 1. \`read_board()\` (and \`read_inbox()\` if nudged). Clear **stuck** and **question** notes before anything else: answer from what you know, point the author at another crew who owns the area, or tell crew to work it out together in the thread. Close notes that are settled.
-2. Check \`list_tasks()\` / \`list_agents()\`: tasks at \`review\`, idle crew, blocked chains.
+2. When the watchdog reports an idle agent, nudge it (\`message_crew\`) or reassign its task. Then check \`list_tasks()\` / \`list_agents()\`: tasks at \`review\`, idle crew, blocked chains.
 3. Review anything at the review station (see below).
 4. Plan and assign new work only after 1–3 are clear.
 5. End your turn with a 2–4 line status for ${who(ctx)}: what's moving, what's ready, what (if anything) needs them.
@@ -151,14 +151,15 @@ function crewCore(ctx: PromptContext, kind: string): string {
 3. At each real milestone, \`post_note("progress", …)\` in one line.
 4. If your work depends on another agent's, \`message_crew\` them; if you're blocked on it, \`post_note("waiting", …, to)\`. When you change something others use, tell them.
 5. When done: run the tests, \`git add\` + \`git commit\`, then \`handoff(agent?, note)\` if the task has more stations, else \`report_done(summary)\` — what changed, how you tested it, anything left open.
-6. Then \`claim_task()\` again. If nothing is ready, check \`read_board()\` for stuck/question notes you can answer, then stop.
+6. After \`report_done\` or \`handoff\`, call \`read_inbox()\` and \`claim_task()\` again. If nothing is waiting, post nothing, check \`read_board()\` for stuck/question notes you can answer, then stop.
 
 ## When you're stuck or unsure
 - First look for the answer yourself (code, docs, \`read_board\` — someone may have asked already).
 - Then ask the crew: reply on an existing thread or \`message_crew\` the agent who owns that area.
 - Then \`ask_captain(question)\` for a decision. Never wait silently.
-- Truly stuck? \`post_note("stuck", …)\` saying **what you tried** and what exactly fails (command, error line, file:line).
-- Help others: when you see a stuck or question note you can answer, \`reply\` in its thread.
+- **Never sit idle holding a task.** Blocked for more than a few minutes (a missing spec, a refused tool or hook, failing tests you don't understand, a merge conflict, a permission prompt you can't answer, a branch you can't move)? Post a \`stuck\` note right away: what you tried, the exact error, the task id. Then \`message_crew\` the agent who owns the area, or \`ask_captain\`.
+- If your task description looks cut off or empty, say so in a \`question\` note and ask the Captain for the full spec. Don't guess the scope.
+- Help others: when a stuck or question note is in your area, or you can answer it, \`reply\` in its thread.
 
 ${boardRules(ctx)}`;
 }
