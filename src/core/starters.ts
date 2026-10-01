@@ -33,8 +33,11 @@ export const STARTER_GUIDELINES: Record<string, string> = {
   concept: section({
     purpose: 'Turn the discovery into a concept: two or three options with a recommendation. You write a document, not code.',
     read: ['docs/factory/<T#>-discovery.md from the discover station.', 'The parts of the code the options would touch.'],
-    produce: [DOC.replace('%', 'concept') + ' Sections: goal, options with trade-offs and cost, recommendation, what is out of scope.'],
-    done: ['Each option says what it changes and what it costs.', 'One option is recommended, with the reason.', 'The document is committed.'],
+    produce: [
+      DOC.replace('%', 'concept') + ' Sections: goal, options with trade-offs and cost, recommendation, what is out of scope, name candidates.',
+      'Name candidates: list 3-5 product names with a one-line rationale each. Check each against GitHub (`gh repo view <owner>/<name>` failing means the name is free) and npm (`npm view <name>` returning 404 means free), and mark each one free or taken.',
+    ],
+    done: ['Each option says what it changes and what it costs.', 'One option is recommended, with the reason.', 'Every name candidate is marked free or taken on GitHub and npm.', 'The document is committed.'],
     hand: 'Hand on to the next station (design or plan) with the recommendation in one line.',
   }),
   plan: section({
@@ -54,6 +57,7 @@ export const STARTER_GUIDELINES: Record<string, string> = {
     done: [
       'The concept fits the goal you set.',
       'The scope and the non-goals are right: nothing missing, nothing extra.',
+      'Choose the product name (Settings → Project), then Create GitHub repo if you want one.',
       'The plan breakdown: each task is small, has acceptance criteria and a sensible line.',
       'The design (artboards) matches the concept, if the line has a design station.',
     ],
