@@ -7,6 +7,7 @@ import { badRequest, conflict, forbidden, HttpError, notFound } from '../core/er
 import * as gitOps from '../core/git.js';
 import type { MusterPaths } from '../core/paths.js';
 import type { Store } from '../core/store.js';
+import * as lines from '../core/lines.js';
 import * as stations from '../core/stations.js';
 import * as tasks from '../core/tasks.js';
 import { createVellumChecker, type VellumCall } from '../core/vellum.js';
@@ -47,7 +48,7 @@ const TEST_TIMEOUT_MS = 10 * 60_000;
 const MAX_BODY = 2 * 1024 * 1024;
 const CONFIG_KEYS = new Set<string>([
   'port', 'captainModel', 'crewModel', 'designModel', 'maxCrew', 'pauseAtFiveHourPct', 'warnAtWeeklyPct', 'shutdownIdleCrew',
-  'defaultStations', 'testCommand', 'baseBranch', 'permissionMode', 'claudePath', 'vellum', 'notify', 'allowedTools', 'projectName', 'userName', 'vellumFile', 'vellumEdit',
+  'defaultStations', 'testCommand', 'baseBranch', 'permissionMode', 'claudePath', 'vellum', 'notify', 'allowedTools', 'projectName', 'userName', 'vellumFile', 'vellumEdit', 'defaultLine', 'lines',
 ]);
 
 const str = (v: unknown, name: string): string => {
@@ -89,6 +90,42 @@ ${block}`;
     }
   };
 
+  /** The line a new task uses (404 for an unknown name): the stations it asks for win, else the line's. */
+  const taskLine = (body: { line?: unknown; stations?: unknown }): { line?: string; stations?: string[] } => {
+    const named = body.line !== undefined && body.line !== null && body.line !== '';
+    if (named && typeof body.line !== 'string') throw badRequest('line must be a line name');
+    const explicit = Array.isArray(body.stations) && body.stations.length > 0;
+    const line = named ? (body.line as string) : explicit ? undefined : lines.defaultLineName(ctx.config());
+    const found = line === undefined ? undefined : lines.lineStations(ctx.config(), line);
+    if (line !== undefined && !found) throw notFound(`No line "${line}"`);
+    return { line, stations: explicit ? (body.stations as string[]) : found };
+  };
+
+  /**
+   * defaultStations is an alias for the default line's stations: a patch carrying it edits that line (the
+   * line named in the same patch, else the current default). Also checks lines/defaultLine shapes.
+   */
+  const lineEdits = (patch: ConfigPatch): void => {
+    const cfg = ctx.config();
+    let edits: MusterConfig['lines'] = { ...cfg.lines };
+    if (patch.lines !== undefined) {
+      const v = patch.lines;
+      if (v !== null && (typeof v !== 'object' || Array.isArray(v))) throw badRequest('lines must be an object of { label, stations }');
+      edits = {};
+      for (const [rawName, e] of Object.entries(v ?? {})) edits[lines.lineNameOrThrow(rawName)] = lines.checkedEntry(ctx.paths, e);
+    }
+    const known = { lines: edits };
+    if (patch.defaultLine !== undefined && patch.defaultLine !== null && (typeof patch.defaultLine !== 'string' || !lines.getLine(known, patch.defaultLine))) throw badRequest(`No line "${patch.defaultLine}"`);
+    if (patch.defaultStations !== undefined) {
+      const target = typeof patch.defaultLine === 'string' ? patch.defaultLine : lines.defaultLineName({ lines: edits, defaultLine: cfg.defaultLine });
+      const names = lines.checkedEntry(ctx.paths, { stations: patch.defaultStations }, false).stations;
+      const cur = lines.getLine(known, target)!;
+      if (names.join() !== cur.stations.filter((x) => x !== 'review').join()) edits[target] = { label: cur.label, stations: names };
+      delete patch.defaultStations;
+    }
+    if (patch.lines !== undefined || JSON.stringify(edits) !== JSON.stringify(cfg.lines)) patch.lines = edits;
+  };
+
   /** A task that just reached a 'human' station: toast and notify you, the way review does. */
   const announceApproval = (task: Task) => {
     const note = task.status === 'awaiting_approval' ? tasks.approvalNote(state(), task) : undefined;
@@ -106,6 +143,21 @@ ${block}`;
   };
 
   // ------------------------------------------------------------------ state
+  route('GET', '/api/lines', () => ({ lines: lines.listLines(ctx.config()), defaultLine: lines.defaultLineName(ctx.config()) }));
+  route('PUT', '/api/lines/:name', ({ params, body }) => {
+    const { name, entry } = lines.lineEntry(ctx.paths, ctx.config(), decodeURIComponent(params.name), { stations: body.stations, label: body.label });
+    const config = ctx.updateConfig({ lines: { ...ctx.config().lines, [name]: entry } });
+    return lines.getLine(config, name);
+  });
+  // Resets a built-in line to its original stations, or removes a custom line (the default line falls back to "feature").
+  route('DELETE', '/api/lines/:name', ({ params }) => {
+    const name = lines.lineNameOrThrow(decodeURIComponent(params.name));
+    const edits = { ...ctx.config().lines };
+    if (!(name in edits) && !lines.BUILT_IN_LINES[name]) throw notFound(`No line "${name}"`);
+    delete edits[name];
+    const config = ctx.updateConfig({ lines: edits, ...(!lines.BUILT_IN_LINES[name] && ctx.config().defaultLine === name ? { defaultLine: null } : {}) });
+    return { lines: lines.listLines(config), defaultLine: lines.defaultLineName(config) };
+  });
   route('GET', '/api/health', () => ({ ok: true, version: ctx.version }));
   route('GET', '/api/state', () => ({ state: state(), config: ctx.config(), paused: state().usage.paused }));
   route('GET', '/api/config', () => ctx.config());
@@ -116,6 +168,7 @@ ${block}`;
     if (patch.vellumEdit !== undefined && patch.vellumEdit !== null && !['ask', 'always', 'never'].includes(patch.vellumEdit)) {
       throw badRequest('vellumEdit must be "ask", "always" or "never"');
     }
+    lineEdits(patch);
     const before = ctx.config().userName;
     const beforeEdit = ctx.config().vellumEdit;
     const config = ctx.updateConfig(patch);
@@ -150,7 +203,7 @@ ${block}`;
     const name = stations.stationName(decodeURIComponent(params.name));
     stations.deleteStation(ctx.paths, name);
     const defaults = ctx.config().defaultStations;
-    if (defaults.includes(name)) ctx.updateConfig({ defaultStations: defaults.filter((n) => n !== name) });
+    if (defaults.includes(name) && defaults.length > 2) ctx.updateConfig({ defaultStations: defaults.filter((n) => n !== name) });
     return stations.listStations(ctx.paths, ctx.config());
   });
   route('GET', '/api/vellum', ({ query }) => vellum.check(ctx.config(), flag(query, 'refresh')));
@@ -251,7 +304,7 @@ ${block}`;
         title: str(body.title, 'title'),
         description: body.description,
         dependsOn: body.dependsOn,
-        stations: body.stations,
+        ...taskLine(body),
         assignee: body.assignee || undefined,
         actor: str(body.actor, 'actor'),
       }, stations.stationRoles(ctx.paths)),

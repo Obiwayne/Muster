@@ -120,6 +120,22 @@ export async function musterFetch<T>(path: string, opts?: { method?: string; bod
 
 Station guidelines are delivered where an agent picks up work: `claim_task` appends the current station's guideline to its result; assignment, handoff-to-an-agent and review inbox items carry it (the inbox text, not the terminal nudge); the Captain's launch prompt lists the stations and the review guideline.
 
+### Factory lines (src/core/lines.ts, src/core/starters.ts)
+
+A line is a named station order. Built-in lines: `new-app` "New app / big feature" (discover, concept, design, plan, approval), `feature` "Feature" (plan, build, test), `ui` "UI change" (design, build, design-check), `bugfix` "Bug fix" (reproduce, fix, test). `review` is appended to every line when it is returned. Your edits and custom lines are `config.lines` (`{ label, stations }`, no `review`, in config.json), merged over the built-ins. `config.defaultLine` (default `feature`; unknown falls back to `feature`) names the line new tasks use.
+
+`config.defaultStations` is an alias for the default line's stations + `review`: it is derived when the config is loaded, and PATCH /api/config `{ defaultStations }` edits the default line (the line named in the same patch, else the current one). The UI's "Make default" sends both `{ defaultLine, defaultStations }`. A config.json from before lines (defaultStations, no lines or defaultLine) becomes an edit of `feature`. PATCH also accepts `lines` and `defaultLine` (400 for an unknown line or an invalid entry).
+
+| Method | Path | Body | Returns |
+|---|---|---|---|
+| GET | /api/lines | | `{ lines: { name, label, stations, builtin }[], defaultLine }` — built-ins first, then custom lines alphabetically; `stations` ends with `review` |
+| PUT | /api/lines/:name | `{ stations, label? }` | The line — human only; creates or edits (a built-in keeps `builtin: true`). 1-12 stations, each must exist (a station file or a built-in station), `review` is implied; 400 otherwise |
+| DELETE | /api/lines/:name | | `{ lines, defaultLine }` — human only; resets a built-in line to its stations, removes a custom one (the default falls back to `feature`); 404 for an unknown line |
+
+POST /api/tasks and the Captain's `post_task` take `line?`: the line's stations are used and `task.line` records it. Explicit `stations` win over `line`; with neither, the default line is used. An unknown line is 404.
+
+Starter stations: every station of the built-in lines has a starter role and guideline (src/core/starters.ts). `seedStations` runs at startup and writes each missing `.muster/stations/<name>.md` (also when the folder already exists), never overwriting a file. Roles: discover, concept, plan, reproduce, fix, build, test are `crew`; design and design-check are `design`; approval is `human` (an approval station, see tasks). Each guideline has the sections Purpose / Read first / Produce / Done when / Hand on. discover, concept and plan write `docs/factory/<T#>-discovery.md`, `-concept.md` and `-plan.md` on the task branch; plan ends with a task breakdown (acceptance criteria and a suggested line per item); reproduce writes a failing test first; design-check reports PASS/DRIFT lines. The Captain's prompt lists the lines, when to use each, and tells it to post the build tasks from a merged new-app plan.
+
 ### Vellum status (src/core/vellum.ts)
 | Method | Path | Returns |
 |---|---|---|
@@ -154,7 +170,7 @@ Muster acts as a read-only MCP client to the Vellum server (`vellumServer(config
 | Method | Path | Body | Returns |
 |---|---|---|---|
 | GET | /api/tasks | – | `Task[]` |
-| POST | /api/tasks | `{ title, description, dependsOn?, stations?, assignee?, actor }` | `Task` — stations default to config.defaultStations; always end with "review" |
+| POST | /api/tasks | `{ title, description, dependsOn?, stations?, line?, assignee?, actor }` | `Task` — stations default to the default line (config.defaultStations); `line` picks another; always end with "review" |
 | POST | /api/tasks/claim | `{ actor }` | `Task \| null` — next `ready` task whose current station's role matches the actor's role, oldest first. Refused when paused. |
 | POST | /api/tasks/:id/assign | `{ agentId, actor }` | `Task` — refused when paused |
 | POST | /api/tasks/:id/handoff | `{ actor, to?, note }` | `Task` — advances stationIndex; `to` = agent id, or omitted = task becomes `ready` for any agent of the next station's role. Receiver's worktree merges the sender's branch (orchestrator runs `git merge --no-edit <senderBranch>` in the receiver worktree). Next station "review" → status `review`, assignee = captain. |

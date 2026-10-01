@@ -1,6 +1,7 @@
 import { existsSync, readFileSync, writeFileSync } from 'node:fs';
 import { basename } from 'node:path';
 import { DEFAULT_CONFIG, type MusterConfig } from '../types.js';
+import { defaultLineName, getLine } from './lines.js';
 import type { MusterPaths } from './paths.js';
 import { readUserName, writeUserName } from './user.js';
 
@@ -14,7 +15,17 @@ function readPartial(p: MusterPaths): Partial<MusterConfig> {
 }
 
 export function loadConfig(p: MusterPaths): MusterConfig {
-  return { ...DEFAULT_CONFIG, projectName: basename(p.root), ...readPartial(p), userName: readUserName() };
+  const partial = readPartial(p);
+  const config = { ...DEFAULT_CONFIG, projectName: basename(p.root), ...partial, userName: readUserName() };
+  // Migration: a config.json from before lines kept its stations in defaultStations; they become the default line's edit.
+  if (Array.isArray(partial.defaultStations) && partial.defaultLine === undefined && partial.lines === undefined) {
+    const stations = partial.defaultStations.filter((s) => s !== 'review');
+    if (stations.length) config.lines = { [config.defaultLine]: { label: getLine(undefined, config.defaultLine)?.label ?? config.defaultLine, stations } };
+  }
+  config.defaultLine = defaultLineName(config);
+  // defaultStations is an alias for the default line's stations + review.
+  config.defaultStations = getLine(config, config.defaultLine)!.stations;
+  return config;
 }
 
 export type ConfigPatch = { [K in keyof MusterConfig]?: MusterConfig[K] | null };

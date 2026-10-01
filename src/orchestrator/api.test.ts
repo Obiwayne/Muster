@@ -94,7 +94,7 @@ beforeAll(async () => {
   const muster = join(repo, '.muster');
   rmSync(muster, { recursive: true, force: true });
   await import('node:fs').then((fs) => fs.mkdirSync(muster, { recursive: true }));
-  writeFileSync(join(muster, 'config.json'), JSON.stringify({ claudePath: 'C:/fake/claude.exe', testCommand: 'node -e "console.log(42)"' }));
+  writeFileSync(join(muster, 'config.json'), JSON.stringify({ lines: { feature: { label: 'Feature', stations: ['build'] } }, claudePath: 'C:/fake/claude.exe', testCommand: 'node -e "console.log(42)"' }));
   orch = await startOrchestrator({
     repoRoot: repo,
     port: 0,
@@ -404,7 +404,7 @@ describe('orchestrator API', () => {
 
   it('serves stations from .muster/stations: agents read, only you write', async () => {
     const list = async () => ok<any[]>('GET', '/api/stations');
-    expect((await list()).map((s) => s.name)).toEqual(['build', 'design', 'test', 'review']);
+    expect((await list()).map((s) => s.name)).toEqual(['build', 'approval', 'concept', 'design', 'design-check', 'discover', 'fix', 'plan', 'reproduce', 'test', 'review']);
     expect(existsSync(join(repo, '.muster', 'stations', 'build.md'))).toBe(true);
     const put = await ok('PUT', '/api/stations/lint', { role: 'crew', guideline: '# Lint - run eslint.' });
     expect(put).toMatchObject({ name: 'lint', role: 'crew', builtin: false, guideline: '# Lint - run eslint.' });
@@ -440,6 +440,42 @@ describe('orchestrator API', () => {
     expect((await call('POST', `/api/tasks/${t.id}/approve`, { actor: 'you' })).status).toBe(409);
     for (const id of [t.id, merged.id]) await ok('POST', `/api/tasks/${id}/cancel`, { actor: 'you', reason: 'test over' });
     await ok('DELETE', '/api/stations/signoff');
+  });
+
+  it('serves factory lines: agents read, only you write; tasks and the default line follow them', async () => {
+    const r = await ok<{ lines: any[]; defaultLine: string }>('GET', '/api/lines');
+    expect(r.defaultLine).toBe('feature');
+    expect(r.lines.map((l) => l.name)).toEqual(['new-app', 'feature', 'ui', 'bugfix']);
+    expect(r.lines.find((l) => l.name === 'ui')).toMatchObject({ label: 'UI change', stations: ['design', 'build', 'design-check', 'review'], builtin: true });
+    expect((await call('GET', '/api/lines', undefined, orch.agentToken('crew-2'))).status).toBe(200);
+    expect((await call('PUT', '/api/lines/mine', { stations: ['build'], actor: 'crew-2' })).status).toBe(403);
+    expect((await call('DELETE', '/api/lines/ui', undefined, orch.agentToken('crew-2'))).status).toBe(403);
+    expect((await call('PUT', '/api/lines/mine', { stations: ['nope'] })).status).toBe(400);
+    expect(await ok('PUT', '/api/lines/mine', { stations: ['plan', 'approval'], label: 'Mine' })).toMatchObject({ label: 'Mine', stations: ['plan', 'approval', 'review'], builtin: false });
+    expect(await ok('PUT', '/api/lines/ui', { stations: ['design', 'build'] })).toMatchObject({ label: 'UI change', stations: ['design', 'build', 'review'], builtin: true });
+
+    const t = await ok<Task>('POST', '/api/tasks', { title: 'Plan it', line: 'mine', actor: 'captain' });
+    expect(t).toMatchObject({ line: 'mine', stations: ['plan', 'approval', 'review'] });
+    const explicit = await ok<Task>('POST', '/api/tasks', { title: 'Explicit', line: 'mine', stations: ['build'], actor: 'captain' });
+    expect(explicit.stations).toEqual(['build', 'review']); // explicit stations win
+    expect((await call('POST', '/api/tasks', { title: 'Bad', line: 'nope', actor: 'captain' })).status).toBe(404);
+    for (const id of [t.id, explicit.id]) await ok('POST', `/api/tasks/${id}/cancel`, { actor: 'you', reason: 'test over' });
+
+    // defaultStations is an alias for the default line: patching it edits that line, patching the line moves it.
+    expect((await call('PATCH', '/api/config', { defaultLine: 'nope' })).status).toBe(400);
+    expect(await ok('PATCH', '/api/config', { defaultLine: 'bugfix', defaultStations: ['reproduce', 'fix', 'test', 'review'] })).toMatchObject({ defaultLine: 'bugfix', defaultStations: ['reproduce', 'fix', 'test', 'review'] });
+    expect(await ok('PATCH', '/api/config', { defaultStations: ['fix', 'test', 'review'] })).toMatchObject({ defaultLine: 'bugfix', defaultStations: ['fix', 'test', 'review'] });
+    expect((await ok<any>('GET', '/api/lines')).lines.find((l: any) => l.name === 'bugfix').stations).toEqual(['fix', 'test', 'review']);
+
+    // DELETE resets a built-in line and removes a custom one (the default falls back to feature).
+    expect((await ok<any>('DELETE', '/api/lines/bugfix')).lines.find((l: any) => l.name === 'bugfix').stations).toEqual(['reproduce', 'fix', 'test', 'review']);
+    await ok('DELETE', '/api/lines/ui');
+    await ok('PATCH', '/api/config', { defaultLine: 'mine' });
+    const after = await ok<any>('DELETE', '/api/lines/mine');
+    expect(after.lines.map((l: any) => l.name)).toEqual(['new-app', 'feature', 'ui', 'bugfix']);
+    expect(after.defaultLine).toBe('feature');
+    expect((await call('DELETE', '/api/lines/mine')).status).toBe(404);
+    await ok('PATCH', '/api/config', { defaultLine: 'feature' });
   });
 
   it('shuts down, then resumes the agents that were running on the next start', async () => {

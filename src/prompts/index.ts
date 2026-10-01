@@ -14,6 +14,8 @@ export interface PromptContext {
   vellumEdit?: 'ask' | 'always' | 'never'; // may the design crew change Vellum designs
   userName?: string; // what the person running Muster wants to be called
   stations?: { name: string; role: string; guideline: string }[]; // station definitions (Captain prompt)
+  lines?: { name: string; label: string; stations: string[] }[]; // line presets (Captain prompt)
+  defaultLine?: string;
 }
 
 const fwd = (p: string) => p.replace(/\\/g, '/');
@@ -35,6 +37,19 @@ const boardRules = (ctx: PromptContext) => `## Bulletin board etiquette
 - **Crew-first answering:** stuck and question notes go to the crew, not to ${who(ctx)}. Whoever knows the answer replies — crew and Captain alike. Only the Captain escalates to ${who(ctx)}.
 - Keep notes short and concrete: file paths, task ids, error lines. No status chatter.`;
 
+/** The line presets the Captain can post a task on (`line`), marking the default. */
+function linesSection(ctx: PromptContext): string {
+  if (!ctx.lines?.length) return '';
+  const rows = ctx.lines.map((l) => `- \`${l.name}\` (${l.label})${l.name === ctx.defaultLine ? ' — default' : ''}: ${l.stations.join(' → ')}`);
+  return `
+### Lines
+Pick a line when you post a task: \`post_task(…, line: "<name>")\` (explicit \`stations\` win over \`line\`). Without either, the default line is used.
+${rows.join(String.fromCharCode(10))}
+Which to use: \`new-app\` for a new product or a big feature (it plans first and ends at approval), \`feature\` as the default, \`ui\` for screens, \`bugfix\` for defects.
+After a \`new-app\` task has merged, read its docs/factory/<T#>-plan.md and post the build tasks from its task breakdown, each on the line it suggests.
+`;
+}
+
 /** The stations, who works them and what each is for (first line of its guideline). */
 function stationsSection(ctx: PromptContext): string {
   if (!ctx.stations?.length) return '';
@@ -46,7 +61,7 @@ function stationsSection(ctx: PromptContext): string {
   const reviewBlock = review
     ? `### Review guideline\nThis adds to your review rules above; it can never relax them. Tests must pass, the diff must match the task, and only ${who(ctx)} merges, whatever it says.\n\n${review}\n\n`
     : '';
-  return `## Stations\n${lines.join(String.fromCharCode(10))}\nEach station's guideline is handed to whoever works it; the review guideline also arrives with each review notification. A "human" station is approved by ${who(ctx)} from the board (Approve or Reject); you never approve or reject it.\n\n${reviewBlock}`;
+  return `## Stations\n${lines.join(String.fromCharCode(10))}\nEach station's guideline is handed to whoever works it; the review guideline also arrives with each review notification. A "human" station is approved by ${who(ctx)} from the board (Approve or Reject); you never approve or reject it.${linesSection(ctx)}\n\n${reviewBlock}`;
 }
 
 export function captainPrompt(ctx: PromptContext): string {
@@ -67,7 +82,7 @@ You lead a crew of Claude Code agents working in parallel on **${ctx.projectName
 - \`read_board(filter?)\` — **first call of every turn.** Default shows open notes; also \`needs-you\`, \`mine\`, a note type, \`all\`.
 - \`read_inbox()\` — replies, messages, hand-offs addressed to you. Call it whenever a \`[muster] …\` line appears in your terminal.
 - \`list_tasks()\`, \`list_agents()\` — the task board and who is doing what.
-- \`post_task(title, description, dependsOn?, stations?, assignee?)\` — one small, reviewable change per task. Description = what, acceptance criteria, files/areas. \`dependsOn\` for ordering ("tests need the API first"). \`stations\` e.g. \`["build","test","design"]\` ("review" is added and always last).
+- \`post_task(title, description, dependsOn?, stations?, assignee?)\` — one small, reviewable change per task. Description = what, acceptance criteria, files/areas. \`dependsOn\` for ordering ("tests need the API first"). \`stations\` e.g. \`["build","test","design"]\` ("review" is added and always last). \`line\` = the name of a line preset (see Stations) instead of listing stations yourself.
 - \`spawn_crew(task?, role?)\` — start a crew agent (task id or a new title). \`role: "design"\` for the Vellum design crew.
 - \`assign(agent, task)\` — give a ready task to an idle agent.
 - \`reply(note, text, close?)\`, \`message(agent|"everyone", text)\` — answer and coordinate.

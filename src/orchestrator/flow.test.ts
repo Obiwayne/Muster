@@ -63,7 +63,7 @@ beforeAll(async () => {
   const ui = mkdtempSync(join(tmpdir(), 'muster-ui-'));
   writeFileSync(join(ui, 'index.html'), '<html></html>');
   mkdirSync(join(repo, '.muster'), { recursive: true });
-  writeFileSync(join(repo, '.muster', 'config.json'), JSON.stringify({ claudePath: 'C:/fake/claude.exe' }));
+  writeFileSync(join(repo, '.muster', 'config.json'), JSON.stringify({ lines: { feature: { label: 'Feature', stations: ['build'] } }, claudePath: 'C:/fake/claude.exe' }));
   orch = await startOrchestrator({ repoRoot: repo, port: 0, launcher, uiDir: ui, log: () => {}, timings: { enterDelayMs: 1, firstPromptDelayMs: 1, nudgeDebounceMs: 10 } });
   await ok<Agent>('you', 'POST', '/api/agents', {}); // crew-2
   await ok<Agent>('you', 'POST', '/api/agents', {}); // crew-3
