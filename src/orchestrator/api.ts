@@ -471,6 +471,7 @@ ${block}`;
       if (denied) throw forbidden(denied);
       const body = req.method === 'GET' || req.method === 'HEAD' ? {} : await readBody(req);
       if (req.method !== 'GET' && req.method !== 'HEAD') applyIdentity(caller, path, body);
+      if (!caller.human) agents.touch(caller.actor);
       sendJson(res, 200, (await r.handler({ params, query: url.searchParams, body })) ?? null);
     } catch (e) {
       const status = e instanceof HttpError ? e.status : 500;

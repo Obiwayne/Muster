@@ -117,6 +117,10 @@ export async function startOrchestrator(opts: OrchestratorOptions): Promise<Orch
     claudePath: () => (claudePath ??= resolveClaudePath(config)),
     log,
     timings: opts.timings,
+    onStuck: (text) => {
+      broadcast({ type: 'toast', level: 'warn', text });
+      notify(config, 'Muster: agent stuck', text);
+    },
   });
 
   // ---- events websocket: debounced full snapshots plus toasts
