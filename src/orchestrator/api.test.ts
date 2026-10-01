@@ -5,6 +5,7 @@ import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 import WebSocket from 'ws';
 import type { Agent, FeedItem, InboxItem, MusterEvent, MusterState, Note, Task } from '../types.js';
 import { commitFile, gitSync, tempRepo } from '../core/testutil.js';
+import type { VellumCall } from '../core/vellum.js';
 import { startOrchestrator, type Orchestrator } from './server.js';
 import type { PtyLauncher, PtyProcess } from './terminal.js';
 
@@ -43,6 +44,7 @@ interface Spawned {
   pty: FakePty;
 }
 
+let vellumCall: VellumCall = async () => '[]';
 const spawned: Spawned[] = [];
 const launcher: PtyLauncher = (file, args, opts) => {
   const pty = new FakePty();
@@ -98,6 +100,7 @@ beforeAll(async () => {
     port: 0,
     launcher,
     uiDir: ui,
+    vellumCall: (...a) => vellumCall(...a),
     log: () => {},
     timings: { enterDelayMs: 5, firstPromptDelayMs: 5, nudgeDebounceMs: 10 },
   });
@@ -360,6 +363,21 @@ describe('orchestrator API', () => {
     const cfg = await ok('PATCH', '/api/config', { vellum: null, maxCrew: null });
     expect(cfg.vellum).toBeUndefined();
     expect(cfg.maxCrew).toBe(3);
+  });
+
+  it('serves the Vellum status, cached, and refreshes on ?refresh=1', async () => {
+    await ok('PATCH', '/api/config', { vellum: { command: 'node', args: ['v.js'] } });
+    let calls = 0;
+    vellumCall = async () => (calls++, JSON.stringify([{ id: 'F1', name: 'Wall', pages: [{}, {}], updatedAt: 1700000000000 }]));
+    const first = await ok('GET', '/api/vellum?refresh=1');
+    expect(first).toMatchObject({ status: 'connected', files: [{ id: 'F1', name: 'Wall', pages: 2, updated: '2023-11-14T22:13:20.000Z' }] });
+    expect(await ok('GET', '/api/vellum')).toEqual(first);
+    expect(calls).toBe(1);
+    vellumCall = async () => {
+      throw new Error('boom');
+    };
+    expect(await ok('GET', '/api/vellum?refresh=1')).toMatchObject({ status: 'unreachable', message: 'boom', files: [] });
+    await ok('PATCH', '/api/config', { vellum: null });
   });
 
   it('shuts down, then resumes the agents that were running on the next start', async () => {

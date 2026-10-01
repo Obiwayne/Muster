@@ -131,9 +131,9 @@ export function rolePrompt(agent: Agent, ctx: LaunchContext): string {
   return agent.role === 'captain' ? captainPrompt(p) : agent.role === 'design' ? designPrompt(p) : crewPrompt(p);
 }
 
-function vellumServer(config: MusterConfig): MusterConfig['vellum'] {
+export function vellumServer(config: MusterConfig, defaultEntry = DEFAULT_VELLUM_ENTRY): MusterConfig['vellum'] {
   if (config.vellum) return config.vellum;
-  return existsSync(DEFAULT_VELLUM_ENTRY) ? { command: posix(process.execPath), args: [DEFAULT_VELLUM_ENTRY] } : undefined;
+  return existsSync(defaultEntry) ? { command: posix(process.execPath), args: [defaultEntry] } : undefined;
 }
 
 export function mcpConfig(agent: Agent, ctx: LaunchContext): object {

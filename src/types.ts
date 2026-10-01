@@ -144,6 +144,22 @@ export interface UsageState {
   weeklyWarned: boolean; // sevenDay >= config.warnAtWeeklyPct (warning note already posted)
 }
 
+/** One Vellum file as shown on the Vellum boards page. */
+export interface VellumFile {
+  id: string;
+  name: string;
+  pages: number;
+  updated?: string; // ISO
+}
+
+/** GET /api/vellum: the Vellum MCP connection and its files. */
+export interface VellumStatus {
+  status: 'connected' | 'not_configured' | 'unreachable' | 'error';
+  message?: string;
+  checkedAt: string; // ISO
+  files: VellumFile[];
+}
+
 export interface MusterConfig {
   port: number; // default 47800
   captainModel: string; // default "opus"
