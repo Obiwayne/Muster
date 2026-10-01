@@ -57,7 +57,7 @@ design claude ──stdio──► Vellum MCP (node F:/Vellum/mcp/dist/index.js)
 
 ```
 <repo>/.muster/
-  config.json          MusterConfig (partial; merged over DEFAULT_CONFIG)
+  config.json          MusterConfig (partial; merged over DEFAULT_CONFIG). `vellumFile` = id of the Vellum design framework file; rolePrompt passes it to designPrompt (unset → the design crew finds it with list_files)
   state.json           MusterState (written atomically: write tmp + rename)
   server.json          { port, pid, token, startedAt }  (present while the orchestrator runs)
   logs/orchestrator.log

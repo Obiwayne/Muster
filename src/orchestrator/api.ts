@@ -46,7 +46,7 @@ const TEST_TIMEOUT_MS = 10 * 60_000;
 const MAX_BODY = 2 * 1024 * 1024;
 const CONFIG_KEYS = new Set<string>([
   'port', 'captainModel', 'crewModel', 'designModel', 'maxCrew', 'pauseAtFiveHourPct', 'warnAtWeeklyPct', 'shutdownIdleCrew',
-  'defaultStations', 'testCommand', 'baseBranch', 'permissionMode', 'claudePath', 'vellum', 'notify', 'allowedTools', 'projectName', 'userName',
+  'defaultStations', 'testCommand', 'baseBranch', 'permissionMode', 'claudePath', 'vellum', 'notify', 'allowedTools', 'projectName', 'userName', 'vellumFile',
 ]);
 
 const str = (v: unknown, name: string): string => {
