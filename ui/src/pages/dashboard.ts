@@ -10,6 +10,15 @@ import { agentStatusLong, openStuck, sortedAgents } from '../util';
 
 const PER_PAGE = 4;
 
+/** Assign an element property only when it differs; a same-value write still dirties the DOM (and textContent swaps the text node). */
+function put<T extends HTMLElement, K extends keyof T>(el: T, prop: K, value: T[K]): void {
+  if (el[prop] !== value) el[prop] = value;
+}
+
+function flag(el: HTMLElement, cls: string, on: boolean): void {
+  if (el.classList.contains(cls) !== on) el.classList.toggle(cls, on);
+}
+
 class Tile {
   el: HTMLElement;
   private badge = h('span.badge');
@@ -60,29 +69,30 @@ class Tile {
     this.agent = a;
     // Not `className =`: that would wipe the transient `flash` class and cut its animation short on every snapshot.
     for (const c of Array.from(this.el.classList)) if (c.startsWith('r-') && c !== `r-${a.role}`) this.el.classList.remove(c);
-    this.el.classList.add('tile', `r-${a.role}`);
-    this.badge.className = `badge b-${a.role}`;
-    this.badge.textContent = a.role;
-    this.name.textContent = a.id;
-    this.branch.textContent = a.branch;
-    this.branch.title = a.branch;
+    for (const c of ['tile', `r-${a.role}`]) if (!this.el.classList.contains(c)) this.el.classList.add(c);
+    // Snapshots arrive every few seconds; only touch the DOM for values that changed.
+    put(this.badge, 'className', `badge b-${a.role}`);
+    put(this.badge, 'textContent', a.role);
+    put(this.name, 'textContent', a.id);
+    put(this.branch, 'textContent', a.branch);
+    put(this.branch, 'title', a.branch);
     const stuck = openStuck(state, a.id);
-    this.openBadge.hidden = stuck.length === 0;
+    put(this.openBadge, 'hidden', stuck.length === 0);
     if (stuck.length) {
       setChildren(this.openBadge, icon('pin', 12, 2.5), `${stuck.length} open`);
-      this.openBadge.title = stuck.map((n) => `${n.id}: ${n.text}`).join('\n');
+      put(this.openBadge, 'title', stuck.map((n) => `${n.id}: ${n.text}`).join('\n'));
       this.openBadge.onclick = () => { location.hash = `#/board?note=${stuck[0].id}`; };
       this.openBadge.style.cursor = 'pointer';
     }
     const st = agentStatusLong(state, a);
-    this.el.classList.toggle('stuck', st.stuck || stuck.length > 0);
-    this.el.classList.toggle('stopped', a.status === 'stopped');
-    this.status.className = `tile-status${st.stuck ? ' is-stuck' : ''}`;
-    this.statusTxt.textContent = st.text;
-    this.status.title = st.text;
-    this.input.placeholder = a.role === 'captain' ? 'Tell the Captain what to build…' : `Message ${a.id}…`;
-    this.input.disabled = a.status === 'stopped';
-    this.overlay.hidden = a.status !== 'stopped';
+    flag(this.el, 'stuck', st.stuck || stuck.length > 0);
+    flag(this.el, 'stopped', a.status === 'stopped');
+    put(this.status, 'className', `tile-status${st.stuck ? ' is-stuck' : ''}`);
+    put(this.statusTxt, 'textContent', st.text);
+    put(this.status, 'title', st.text);
+    put(this.input, 'placeholder', a.role === 'captain' ? 'Tell the Captain what to build…' : `Message ${a.id}…`);
+    put(this.input, 'disabled', a.status === 'stopped');
+    put(this.overlay, 'hidden', a.status !== 'stopped');
     if (a.status === 'stopped') {
       setChildren(this.overlay, h('span', null, `${a.id} is stopped`),
         h('button.btn.sm.secondary', { onclick: () => run(api.startAgent(a.id), `Restarting ${a.id}…`) }, 'Restart'));
@@ -147,8 +157,8 @@ export function createDashboard(): Page {
     const visible = agents.slice(pageIdx * PER_PAGE, pageIdx * PER_PAGE + PER_PAGE);
 
     // empty state
-    empty.hidden = agents.length > 0;
-    grid.hidden = agents.length === 0;
+    put(empty, 'hidden', agents.length > 0);
+    put(grid, 'hidden', agents.length === 0);
     if (!agents.length) {
       const add = h('button.btn.primary.lg', null, icon('plus', 14), 'Add agent');
       add.onclick = () => openAddAgent(add, 'left');
@@ -176,7 +186,7 @@ export function createDashboard(): Page {
     }
 
     // pager
-    pager.hidden = pageCount <= 1;
+    put(pager, 'hidden', pageCount <= 1);
     if (pageCount > 1) {
       setChildren(pager, h('span.lbl', null, `${agents.length} agents`),
         Array.from({ length: pageCount }, (_, i) => h('button', {
