@@ -318,8 +318,8 @@ textarea.field { height: auto; min-height: 40px; padding: 10px 14px; resize: ver
 .open-badge { display: flex; align-items: center; gap: 5px; height: 22px; padding: 0 8px; border-radius: 11px; background: color-mix(in oklab, var(--color-stuck) 16%, transparent); color: var(--color-stuck); font-size: 11px; font-weight: 600; white-space: nowrap; }
 .tile-more { width: 24px; height: 24px; display: flex; align-items: center; justify-content: center; border-radius: 6px; color: var(--icon); }
 .tile-more:hover { background: var(--color-surface-2); color: var(--color-text); }
-.term-host { flex: 1; min-height: 0; padding: 10px 6px 6px 14px; position: relative; }
-.term-host .xterm { height: 100%; }
+.term-host { flex: 1; min-height: 0; min-width: 0; overflow: hidden; padding: 10px 6px 6px 14px; position: relative; } /* min-width/overflow: the terminal canvas must never widen its box, or fit() grows it forever */
+.term-host .xterm { height: 100%; width: 100%; overflow: hidden; }
 .term-host .xterm-viewport { background: transparent !important; }
 .term-host .xterm-viewport::-webkit-scrollbar-thumb { background-color: var(--color-surface-2); }
 .term-overlay { position: absolute; inset: 0; display: flex; align-items: center; justify-content: center; gap: 10px; font-size: 12px; color: var(--color-faint); pointer-events: none; }
