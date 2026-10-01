@@ -113,6 +113,18 @@ export async function musterFetch<T>(path: string, opts?: { method?: string; bod
 | PATCH | /api/config | partial MusterConfig | `MusterConfig` (saved to config.json) |
 | POST | /api/shutdown | `{ clean?: boolean }` | `{ ok }` — stops every agent, removes merged worktrees if clean, exits |
 
+### Vellum status (src/core/vellum.ts)
+| Method | Path | Returns |
+|---|---|---|
+| GET | /api/vellum | `VellumStatus` (src/types.ts) = `{ status: 'connected' \| 'not_configured' \| 'unreachable' \| 'error', message?, checkedAt, files: { id, name, pages, updated? }[] }` |
+| GET | /api/vellum?refresh=1 | same, bypassing the cache (the "Test connection" button) |
+
+Muster acts as a read-only MCP client to the Vellum server (`vellumServer(config)`: `config.vellum`, else the default `F:/Vellum/mcp/dist/index.js` if it exists). It spawns it over stdio, calls **only `list_files`**, then closes it; no other tool is ever called.
+- `not_configured`: no `config.vellum` and no default entry (`files: []`, never spawns). `unreachable`: spawn, connect or deadline failure. `error`: Vellum answered with a tool error (e.g. its app is not running) or text that isn't a file list. `message` explains any non-`connected` status.
+- Mapping: `pages` = length of the `pages` array (or the count), `updated` = ISO of `updatedAt` (epoch ms or ISO string); unknown fields are dropped.
+- One overall 5s deadline across connect + call; on expiry the child process is killed. The result is cached ~30s (keyed by the server command, so changing the Vellum setting invalidates it); concurrent requests share one in-flight check. The cache is also used for failures.
+- Tests inject the call through `startOrchestrator({ vellumCall })` / `createVellumChecker({ call, defaultEntry })`.
+
 ### Agents
 | Method | Path | Body | Returns |
 |---|---|---|---|

@@ -8,7 +8,7 @@ import * as gitOps from '../core/git.js';
 import type { MusterPaths } from '../core/paths.js';
 import type { Store } from '../core/store.js';
 import * as tasks from '../core/tasks.js';
-import { vellumStatus, type VellumCall } from '../core/vellum.js';
+import { createVellumChecker, type VellumCall } from '../core/vellum.js';
 import { applyUsage, refreshGuard, type RawUsage } from '../core/usage.js';
 import type { AgentManager } from './agents.js';
 import { applyIdentity, forbiddenReason, type Caller } from './auth.js';
@@ -58,6 +58,7 @@ const flag = (q: URLSearchParams, k: string) => q.get(k) === '1' || q.get(k) ===
 export function createApi(ctx: ApiContext) {
   const { store, agents } = ctx;
   const state = () => store.state;
+  const vellum = createVellumChecker({ call: ctx.vellumCall });
   const routes: Route[] = [];
   const route = (method: string, path: string, handler: Handler) => {
     const keys: string[] = [];
@@ -103,7 +104,7 @@ export function createApi(ctx: ApiContext) {
       return config;
     });
   });
-  route('GET', '/api/vellum', () => vellumStatus(ctx.config(), ctx.vellumCall));
+  route('GET', '/api/vellum', ({ query }) => vellum.check(ctx.config(), flag(query, 'refresh')));
   route('POST', '/api/shutdown', ({ body }) => {
     setImmediate(() => ctx.shutdown(Boolean(body.clean)));
     return { ok: true };
