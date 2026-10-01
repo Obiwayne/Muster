@@ -9,6 +9,15 @@ export interface LineDef { name: string; label: string; stations: string[]; buil
 export interface LinesResponse { lines: LineDef[]; defaultLine: string }
 export interface StationDef { name: string; role: 'crew' | 'design' | 'captain' | 'human'; guideline: string; builtin: boolean }
 
+// TODO: move to src/types.ts once T17 (crew-12) merges the server side.
+// Contract with T17: GET /api/project, POST /api/project/github.
+export interface ProjectInfo {
+  name: string;
+  root: string;
+  remoteUrl?: string;
+  gh: { installed: boolean; authed: boolean; user?: string };
+}
+
 /** Token: injected <meta name="muster-token">, else ?token= in the URL, else VITE_MUSTER_TOKEN (dev). */
 export function getToken(): string {
   const meta = document.querySelector<HTMLMetaElement>('meta[name="muster-token"]')?.content?.trim();
@@ -148,5 +157,8 @@ export const api = {
   saveStation: (name: string, body: { role?: StationDef['role']; guideline?: string }) =>
     req<StationDef>('PUT', `/api/stations/${enc(name)}`, body),
   deleteStation: (name: string) => req<StationDef[]>('DELETE', `/api/stations/${enc(name)}`),
+  project: () => req<ProjectInfo>('GET', '/api/project'),
+  createGithubRepo: (body: { name: string; private: boolean; description?: string }) =>
+    req<{ url: string }>('POST', '/api/project/github', body),
   usage: () => req<UsageState & { paused: boolean }>('GET', '/api/usage'),
 };
