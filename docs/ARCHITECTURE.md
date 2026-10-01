@@ -168,6 +168,8 @@ Muster acts as a read-only MCP client to the Vellum server (`vellumServer(config
 
 ### New apps (src/core/newproject.ts, src/core/github.ts, src/cli/newapp.ts)
 
+Renamed or moved project folder: `state.json` stores absolute paths (`repoRoot`, each `agent.worktree`). On start the Store notes when the saved `repoRoot` differs from the current root (`store.movedFrom`); `relocateState` (`src/orchestrator/relocate.ts`) then rewrites `repoRoot` and every worktree under the old root (case-insensitive on Windows), logs it once and commits. `repairWorktrees` always runs `git worktree repair <each existing crew worktree>` from the root (idempotent, so a folder moved by hand works too), and after a move `AgentManager.rewriteAgentFiles` regenerates every agent's mcp.json, settings.json and prompt.md. All of this runs before `resumeAll`, so nothing is created under the old root.
+
 Start from nothing: `muster new "<idea>" [--dir <parent>] [--title <t>] [--no-open]` calls `createNewProject({ parentDir, idea, title? })`, which makes `<parent>/<slug>` (slug from the title, else `idea-YYYY-MM-DD`; `-2`, `-3`… on a clash), runs `git init -b main`, writes `README.md` (`# <title|Untitled idea>` + the idea) and `.gitignore` (node_modules, dist, .env), makes the first commit (your git identity; if none is set, `-c user.name=Muster -c user.email=muster@localhost` for that one commit only), runs `initMuster` and returns `{ root, slug }`. The CLI then starts the orchestrator like `muster up`, POSTs the idea to `/api/ask` (retrying while the Captain starts) and prints the path.
 
 | Method | Path | Body | Returns |

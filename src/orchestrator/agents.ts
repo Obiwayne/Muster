@@ -276,6 +276,12 @@ export class AgentManager {
     return undefined;
   }
 
+  /** Regenerates every agent's mcp.json / settings.json / prompt.md (after the project folder moved). */
+  rewriteAgentFiles(): void {
+    const ctx = { ...this.o.server(), repoRoot: this.o.paths.root, config: this.o.config() };
+    for (const a of this.state.agents) writeAgentFiles(this.o.paths, a, ctx);
+  }
+
   private spawn(agent: Agent, launch: LaunchOptions, firstPrompt?: string): void {
     const config = this.o.config();
     const ctx = { ...this.o.server(), repoRoot: this.o.paths.root, config };
