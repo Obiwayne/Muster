@@ -6,7 +6,7 @@ import { approveTask, rejectTask, assignTask, cancelTask, claimTask, createTask,
 import { makeAgent } from './testutil.js';
 
 let s: MusterState;
-const config = { ...DEFAULT_CONFIG };
+const config = { ...DEFAULT_CONFIG, defaultStations: ['build', 'review'] };
 
 beforeEach(() => {
   s = emptyState('/repo');

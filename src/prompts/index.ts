@@ -43,8 +43,10 @@ function linesSection(ctx: PromptContext): string {
   const rows = ctx.lines.map((l) => `- \`${l.name}\` (${l.label})${l.name === ctx.defaultLine ? ' — default' : ''}: ${l.stations.join(' → ')}`);
   return `
 ### Lines
-Pick a line when you post a task: \`post_task(…, line: "<name>")\`. Without \`line\` or \`stations\` the default line is used.
+Pick a line when you post a task: \`post_task(…, line: "<name>")\` (explicit \`stations\` win over \`line\`). Without either, the default line is used.
 ${rows.join(String.fromCharCode(10))}
+Which to use: \`new-app\` for a new product or a big feature (it plans first and ends at approval), \`feature\` as the default, \`ui\` for screens, \`bugfix\` for defects.
+After a \`new-app\` task has merged, read its docs/factory/<T#>-plan.md and post the build tasks from its task breakdown, each on the line it suggests.
 `;
 }
 

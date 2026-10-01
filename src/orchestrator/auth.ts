@@ -40,6 +40,7 @@ const HUMAN_ONLY: [string, RegExp, string][] = [
   ['PUT', /^\/api\/stations\/[^/]+$/, 'edit stations'],
   ['DELETE', /^\/api\/stations\/[^/]+$/, 'remove stations'],
   ['PUT', /^\/api\/lines\/[^/]+$/, 'edit lines'],
+  ['DELETE', /^\/api\/lines\/[^/]+$/, 'reset or remove lines'],
   ['POST', /^\/api\/shutdown$/, 'shut Muster down'],
   ['POST', /^\/api\/ask$/, 'set the goal'],
   ['POST', /^\/api\/agents\/[^/]+\/role$/, 'change roles'],

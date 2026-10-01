@@ -50,6 +50,7 @@ export interface Task {
   title: string;
   description: string;
   dependsOn: string[]; // task ids that must be ready_for_merge or merged first
+  line?: string; // the line preset it was created from
   stations: string[]; // e.g. ["build", "test", "design", "review"]; always ends with "review"
   stationIndex: number; // current station
   status: TaskStatus;
@@ -174,7 +175,7 @@ export interface MusterConfig {
   pauseAtFiveHourPct: number; // default 80
   warnAtWeeklyPct: number; // default 75
   shutdownIdleCrew: boolean; // default true: stop a crew agent once its task reaches review and it has nothing else
-  defaultStations: string[]; // default ["build", "review"]
+  defaultStations: string[]; // alias for the default line's stations + review (PATCHing it edits that line)
   testCommand: string; // default "npm test"
   baseBranch: string; // default "main"
   permissionMode: string; // claude --permission-mode for every agent; default "auto" (handles prompts unattended; the worktree guard hook still applies)
@@ -185,7 +186,8 @@ export interface MusterConfig {
   projectName?: string; // shown under "Muster" in the dashboard; defaults to the repo folder name
   vellumEdit: VellumEdit; // whether the design crew may change Vellum designs; 'never' is enforced by denying Vellum's editing tools
   vellumFile?: string; // id of the Vellum file holding the design framework; the design crew's prompt names it (else it finds it with list_files)
-  defaultLine?: string; // name of the line preset behind defaultStations (GET /api/lines); default "standard"
+  defaultLine: string; // name of the line new tasks use; default "feature"
+  lines: Record<string, { label: string; stations: string[] }>; // your edits and custom lines, merged over the built-ins (no "review")
   userName?: string; // what agents call the person running Muster; stored per OS user (core/user.ts), not in config.json
 }
 
@@ -225,8 +227,9 @@ export const DEFAULT_CONFIG: MusterConfig = {
   pauseAtFiveHourPct: 80,
   warnAtWeeklyPct: 75,
   shutdownIdleCrew: true,
-  defaultStations: ['build', 'review'],
-  defaultLine: 'standard',
+  defaultStations: ['plan', 'build', 'test', 'review'],
+  defaultLine: 'feature',
+  lines: {},
   testCommand: 'npm test',
   baseBranch: 'main',
   permissionMode: 'auto',
@@ -253,10 +256,13 @@ export const STATION_ROLE: Record<string, Role> = {
   test: 'crew',
   design: 'design',
   review: 'captain',
-  approve: 'human',
+  approval: 'human',
   discover: 'crew',
   concept: 'crew',
   plan: 'crew',
+  reproduce: 'crew',
+  fix: 'crew',
+  'design-check': 'design',
 };
 
 /** One station as defined on this machine (GET /api/stations). */

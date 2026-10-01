@@ -132,7 +132,7 @@ export function rolePrompt(agent: Agent, ctx: LaunchContext): string {
     vellumEdit: ctx.config.vellumEdit ?? 'ask',
     userName: ctx.config.userName,
     stations: agent.role === 'captain' ? listStations(musterPaths(ctx.repoRoot), ctx.config) : undefined,
-    lines: agent.role === 'captain' ? listLines(musterPaths(ctx.repoRoot)) : undefined,
+    lines: agent.role === 'captain' ? listLines(ctx.config) : undefined,
     defaultLine: defaultLineName(ctx.config),
   };
   return agent.role === 'captain' ? captainPrompt(p) : agent.role === 'design' ? designPrompt(p) : crewPrompt(p);

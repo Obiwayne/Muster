@@ -9,6 +9,7 @@ import { existsSync, mkdirSync, readdirSync, readFileSync, rmSync, writeFileSync
 import { join } from 'node:path';
 import { STATION_ROLE, type MusterConfig, type Role, type StationDef } from '../types.js';
 import { badRequest, notFound } from './errors.js';
+import { STARTER_GUIDELINES } from './starters.js';
 import type { MusterPaths } from './paths.js';
 
 export const MAX_GUIDELINE = 20_000;
@@ -16,16 +17,10 @@ const ROLES: Role[] = ['captain', 'crew', 'design', 'human'];
 const NAME_RE = /^[a-z0-9][a-z0-9-]{0,29}$/;
 const REVIEW = 'review';
 const BUILT_IN = Object.keys(STATION_ROLE); // stations that work without a file: starter role + guideline
-const SEEDED = ['build', 'test', 'design', 'review']; // the ones written to .muster/stations on first start
+const SEEDED = [...Object.keys(STARTER_GUIDELINES), REVIEW]; // every station of the built-in lines, plus review
 
 const DEFAULT_GUIDELINE: Record<string, string> = {
-  build: 'Implement the task as described. Keep the change small and reviewable, run the tests, and commit before handing on.',
-  test: 'Verify the build station\'s work: run the tests, add missing tests for the new behaviour, and report anything that fails.',
-  design: 'Compare the UI changes against the design framework and report pass or drift for each check.',
-  approve: 'You approve this task from the board (Approve or Reject with a note). Nobody claims this station; the work waits here until you decide. Check that what the previous station produced is what you wanted.',
-  discover: 'Find out what the task really needs: read the code and docs, list what exists, what is unknown and what could go wrong. Write findings as a short Markdown file in the repo, not code. Hand on with the open questions.',
-  concept: 'Turn the findings into a concept: two or three options with a recommendation, trade-offs and what each would cost. Write it as a short Markdown file. Do not build anything.',
-  plan: 'Turn the chosen concept into a step-by-step plan: small tasks in order, the files each touches, how each is tested and what is out of scope. Write it as a Markdown file for approval.',
+  ...STARTER_GUIDELINES,
   review: "Extra checks for the Captain's review. The fixed rules (tests pass, diff matches the task, only the human merges) always apply and can't be relaxed here. Read the diff, run the tests, and check the acceptance criteria before flagging the branch ready for merge.",
 };
 
@@ -58,12 +53,11 @@ function read(p: MusterPaths, name: string): { role?: Role; guideline: string } 
 
 const roleFor = (name: string, file?: { role?: Role }): Role => (name === REVIEW ? 'captain' : (file?.role ?? STATION_ROLE[name] ?? 'crew'));
 
-/** Writes build/test/design/review.md when .muster/stations doesn't exist yet; existing files are never touched. */
+/** Writes the starter file of every built-in line station (and review) that is missing; existing files are never touched. */
 export function seedStations(p: MusterPaths): void {
-  if (existsSync(dirOf(p))) return;
   mkdirSync(dirOf(p), { recursive: true });
   for (const name of SEEDED) {
-    if (!existsSync(fileOf(p, name))) writeFileSync(fileOf(p, name), serialise(STATION_ROLE[name], DEFAULT_GUIDELINE[name] + '\n'));
+    if (!existsSync(fileOf(p, name))) writeFileSync(fileOf(p, name), serialise(STATION_ROLE[name], DEFAULT_GUIDELINE[name].trimEnd() + String.fromCharCode(10)));
   }
 }
 

@@ -32,10 +32,12 @@ describe('captainPrompt', () => {
     expect(p).toContain('Proj');
   });
   it('lists the lines, marks the default and says humans approve', () => {
-    const p = captainPrompt({ ...ctx, agentId: 'captain', worktree: ctx.repoRoot, branch: 'main', stations: [{ name: 'approve', role: 'human', guideline: 'You approve.' }], lines: [{ name: 'standard', label: 'Standard', stations: ['build', 'review'] }, { name: 'planning', label: 'Plan', stations: ['plan', 'approve', 'review'] }], defaultLine: 'standard' });
-    expect(p).toContain('`standard` (Standard) — default: build → review');
-    expect(p).toContain('`planning` (Plan): plan → approve → review');
+    const p = captainPrompt({ ...ctx, agentId: 'captain', worktree: ctx.repoRoot, branch: 'main', stations: [{ name: 'approval', role: 'human', guideline: 'You approve.' }], lines: [{ name: 'feature', label: 'Standard', stations: ['plan', 'build', 'review'] }, { name: 'new-app', label: 'Plan', stations: ['plan', 'approval', 'review'] }], defaultLine: 'feature' });
+    expect(p).toContain('`feature` (Standard) — default: plan → build → review');
+    expect(p).toContain('`new-app` (Plan): plan → approval → review');
     expect(p).toContain('line: "<name>"');
+    expect(p).toContain('`bugfix` for defects');
+    expect(p).toContain('docs/factory/<T#>-plan.md');
   });
 
   it('lists the stations and the review guideline', () => {

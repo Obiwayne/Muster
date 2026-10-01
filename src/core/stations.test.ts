@@ -15,24 +15,17 @@ beforeEach(() => {
 });
 
 describe('stations', () => {
-  it('seeds the built-ins only when the folder is missing, never overwriting', () => {
+  it('seeds every missing built-in line station, even when the folder exists, and never overwrites', () => {
     mkdirSync(join(p.dir, 'stations'));
     writeFileSync(join(p.dir, 'stations', 'build.md'), MINE);
     seedStations(p);
-    expect(existsSync(join(p.dir, 'stations', 'test.md'))).toBe(false);
-
-    rmSync(join(p.dir, 'stations'), { recursive: true });
-    seedStations(p);
+    for (const n of ['test', 'plan', 'approval', 'design-check', 'reproduce', 'review']) expect(existsSync(join(p.dir, 'stations', n + '.md')), n).toBe(true);
     expect(readFileSync(join(p.dir, 'stations', 'review.md'), 'utf8')).toContain("Extra checks for the Captain's review.");
-    writeFileSync(join(p.dir, 'stations', 'build.md'), MINE);
-    seedStations(p);
-    expect(listStations(p, cfg).map((s) => [s.name, s.role, s.builtin])).toEqual([
-      ['build', 'design', true],
-      ['test', 'crew', true],
-      ['design', 'design', true],
-      ['review', 'captain', true],
-    ]);
     expect(readGuideline(p, 'build')).toBe('Mine' + String.fromCharCode(10));
+    expect(listStations(p, { defaultStations: ['build', 'test'] }).map((s) => [s.name, s.role]).slice(0, 3)).toEqual([['build', 'design'], ['test', 'crew'], ['approval', 'human']]);
+    writeFileSync(join(p.dir, 'stations', 'test.md'), MINE);
+    seedStations(p);
+    expect(readGuideline(p, 'test')).toBe('Mine' + String.fromCharCode(10));
   });
 
   it('works with no files: built-in defaults', () => {

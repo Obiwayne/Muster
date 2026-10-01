@@ -72,6 +72,7 @@ export interface TaskInput {
   description?: string;
   dependsOn?: string[];
   stations?: string[];
+  line?: string; // the line the stations came from, recorded on the task
   assignee?: string;
   actor: string;
 }
@@ -93,6 +94,7 @@ export function createTask(state: MusterState, config: MusterConfig, input: Task
     title: input.title.trim(),
     description: input.description?.trim() ?? '',
     dependsOn,
+    ...(input.line ? { line: input.line } : {}),
     stations: [...stations, 'review'],
     stationIndex: 0,
     status: 'ready',

@@ -1,63 +1,59 @@
-// Line presets: named station orders ("factory lines"). The built-in presets live in code; edits and
-// custom lines are saved per machine in <repo>/.muster/lines.json as { name: { label?, stations } }.
-// Station names here never include "review": it is always last, and added when a line is returned.
-import { mkdirSync, readFileSync, writeFileSync } from 'node:fs';
-import { dirname } from 'node:path';
+// Factory lines: named station orders. The built-in lines live here; your edits and custom lines are
+// config.lines ({ label, stations } with no "review", saved in config.json) merged over them.
+// "review" is appended to every line when it is returned. config.defaultStations is an alias for the
+// default line's stations + review (see config.ts).
 import type { LineDef, MusterConfig } from '../types.js';
 import { badRequest } from './errors.js';
 import type { MusterPaths } from './paths.js';
 import { getStation, stationName } from './stations.js';
 
-interface Preset {
-  label: string;
-  stations: string[];
-}
+type Entry = { label: string; stations: string[] };
+type LineConfig = Pick<MusterConfig, 'lines' | 'defaultLine'>;
 
-export const BUILT_IN_LINES: Record<string, Preset> = {
-  standard: { label: 'Standard', stations: ['build'] },
-  tested: { label: 'Build + test', stations: ['build', 'test'] },
-  designed: { label: 'Design, build, approve', stations: ['design', 'build', 'approve'] },
-  planning: { label: 'Plan and approve', stations: ['discover', 'concept', 'plan', 'approve'] },
+export const BUILT_IN_LINES: Record<string, Entry> = {
+  'new-app': { label: 'New app / big feature', stations: ['discover', 'concept', 'design', 'plan', 'approval'] },
+  feature: { label: 'Feature', stations: ['plan', 'build', 'test'] },
+  ui: { label: 'UI change', stations: ['design', 'build', 'design-check'] },
+  bugfix: { label: 'Bug fix', stations: ['reproduce', 'fix', 'test'] },
 };
-export const DEFAULT_LINE = 'standard';
-
+export const DEFAULT_LINE = 'feature';
 const MAX_STATIONS = 12;
-const fileOf = (p: MusterPaths) => `${p.dir}/lines.json`;
-
-function readSaved(p: MusterPaths): Record<string, Partial<Preset>> {
-  try {
-    const v = JSON.parse(readFileSync(fileOf(p), 'utf8'));
-    return v && typeof v === 'object' && !Array.isArray(v) ? v : {};
-  } catch {
-    return {};
-  }
-}
 
 const withReview = (stations: string[]) => [...stations.filter((s) => s !== 'review'), 'review'];
+const valid = (e: unknown): e is Partial<Entry> => Boolean(e) && typeof e === 'object';
 
-function describe(name: string, saved: Partial<Preset> | undefined): LineDef {
+function describe(name: string, edit: unknown): LineDef {
   const base = BUILT_IN_LINES[name];
-  const stations = Array.isArray(saved?.stations) && saved.stations.length ? saved.stations : (base?.stations ?? []);
-  return { name, label: saved?.label?.trim() || base?.label || name, stations: withReview(stations), builtin: Boolean(base) };
+  const e = valid(edit) ? edit : undefined;
+  const stations = Array.isArray(e?.stations) && e.stations.length ? e.stations.filter((s): s is string => typeof s === 'string') : (base?.stations ?? []);
+  return { name, label: (typeof e?.label === 'string' && e.label.trim()) || base?.label || name, stations: withReview(stations), builtin: Boolean(base) };
 }
 
-/** Built-in presets first (in their own order), then saved custom lines alphabetically. */
-export function listLines(p: MusterPaths): LineDef[] {
-  const saved = readSaved(p);
-  const names = [...Object.keys(BUILT_IN_LINES), ...Object.keys(saved).filter((n) => !BUILT_IN_LINES[n]).sort()];
-  return names.map((n) => describe(n, saved[n]));
+/** Built-in lines first (in their own order), then custom lines alphabetically; edits merged over the built-ins. */
+export function listLines(config: Pick<MusterConfig, 'lines'> | undefined): LineDef[] {
+  const edits = config?.lines && typeof config.lines === 'object' ? config.lines : {};
+  const names = [...Object.keys(BUILT_IN_LINES), ...Object.keys(edits).filter((n) => !BUILT_IN_LINES[n]).sort()];
+  return names.map((n) => describe(n, edits[n]));
 }
 
-export const getLine = (p: MusterPaths, name: string): LineDef | undefined => listLines(p).find((l) => l.name === name);
+export const getLine = (config: Pick<MusterConfig, 'lines'> | undefined, name: string): LineDef | undefined => listLines(config).find((l) => l.name === name);
 
-export const defaultLineName = (config: Pick<MusterConfig, 'defaultLine'> | undefined): string => config?.defaultLine || DEFAULT_LINE;
+/** The default line's name: config.defaultLine when that line still exists, else "feature". */
+export const defaultLineName = (config: Partial<LineConfig> | undefined): string =>
+  config?.defaultLine && getLine(config as LineConfig, config.defaultLine) ? config.defaultLine : DEFAULT_LINE;
 
-/** Creates or updates a line. Stations must exist (a station file or a starter station); "review" is implied. */
-export function saveLine(p: MusterPaths, rawName: unknown, patch: { stations?: unknown; label?: unknown }): LineDef {
+/** Station names of a line, without review (what task creation takes as `stations`). */
+export const lineStations = (config: Pick<MusterConfig, 'lines'> | undefined, name: string): string[] | undefined =>
+  getLine(config, name)?.stations.filter((s) => s !== 'review');
+
+/**
+ * Validates a PUT /api/lines/:name body and returns the entry to store in config.lines.
+ * Every station must exist (a station file or a built-in one); "review" is implied.
+ */
+export function lineEntry(p: MusterPaths, config: Pick<MusterConfig, 'lines'>, rawName: unknown, patch: { stations?: unknown; label?: unknown }): { name: string; entry: Entry } {
   const name = stationName(rawName);
-  const saved = readSaved(p);
-  const current = describe(name, saved[name]);
-  let stations = current.stations.filter((s) => s !== 'review');
+  const current = getLine(config, name);
+  let stations = current?.stations.filter((s) => s !== 'review');
   if (patch.stations !== undefined) {
     if (!Array.isArray(patch.stations) || patch.stations.some((s) => typeof s !== 'string')) throw badRequest('stations must be a list of station names');
     stations = [...new Set(patch.stations.map((s: string) => stationName(s)).filter((s) => s !== 'review'))];
@@ -65,19 +61,28 @@ export function saveLine(p: MusterPaths, rawName: unknown, patch: { stations?: u
     if (stations.length > MAX_STATIONS) throw badRequest(`A line has at most ${MAX_STATIONS} stations`);
     const unknown = stations.filter((s) => !getStation(p, s));
     if (unknown.length) throw badRequest(`Unknown station${unknown.length > 1 ? 's' : ''}: ${unknown.join(', ')}`);
-  } else if (!BUILT_IN_LINES[name] && !saved[name]) throw badRequest('A new line needs stations');
-  let label = current.label;
+  }
+  if (!stations) throw badRequest('A new line needs stations');
+  let label = current?.label ?? name;
   if (patch.label !== undefined) {
     if (typeof patch.label !== 'string' || !patch.label.trim() || patch.label.length > 60) throw badRequest('label must be 1-60 characters');
     label = patch.label.trim();
   }
-  saved[name] = { label, stations };
-  mkdirSync(dirname(fileOf(p)), { recursive: true });
-  writeFileSync(fileOf(p), JSON.stringify(saved, null, 2));
-  return describe(name, saved[name]);
+  return { name, entry: { label, stations } };
 }
 
-/** Station names of a line, without review (what task creation takes as `stations`). */
-export const lineStations = (p: MusterPaths, name: string): string[] | undefined =>
-  getLine(p, name)?.stations.filter((s) => s !== 'review');
+/** A line name as used in config.lines and URLs: same rules as station names. */
+export const lineNameOrThrow = (raw: unknown): string => stationName(raw);
 
+/** Shape-checks a stored line entry (config.lines value or defaultStations): valid station names, no review. */
+export function checkedEntry(p: MusterPaths, raw: unknown, needLabel = true): Entry {
+  const e = raw as Partial<Entry> | null;
+  if (!e || typeof e !== 'object' || !Array.isArray(e.stations)) throw badRequest('a line needs a stations list');
+  const stations = [...new Set(e.stations.map((s) => stationName(s)).filter((s) => s !== 'review'))];
+  if (!stations.length) throw badRequest('A line needs at least one station before review');
+  if (stations.length > MAX_STATIONS) throw badRequest(`A line has at most ${MAX_STATIONS} stations`);
+  const label = typeof e.label === 'string' && e.label.trim() ? e.label.trim().slice(0, 60) : '';
+  if (needLabel && !label) throw badRequest('a line needs a label');
+  void p;
+  return { label, stations };
+}
