@@ -127,7 +127,7 @@ export function formatGuideline(station: string, guideline: string): string {
   const text = guideline.trim();
   if (!text) return '';
   const body = text.length > MAX_DELIVERED ? `${text.slice(0, MAX_DELIVERED)}
-(guideline cut, ${text.length - MAX_DELIVERED} chars more)` : text;
+(guideline cut, ${text.length - MAX_DELIVERED} more characters in .muster/stations/${station}.md)` : text;
   return `## Station: ${station} guidelines
 ${body}`;
 }

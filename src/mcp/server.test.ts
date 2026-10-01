@@ -61,7 +61,7 @@ describe('muster-mcp calls', () => {
     const empty = await connect('crew', (c) => (c.path === '/api/tasks/claim' ? task : { name: 'build', role: 'crew', builtin: true, guideline: '  ' }));
     expect((await empty.call('claim_task')).text).not.toContain('guidelines');
     const long = await connect('crew', (c) => (c.path === '/api/tasks/claim' ? task : { name: 'build', role: 'crew', builtin: true, guideline: 'x'.repeat(9000) }));
-    expect((await long.call('claim_task')).text).toContain('(guideline cut, 1000 chars more)');
+    expect((await long.call('claim_task')).text).toContain('(guideline cut, 1000 more characters in .muster/stations/build.md)');
   });
   it('turns API errors into isError results', async () => {
     const { call } = await connect('captain', () => {
