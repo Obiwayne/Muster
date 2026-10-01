@@ -8,6 +8,7 @@ import * as gitOps from '../core/git.js';
 import type { MusterPaths } from '../core/paths.js';
 import type { Store } from '../core/store.js';
 import * as tasks from '../core/tasks.js';
+import { vellumStatus, type VellumCall } from '../core/vellum.js';
 import { applyUsage, refreshGuard, type RawUsage } from '../core/usage.js';
 import type { AgentManager } from './agents.js';
 import { applyIdentity, forbiddenReason, type Caller } from './auth.js';
@@ -22,6 +23,8 @@ export interface ApiContext {
   notify(title: string, text: string): void;
   toast(level: 'info' | 'warn', text: string): void;
   shutdown(clean: boolean): void;
+  /** Test seam: replaces the real Vellum MCP call. */
+  vellumCall?: VellumCall;
 }
 
 interface Req {
@@ -100,6 +103,7 @@ export function createApi(ctx: ApiContext) {
       return config;
     });
   });
+  route('GET', '/api/vellum', () => vellumStatus(ctx.config(), ctx.vellumCall));
   route('POST', '/api/shutdown', ({ body }) => {
     setImmediate(() => ctx.shutdown(Boolean(body.clean)));
     return { ok: true };
