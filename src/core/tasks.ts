@@ -326,6 +326,26 @@ export function builderOf(state: MusterState, task: Task): Agent | undefined {
   return undefined;
 }
 
+/** Drops a task that is no longer wanted: it leaves the board and nobody can claim it. Captain or you. */
+export function cancelTask(state: MusterState, taskId: string, actor: string, reason: string): Task {
+  requireCaptainOrYou(state, actor, 'cancel tasks');
+  const task = requireTask(state, taskId);
+  if (task.status === 'merged' || task.status === 'cancelled') throw conflict(`${task.id} is already ${task.status}`);
+  const holder = task.assignee;
+  release(state, task);
+  task.assignee = undefined;
+  task.status = 'cancelled';
+  const why = reason?.trim() || 'no longer needed';
+  event(task, actor, 'cancelled', why);
+  for (const n of state.notes) if (n.taskId === task.id) closeNoteIfOpen(n);
+  if (holder && holder !== actor && !isCaptain(state, holder)) {
+    addInbox(state, { agentId: holder, from: actor, kind: 'system', taskId: task.id, text: `${actor} cancelled ${task.id} ${task.title}: ${why}. Stop work on it and call claim_task.` });
+  }
+  addFeed(state, { kind: 'event', from: actor, taskId: task.id, text: `cancelled ${task.id} ${task.title}: ${why}` });
+  recomputeReadiness(state);
+  return task;
+}
+
 export function sendBack(state: MusterState, taskId: string, actor: string, note: string): Task {
   requireCaptainOrYou(state, actor, 'send work back');
   const task = requireTask(state, taskId);

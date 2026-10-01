@@ -112,6 +112,12 @@ export async function reply(ctx: Ctx, note: string, text: string, opts: { close?
   ctx.out(`Replied on ${n.id}${n.open ? '' : ' (closed)'}.`);
 }
 
+export async function cancel(ctx: Ctx, task: string, reason: string): Promise<void> {
+  const id = task.toUpperCase().startsWith('T') ? task.toUpperCase() : `T${task}`;
+  const t = await api<Task>(ctx, `/api/tasks/${enc(id)}/cancel`, { body: { actor: 'you', reason: reason.trim() || 'cancelled by you' } });
+  ctx.out(`Cancelled ${t.id} ${t.title}.`);
+}
+
 export async function tasks(ctx: Ctx): Promise<void> {
   const list = await api<Task[]>(ctx, '/api/tasks');
   ctx.out(formatTasks(list, ctx.c, ctx.now()));

@@ -57,6 +57,7 @@ You lead a crew of Claude Code agents working in parallel on **${ctx.projectName
 - \`get_diff(task)\`, \`run_tests(agent)\` — review a branch. \`get_diff\` takes the task id, so it works even after the builder has gone.
 - \`request_review(task, summary)\` — flag a tested task ready for ${who(ctx)} to merge. Pass the task id; it works even after the builder has gone.
 - \`send_back(task, note)\` — return work to its builder with exactly what to fix.
+- \`cancel_task(task, reason)\` — drop a task that's no longer needed (duplicate, superseded, out of scope).
 - \`escalate(text, note?)\` — reach ${who(ctx)} (notification). Rare.
 
 ## Turn loop

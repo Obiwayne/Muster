@@ -40,7 +40,7 @@ export type TaskStatus =
 export interface TaskEvent {
   at: string;
   agentId: string;
-  kind: 'created' | 'claimed' | 'assigned' | 'handoff' | 'done' | 'review_requested' | 'merged' | 'note';
+  kind: 'created' | 'claimed' | 'assigned' | 'handoff' | 'done' | 'review_requested' | 'merged' | 'cancelled' | 'note';
   text?: string;
 }
 

@@ -2,7 +2,7 @@ import { beforeEach, describe, expect, it } from 'vitest';
 import { DEFAULT_CONFIG, type MusterState } from '../types.js';
 import { inboxFor, listNotes, postNote } from './board.js';
 import { emptyState } from './store.js';
-import { assignTask, claimTask, createTask, doneTask, handoffTask, hasReportedDone, markMerged, MERGE_CONFLICT, requestReview, sendBack, untake } from './tasks.js';
+import { assignTask, cancelTask, claimTask, createTask, doneTask, handoffTask, hasReportedDone, markMerged, MERGE_CONFLICT, requestReview, sendBack, untake } from './tasks.js';
 import { makeAgent } from './testutil.js';
 
 let s: MusterState;
@@ -207,5 +207,21 @@ describe('tasks', () => {
     expect(t.status).toBe('ready');
     expect(t.assignee).toBeUndefined();
     expect(s.agents[1].taskId).toBeUndefined();
+  });
+});
+
+describe('cancelTask', () => {
+  it('drops a task: nobody can claim it, its holder is told, its notes close', () => {
+    const t = createTask(s, config, { title: 'Old idea', actor: 'captain' });
+    claimTask(s, 'crew-2');
+    postNote(s, { actor: 'crew-2', type: 'question', taskId: t.id, text: 'scope?' });
+    expect(() => cancelTask(s, t.id, 'crew-3', 'nope')).toThrow(/cancel tasks/);
+    cancelTask(s, t.id, 'captain', 'superseded by T9');
+    expect(t).toMatchObject({ status: 'cancelled', assignee: undefined });
+    expect(s.agents.find((a) => a.id === 'crew-2')!.taskId).toBeUndefined();
+    expect(s.inbox.some((i) => i.agentId === 'crew-2' && /cancelled T1 Old idea: superseded by T9/.test(i.text))).toBe(true);
+    expect(s.notes.every((n) => n.taskId !== t.id || !n.open)).toBe(true);
+    expect(claimTask(s, 'crew-3')).toBeNull();
+    expect(() => cancelTask(s, t.id, 'you', 'again')).toThrow(/already cancelled/);
   });
 });

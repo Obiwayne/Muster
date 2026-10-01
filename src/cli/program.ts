@@ -108,6 +108,11 @@ export function buildProgram(ctx: Ctx): Command {
     .action((note: string, text: string[], o: { close?: boolean }) => cmd.reply(ctx, note, text.join(' '), o));
 
   program
+    .command('cancel <task> [reason...]')
+    .description('drop a task that is no longer needed')
+    .action((task: string, reason: string[] = []) => cmd.cancel(ctx, task, reason.join(' ')));
+
+  program
     .command('tasks')
     .description('list tasks on the board')
     .action(() => cmd.tasks(ctx));

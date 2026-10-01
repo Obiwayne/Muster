@@ -43,7 +43,7 @@ const sleep = (ms: number) => new Promise((r) => setTimeout(r, ms));
 
 export const CAPTAIN_TOOLS = [
   'spawn_crew', 'post_task', 'assign', 'list_agents', 'list_tasks', 'read_board', 'reply', 'message',
-  'read_inbox', 'read_output', 'get_diff', 'run_tests', 'request_review', 'send_back', 'escalate',
+  'read_inbox', 'read_output', 'get_diff', 'run_tests', 'request_review', 'send_back', 'cancel_task', 'escalate',
 ] as const;
 export const CREW_TOOLS = [
   'claim_task', 'list_agents', 'list_tasks', 'post_note', 'read_board', 'reply', 'ask_captain',
@@ -233,6 +233,11 @@ export function createMusterServer(opts: MusterServerOptions): McpServer {
         return `${t.id} is ready for merge (${t.branch ?? a.branch}). The user has been notified.`;
       },
     );
+
+    tool('cancel_task', 'Drop a task that is no longer needed (duplicate, superseded, out of scope). Nobody can claim it afterwards; whoever held it is told to stop.', { task: z.string(), reason: z.string().min(1) }, async ({ task, reason }) => {
+      const t = await api<Task>(`/api/tasks/${enc(task.trim().toUpperCase())}/cancel`, { method: 'POST', body: { actor: me, reason } });
+      return `Cancelled ${t.id} ${t.title}.`;
+    });
 
     tool('send_back', 'Send a task back to its builder with what to fix.', { task: z.string(), note: z.string().min(1) }, async ({ task, note }) => {
       const t = await api<Task>(`/api/tasks/${enc(task.trim().toUpperCase())}/sendback`, { method: 'POST', body: { actor: me, note } });
