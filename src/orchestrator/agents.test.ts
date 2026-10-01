@@ -37,48 +37,6 @@ async function until(check: () => boolean, ms = 10_000): Promise<void> {
   }
 }
 
-describe('AgentManager terminal size', () => {
-  async function sized() {
-    const sizes: string[] = [];
-    const launcher: PtyLauncher = () => ({ pid: 1, onData() {}, onExit() {}, write() {}, resize: (c, r) => sizes.push(`${c}x${r}`), kill() {} });
-    const { agents } = setup(launcher);
-    await agents.create({ role: 'captain', actor: 'muster' });
-    return { agents, sizes };
-  }
-
-  it('drops resizes that do not change the size', async () => {
-    const { agents, sizes } = await sized();
-    agents.resize('captain', 100, 30);
-    agents.resize('captain', 100, 30);
-    agents.resize('captain', 100.9, 30.2); // floors to the same size
-    agents.resize('captain', 120, 32);
-    expect(sizes).toEqual(['100x30', '120x32']);
-  });
-
-  it('lets an owning client hold the size, then restores the other client size on release', async () => {
-    const { agents, sizes } = await sized();
-    agents.resize('captain', 100, 30); // app tile
-    const release = agents.ownTerminal('captain');
-    agents.resize('captain', 80, 24, true); // attached CLI
-    agents.resize('captain', 101, 31); // app tile refits: ignored while the CLI owns it
-    expect(sizes).toEqual(['100x30', '80x24']);
-    release();
-    release(); // idempotent
-    expect(sizes).toEqual(['100x30', '80x24', '101x31']);
-  });
-
-  it('keeps the owner until the last owning client leaves', async () => {
-    const { agents, sizes } = await sized();
-    const a = agents.ownTerminal('captain');
-    const b = agents.ownTerminal('captain');
-    agents.resize('captain', 90, 20);
-    a();
-    expect(sizes).toEqual([]);
-    b();
-    expect(sizes).toEqual(['90x20']);
-  });
-});
-
 describe('AgentManager', () => {
   it('pipes real PTY output into the ring buffer and marks the agent stopped on exit', async () => {
     // Same PTY path as claude, with the command swapped for a one-liner.

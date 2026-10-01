@@ -234,12 +234,10 @@ export async function startOrchestrator(opts: OrchestratorOptions): Promise<Orch
       socket.write('HTTP/1.1 400 Bad Request\r\n\r\n');
       return socket.destroy();
     }
-    const owner = who.human && url.searchParams.get('owner') === '1'; // an attached CLI owns the pty size
     termWss.handleUpgrade(req, socket, head, (ws) => {
       const backlog = agents.backlog(id);
       if (backlog) ws.send(backlog);
       const detach = agents.attach(id, (data) => ws.readyState === ws.OPEN && ws.send(data));
-      const releaseSize = owner ? agents.ownTerminal(id) : undefined;
       ws.on('message', (raw) => {
         let msg: TermClientMessage;
         try {
@@ -249,12 +247,9 @@ export async function startOrchestrator(opts: OrchestratorOptions): Promise<Orch
         }
         if (!who.human) return; // agents may watch a terminal, never type into one
         if (msg.type === 'input' && typeof msg.data === 'string') agents.write(id, msg.data);
-        else if (msg.type === 'resize') agents.resize(id, Number(msg.cols), Number(msg.rows), owner);
+        else if (msg.type === 'resize') agents.resize(id, Number(msg.cols), Number(msg.rows));
       });
-      ws.on('close', () => {
-        detach();
-        releaseSize?.();
-      });
+      ws.on('close', detach);
     });
   });
 
