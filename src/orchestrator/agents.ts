@@ -114,6 +114,7 @@ export class AgentManager {
   private termOwners = new Map<string, number>(); // agent id → attached CLIs that own the pty size
   private wantedSize = new Map<string, { cols: number; rows: number }>(); // last size a non-owner asked for
   private humanInputAt = new Map<string, number>(); // last human keystroke per agent
+  private closing = new Set<string>(); // agents being tidied away after an idle shutdown
   private zombies = new Map<string, number>(); // agent id → pid that survived stop()
   private starting = new Map<string, Promise<Agent>>();
   private timings: Timings;
@@ -155,6 +156,10 @@ export class AgentManager {
     if (!internal && input.actor !== HUMAN && !isCaptain(state, input.actor)) throw forbidden('Only the Captain or you can add agents');
     if (!internal) assertNotPaused(state);
     if (role === 'captain' && captainOf(state)) throw conflict(`${captainOf(state)!.id} is already the Captain; change roles instead`);
+    if (role !== 'captain' && !input.name) {
+      const reused = await this.reuseStopped(role, input);
+      if (reused) return reused;
+    }
     if (role === 'design' && state.agents.some((a) => a.role === 'design')) throw conflict('There is already a design crew agent');
     if (role === 'crew') {
       const running = state.agents.filter((a) => a.role === 'crew' && a.status !== 'stopped').length;
@@ -485,6 +490,83 @@ export class AgentManager {
     }
     if (removed.length) this.o.store.commit();
     return removed;
+  }
+
+  /**
+   * A stopped agent of the same role with no task and a clean worktree is restarted instead of adding
+   * a new one, so crew numbers and Dashboard tiles don't pile up. Returns undefined when none fits.
+   */
+  private async reuseStopped(role: Role, input: CreateAgentInput): Promise<Agent | undefined> {
+    const { state } = this;
+    const config = this.o.config();
+    for (const agent of state.agents) {
+      if (agent.role !== role || agent.status !== 'stopped' || agent.taskId || this.runtimes.has(agent.id) || this.starting.has(agent.id)) continue;
+      if (!existsSync(agent.worktree) || (await gitOps.uncommittedChanges(agent.worktree)).length) continue;
+      if (role === 'crew') {
+        const running = state.agents.filter((a) => a.role === 'crew' && a.status !== 'stopped').length;
+        if (running >= config.maxCrew) throw conflict(`Crew limit reached (${running}/${config.maxCrew} running). Stop one or raise maxCrew.`);
+      }
+      if (input.taskId) {
+        const task = assignTask(state, input.taskId, agent.id, input.actor === SYSTEM ? HUMAN : input.actor);
+        await this.syncTaskBranch(agent, task);
+      }
+      feedEvent(state, input.actor, `restarted ${agent.id} (${role}) instead of adding a new agent${input.taskId ? ` for ${input.taskId}` : ''}`);
+      this.o.store.commit();
+      await this.start(agent.id);
+      return agent;
+    }
+    return undefined;
+  }
+
+  /** Why a crew agent can't be closed yet, or null when it's finished: no open task, nothing uncommitted, nothing unmerged. */
+  async unfinishedReason(agent: Agent): Promise<string | null> {
+    if (agent.role === 'captain') return "the Captain can't be closed";
+    const config = this.o.config();
+    const open = new Set(['blocked', 'ready', 'in_progress', 'review', 'ready_for_merge']);
+    const task = agent.taskId ? this.state.tasks.find((t) => t.id === agent.taskId) : undefined;
+    const held = task ?? this.state.tasks.find((t) => open.has(t.status) && (t.assignee === agent.id || t.branch === agent.branch));
+    if (held && open.has(held.status)) return `${held.id} is still ${held.status.replace(/_/g, ' ')} on it`;
+    if (existsSync(agent.worktree)) {
+      const dirty = await gitOps.uncommittedChanges(agent.worktree);
+      if (dirty.length) return `uncommitted changes in its worktree (${dirty.slice(0, 3).join(', ')}${dirty.length > 3 ? ', …' : ''})`;
+    }
+    const root = this.o.paths.root;
+    if ((await gitOps.branchExists(root, agent.branch)) && !(await gitOps.isMerged(root, agent.branch, config.baseBranch))) {
+      if ((await gitOps.commitsAhead(root, config.baseBranch, agent.branch)) > 0) return `unmerged commits on ${agent.branch}`;
+    }
+    return null;
+  }
+
+  /** Closes a finished crew agent: stops it, removes its worktree and (merged or empty) branch, and drops its tile. */
+  async close(id: string, actor: string): Promise<void> {
+    const { state } = this;
+    const agent = requireAgent(state, id);
+    if (actor !== HUMAN && actor !== SYSTEM && !isCaptain(state, actor)) throw forbidden('Only the Captain or you can close agents');
+    const why = await this.unfinishedReason(agent);
+    if (why) throw conflict(`${id} isn't finished: ${why}`);
+    if (this.runtimes.has(id)) await this.stop(id, 'closed');
+    if (existsSync(agent.worktree)) await gitOps.removeWorktree(this.o.paths.root, agent.worktree);
+    await gitOps.git(this.o.paths.root, ['branch', '-d', agent.branch], true); // only succeeds when merged or empty
+    state.agents = state.agents.filter((a) => a.id !== id);
+    this.buffers.delete(id);
+    this.humanInputAt.delete(id);
+    feedEvent(state, actor, `closed ${id} (finished: work merged, nothing open)`);
+    this.o.store.commit();
+  }
+
+  /** After an idle shutdown: tidy the agent away if it has nothing left in flight. */
+  private async closeIfFinished(id: string): Promise<void> {
+    const agent = findAgent(this.state, id);
+    if (!agent || agent.role === 'captain' || this.runtimes.has(id) || this.closing.has(id)) return;
+    this.closing.add(id);
+    try {
+      if (await this.unfinishedReason(agent)) return;
+      await this.close(id, SYSTEM);
+    } catch (e) {
+      this.log(`${id}: not tidied away: ${errText(e)}`);
+    } finally {
+      this.closing.delete(id);
+    }
   }
 
   async remove(id: string, removeWorktree: boolean): Promise<void> {
@@ -942,10 +1024,10 @@ export class AgentManager {
     if (!this.o.config().shutdownIdleCrew) return;
     for (const agent of this.state.agents) {
       const rt = this.runtimes.get(agent.id);
-      if (!rt || agent.role !== 'crew' || agent.taskId || (agent.status !== 'idle' && agent.status !== 'done')) continue;
+      if (!rt || rt.stopping || agent.role !== 'crew' || agent.taskId || (agent.status !== 'idle' && agent.status !== 'done')) continue;
       if (!rt.idleSince || Date.now() - rt.idleSince < this.timings.idleShutdownMs) continue;
       if (inboxFor(this.state, agent.id, true).length) continue;
-      void this.stop(agent.id, 'idle with no task');
+      void this.stop(agent.id, 'idle with no task').then(() => this.closeIfFinished(agent.id));
     }
   }
 

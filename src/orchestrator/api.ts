@@ -166,6 +166,10 @@ ${block}`;
   route('POST', '/api/agents/:id/role', ({ params, body }) => agents.setRole(agentOf(params.id).id, str(body.role, 'role') as Role, body.actor ?? board.HUMAN));
   route('POST', '/api/agents/:id/stop', ({ params, body }) => agents.stop(agentOf(params.id).id, body.actor ? `by ${body.actor}` : undefined));
   route('POST', '/api/agents/:id/start', ({ params }) => agents.start(agentOf(params.id).id));
+  route('POST', '/api/agents/:id/close', async ({ params, body }) => {
+    await agents.close(agentOf(params.id).id, str(body.actor, 'actor'));
+    return { ok: true };
+  });
   route('DELETE', '/api/agents/:id', async ({ params, query }) => {
     await agents.remove(agentOf(params.id).id, flag(query, 'removeWorktree'));
     return { ok: true };

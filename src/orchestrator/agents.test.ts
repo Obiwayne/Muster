@@ -6,7 +6,7 @@ import { ensureDirs, musterPaths } from '../core/paths.js';
 import { Store } from '../core/store.js';
 import { addInbox } from '../core/board.js';
 import { createTask } from '../core/tasks.js';
-import { gitSync, tempRepo } from '../core/testutil.js';
+import { commitFile, gitSync, tempRepo } from '../core/testutil.js';
 import { AgentManager, type AgentManagerOptions, type Timings } from './agents.js';
 import { nodePtyLauncher, type PtyLauncher, type PtyProcess } from './terminal.js';
 
@@ -100,7 +100,7 @@ describe('AgentManager', () => {
     expect(agents.isRunning('captain')).toBe(false);
   }, 20_000);
 
-  it('stops idle crew with no task after the idle timeout', async () => {
+  it('stops idle crew with no task after the idle timeout, then tidies it away when it has nothing left', async () => {
     const fake: PtyLauncher = () => {
       let exit: (e: { exitCode: number }) => void = () => {};
       return { pid: 1, onData() {}, onExit: (cb) => (exit = cb), write() {}, resize() {}, kill: () => setImmediate(() => exit({ exitCode: 0 })) };
@@ -109,8 +109,9 @@ describe('AgentManager', () => {
     await agents.create({ role: 'crew', actor: 'muster' });
     agents.handleEvent('crew-2', 'stop');
     expect(store.state.agents[0].status).toBe('idle');
-    await until(() => store.state.agents[0].status === 'stopped', 3000);
+    await until(() => store.state.agents.length === 0, 3000);
     expect(store.state.feed.some((f) => f.text === 'crew-2 stopped: idle with no task')).toBe(true);
+    expect(store.state.feed.some((f) => /^closed crew-2/.test(f.text))).toBe(true);
   });
 
   // A fake PTY whose screen the test controls, recording everything written to it.
@@ -344,5 +345,61 @@ describe('AgentManager after the first live run', () => {
     expect(existsSync(crew3.worktree)).toBe(true); // still running
     expect(existsSync(crew4.worktree)).toBe(true); // holds a task
     expect(store.state.agents.map((a) => a.id)).toEqual(['captain', 'crew-3', 'crew-4']);
+  });
+});
+
+describe('finished crew: close, tidy away, reuse', () => {
+  it('closes a crew agent only once it is finished, removing its tile, worktree and branch', async () => {
+    const f = ctlLauncher();
+    const { agents, store, config, repo } = setup(f.launcher);
+    await agents.create({ role: 'captain', actor: SYS });
+    await agents.create({ role: 'crew', actor: SYS });
+    const crew = store.state.agents.find((a) => a.id === 'crew-2')!;
+
+    const t = createTask(store.state, config, { title: 'Open work', assignee: 'crew-2', actor: 'you' });
+    await expect(agents.close('crew-2', 'captain')).rejects.toThrow(/T1 is still in progress/);
+    t.status = 'cancelled';
+    t.assignee = undefined;
+    crew.taskId = undefined;
+
+    commitFile(crew.worktree, 'wip.ts', 'export const wip = 1;\n');
+    await expect(agents.close('crew-2', 'captain')).rejects.toThrow(/unmerged commits on crew-2\/work/);
+    gitSync(repo, 'merge', '--no-ff', '-q', '-m', 'merge', 'crew-2/work');
+
+    await expect(agents.close('crew-2', 'crew-2')).rejects.toThrow(/Only the Captain or you/);
+    await agents.close('crew-2', 'captain');
+    expect(store.state.agents.map((a) => a.id)).toEqual(['captain']);
+    expect(existsSync(crew.worktree)).toBe(false);
+    expect(gitSync(repo, 'branch', '--list', 'crew-2/work')).toBe('');
+    expect(store.state.feed.at(-1)?.text).toMatch(/^closed crew-2/);
+    await expect(agents.close('captain', 'you')).rejects.toThrow(/Captain can't be closed/);
+  });
+
+  it('restarts a stopped, finished agent instead of adding a new one', async () => {
+    const f = ctlLauncher();
+    const { agents, store, config } = setup(f.launcher);
+    await agents.create({ role: 'captain', actor: SYS });
+    await agents.create({ role: 'crew', actor: SYS });
+    await agents.stop('crew-2');
+    createTask(store.state, config, { title: 'Next', actor: 'captain' });
+    const again = await agents.create({ role: 'crew', taskId: 'T1', actor: 'captain' });
+    expect(again.id).toBe('crew-2');
+    expect(store.state.agents.filter((a) => a.role === 'crew')).toHaveLength(1);
+    expect(agents.isRunning('crew-2')).toBe(true);
+    expect(store.state.tasks[0]).toMatchObject({ assignee: 'crew-2', status: 'in_progress' });
+    expect(store.state.feed.some((x) => /restarted crew-2 \(crew\) instead of adding a new agent for T1/.test(x.text))).toBe(true);
+  });
+
+  it('tidies a finished crew agent away after its idle shutdown, but keeps one with unmerged work', async () => {
+    const f = ctlLauncher();
+    const { agents, store } = setup(f.launcher, { idleShutdownMs: 50 });
+    await agents.create({ role: 'crew', actor: SYS }); // crew-1? ids follow the agent counter
+    await agents.create({ role: 'crew', actor: SYS });
+    const [a, b] = store.state.agents;
+    commitFile(b.worktree, 'unmerged.ts', 'export const x = 1;\n');
+    agents.handleEvent(a.id, 'stop');
+    agents.handleEvent(b.id, 'stop');
+    await until(() => !store.state.agents.some((x) => x.id === a.id), 5000);
+    expect(store.state.agents.find((x) => x.id === b.id)?.status).toBe('stopped');
   });
 });

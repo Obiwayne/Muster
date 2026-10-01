@@ -44,7 +44,7 @@ const sleep = (ms: number) => new Promise((r) => setTimeout(r, ms));
 
 export const CAPTAIN_TOOLS = [
   'spawn_crew', 'post_task', 'assign', 'list_agents', 'list_tasks', 'read_board', 'reply', 'message',
-  'read_inbox', 'read_output', 'get_diff', 'run_tests', 'request_review', 'send_back', 'cancel_task', 'escalate',
+  'read_inbox', 'read_output', 'get_diff', 'run_tests', 'request_review', 'send_back', 'cancel_task', 'close_crew', 'escalate',
 ] as const;
 export const CREW_TOOLS = [
   'claim_task', 'list_agents', 'list_tasks', 'post_note', 'read_board', 'reply', 'ask_captain',
@@ -234,6 +234,11 @@ export function createMusterServer(opts: MusterServerOptions): McpServer {
         return `${t.id} is ready for merge (${t.branch ?? a.branch}). The user has been notified.`;
       },
     );
+
+    tool('close_crew', "Close a finished crew agent's terminal: no open task, nothing uncommitted, its work merged. Refused (with the reason) otherwise. Finished crew are also tidied away automatically after their idle shutdown.", { agent: z.string() }, async ({ agent }) => {
+      await api(`/api/agents/${enc(agent.trim())}/close`, { method: 'POST', body: { actor: me } });
+      return `Closed ${agent.trim()}.`;
+    });
 
     tool('cancel_task', 'Drop a task that is no longer needed (duplicate, superseded, out of scope). Nobody can claim it afterwards; whoever held it is told to stop.', { task: z.string(), reason: z.string().min(1) }, async ({ task, reason }) => {
       const t = await api<Task>(`/api/tasks/${enc(task.trim().toUpperCase())}/cancel`, { method: 'POST', body: { actor: me, reason } });
