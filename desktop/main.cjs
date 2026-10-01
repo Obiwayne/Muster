@@ -110,6 +110,7 @@ function createWindow() {
     win.setAppDetails({
       appId: 'com.obiwayne.muster',
       appIconPath: ICON,
+      appIconIndex: 0,
       relaunchCommand: `"${path.join(process.env.WINDIR || 'C:\\Windows', 'System32', 'wscript.exe')}" "${path.join(HOME, 'scripts', 'launch.vbs')}"`,
       relaunchDisplayName: 'Muster',
     });

@@ -1,5 +1,6 @@
 // Tiny DOM helpers: h() builds elements, icon() returns an inline SVG, plus menus,
 // popovers, modals and toasts. No framework.
+import logoSvg from './assets/logo-ember.svg?raw';
 
 export type Child = Node | string | number | null | undefined | false | Child[];
 type Handler = (ev: any) => void;
@@ -96,10 +97,15 @@ export function icon(name: string, size = 16, strokeWidth = 2): SVGSVGElement {
   return t.content.firstElementChild as SVGSVGElement;
 }
 
-export function logo(size = 26): SVGSVGElement {
+/** The Ember particle-swoosh mark (small version), `height` px tall; it is about twice as wide. */
+export function logo(height = 22): SVGSVGElement {
   const t = document.createElement('template');
-  t.innerHTML = `<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" width="${size}" height="${size}"><rect x="2" y="2" width="9" height="9" rx="2.5" fill="#F5A524"/><rect x="13" y="2" width="9" height="9" rx="2.5" fill="#2DD4BF"/><rect x="2" y="13" width="9" height="9" rx="2.5" fill="#2DD4BF"/><rect x="13" y="13" width="9" height="9" rx="2.5" fill="#A78BFA"/></svg>`;
-  return t.content.firstElementChild as SVGSVGElement;
+  t.innerHTML = logoSvg;
+  const svg = t.content.firstElementChild as SVGSVGElement;
+  svg.setAttribute('height', String(height));
+  svg.setAttribute('width', String(Math.round(height * 2)));
+  svg.style.flexShrink = '0';
+  return svg;
 }
 
 // ---- floating layers (one menu/popover at a time) ----

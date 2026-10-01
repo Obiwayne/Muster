@@ -16,7 +16,7 @@
   html, body { margin: 0; height: 100%; background: var(--bg); color: var(--text); font-family: Geist, 'Segoe UI', sans-serif; -webkit-font-smoothing: antialiased; }
   body { display: flex; align-items: flex-start; justify-content: center; overflow: auto; position: relative; }
   .glow { position: fixed; left: 50%; top: -260px; width: 900px; height: 600px; transform: translateX(-30%); border-radius: 50%;
-    background: radial-gradient(closest-side, color-mix(in oklab, var(--glow-violet) 34%, transparent), color-mix(in oklab, var(--glow-blue) 12%, transparent) 55%, transparent);
+    background: radial-gradient(closest-side, color-mix(in oklab, #FF7A1A 26%, transparent), color-mix(in oklab, #F2441B 10%, transparent) 55%, transparent);
     filter: blur(30px); pointer-events: none; }
   main { position: relative; width: 640px; padding: 96px 0 64px; display: flex; flex-direction: column; gap: 36px; }
   .brand { display: flex; align-items: center; gap: 14px; }
@@ -55,7 +55,7 @@
 <div class="glow"></div>
 <main>
   <div class="brand">
-    <svg width="36" height="36" viewBox="0 0 24 24" fill="none"><rect x="2" y="2" width="9" height="9" rx="2.5" fill="#F5A524"/><rect x="13" y="2" width="9" height="9" rx="2.5" fill="#2DD4BF"/><rect x="2" y="13" width="9" height="9" rx="2.5" fill="#2DD4BF"/><rect x="13" y="13" width="9" height="9" rx="2.5" fill="#A78BFA"/></svg>
+    <img src="logo-ember-small.svg" width="72" height="36" alt="" />
     <h1>Muster</h1>
   </div>
   <p class="lede">Pick a project. Muster starts a Captain for it, and you give the Captain a goal from the dashboard. Crew work on their own branches; nothing reaches main until you merge it.</p>

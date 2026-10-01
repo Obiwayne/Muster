@@ -43,7 +43,7 @@ const addSide = h('button.icon-btn', { title: 'Add agent' }, icon('plus', 14));
 addSide.onclick = () => openAddAgent(addSide, 'left');
 
 const sidebar = h('aside.sidebar', null,
-  h('div.logo', null, logo(26), h('div', { style: 'display:flex;flex-direction:column;gap:1px;min-width:0' }, h('div.logo-name', null, 'Muster'), projectEl)),
+  h('div.logo', null, logo(21), h('div', { style: 'display:flex;flex-direction:column;gap:1px;min-width:0' }, h('div.logo-name', null, 'Muster'), projectEl)),
   h('nav.nav', null, ROUTES.map((r) => {
     const count = h('span');
     navCounts.set(r.id, count);
