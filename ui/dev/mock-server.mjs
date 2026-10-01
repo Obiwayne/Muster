@@ -300,12 +300,12 @@ async function api(req, url) {
   const sm = /^\/api\/stations\/([^/]+)$/.exec(p);
   if (m === 'GET' && p === '/api/stations') {
     const names = [...config.defaultStations.filter((n) => n !== 'review'), ...Object.keys(stationDefs).filter((n) => !config.defaultStations.includes(n)), 'review'];
-    return { stations: names.map((name) => ({ name, ...stationDefs[name] ?? { role: 'crew', guideline: '', builtIn: false } })) };
+    return names.map((name) => ({ name, ...stationDefs[name] ?? { role: 'crew', guideline: '', builtIn: false } }));
   }
   if (sm && m === 'PUT') {
     const name = decodeURIComponent(sm[1]); const b = await body(req);
     need(/^[a-z0-9-]{1,32}$/.test(name), 400, 'Station names are lowercase letters, digits and dashes, up to 32');
-    need(!(b.guideline && b.guideline.length > 65536), 400, 'Guideline is over 64 KB');
+    need(!(b.guideline && b.guideline.length > 20000), 400, 'Guideline is over 20000 characters');
     const cur = stationDefs[name] ?? { role: 'crew', guideline: '', builtIn: false };
     stationDefs[name] = { ...cur, ...(b.role ? { role: b.role } : {}), ...(typeof b.guideline === 'string' ? { guideline: b.guideline } : {}) };
     return { name, ...stationDefs[name] };
@@ -313,10 +313,10 @@ async function api(req, url) {
   if (sm && m === 'DELETE') {
     const name = decodeURIComponent(sm[1]);
     need(name !== 'review', 400, 'The review station cannot be removed');
-    delete stationDefs[name];
-    config.defaultStations = config.defaultStations.filter((n) => n !== name);
+    if (stationDefs[name]?.builtIn) stationDefs[name] = { role: name === 'design' ? 'design' : 'crew', builtIn: true, guideline: '' };
+    else { delete stationDefs[name]; config.defaultStations = config.defaultStations.filter((n) => n !== name); }
     broadcast();
-    return { ok: true };
+    return [...config.defaultStations.filter((n) => n !== 'review'), 'review'].map((n) => ({ name: n, ...stationDefs[n] ?? { role: 'crew', guideline: '', builtIn: false } }));
   }
   if (m === 'GET' && p === '/api/vellum') return { status: 'connected', checkedAt: new Date().toISOString(), files: [
     { id: 'wall', name: 'Wall Education', pages: 16 }, { id: 'mayhem', name: 'MayhemDeck', pages: 5 }, { id: 'muster', name: 'Muster', pages: 7 }] };

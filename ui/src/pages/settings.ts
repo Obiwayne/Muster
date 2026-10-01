@@ -135,8 +135,8 @@ export function createSettings(): Page {
 
   async function loadRoles(): Promise<void> {
     try {
-      const res = await api.stations();
-      const next = Object.fromEntries(res.stations.map((s) => [s.name, s.role]));
+      const list = await api.stations();
+      const next = Object.fromEntries(list.map((s) => [s.name, s.role]));
       if (JSON.stringify(next) !== JSON.stringify(apiRoles)) { apiRoles = next; if (cfg) render(cfg); }
     } catch { /* older server: chips keep their built-in colours */ }
   }

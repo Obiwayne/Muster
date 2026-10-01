@@ -10,8 +10,8 @@ const ROLES: { value: StationRole; label: string }[] = [
   { value: 'design', label: 'Vellum design crew' },
   { value: 'captain', label: 'Captain' },
 ];
-const MAX_GUIDELINE = 64 * 1024;
-const NAME_RE = /^[a-z0-9-]{1,32}$/;
+const MAX_GUIDELINE = 20_000; // characters
+const NAME_RE = /^[a-z0-9][a-z0-9-]{0,29}$/;
 
 export interface StationEditorOpts {
   /** Persist the new line order (names without 'review'; the caller appends it). */
@@ -48,10 +48,10 @@ export function showStationEditor(opts: StationEditorOpts): void {
 
   async function load(select?: string): Promise<void> {
     try {
-      const res = await api.stations();
-      saved = Object.fromEntries(res.stations.map((s) => [s.name, s]));
-      order = res.stations.map((s) => s.name).filter((n) => n !== 'review');
-      for (const s of res.stations) if (!isDirty(s.name)) drafts[s.name] = { role: s.role, guideline: s.guideline };
+      const list = await api.stations();
+      saved = Object.fromEntries(list.map((s) => [s.name, s]));
+      order = list.map((s) => s.name).filter((n) => n !== 'review');
+      for (const s of list) if (!isDirty(s.name)) drafts[s.name] = { role: s.role, guideline: s.guideline };
       for (const n of Object.keys(drafts)) if (!saved[n]) delete drafts[n];
       current = select && saved[select] ? select : saved[current] ? current : order[0] ?? 'review';
       error = '';
@@ -77,7 +77,7 @@ export function showStationEditor(opts: StationEditorOpts): void {
     const name = raw.trim().toLowerCase().replace(/\s+/g, '-');
     if (!name) { draw(); return; }
     if (name === 'review' || saved[name]) { toast(`There is already a station called ${name}`, 'warn'); draw(); return; }
-    if (!NAME_RE.test(name)) { toast('Station names are lowercase letters, digits and dashes, up to 32', 'warn'); draw(); return; }
+    if (!NAME_RE.test(name)) { toast('Station names are lowercase letters, digits and dashes, up to 30', 'warn'); draw(); return; }
     try {
       await api.saveStation(name, { role: 'crew', guideline: '' });
       await opts.setOrder([...order, name]);
@@ -86,7 +86,11 @@ export function showStationEditor(opts: StationEditorOpts): void {
   }
 
   async function removeStation(name: string): Promise<void> {
-    if (!(await confirmDialog(`Remove ${name}?`, `Tasks created from now on skip the ${name} station, and its guideline is deleted from this machine.`, 'Remove', 'danger'))) return;
+    const builtIn = saved[name]?.builtIn;
+    const [title, text, ok] = builtIn
+      ? [`Reset ${name}?`, `${name} goes back to its default role and loses its guideline.`, 'Reset']
+      : [`Remove ${name}?`, `Tasks created from now on skip the ${name} station, and its guideline is deleted from this machine.`, 'Remove'];
+    if (!(await confirmDialog(title, text, ok, 'danger'))) return;
     try {
       await api.deleteStation(name);
       delete drafts[name];
@@ -97,7 +101,7 @@ export function showStationEditor(opts: StationEditorOpts): void {
   async function save(): Promise<void> {
     const d = drafts[current];
     if (!d) return;
-    if (d.guideline.length > MAX_GUIDELINE) { toast('A guideline can be at most 64 KB', 'warn'); return; }
+    if (d.guideline.length > MAX_GUIDELINE) { toast('A guideline can be at most 20,000 characters', 'warn'); return; }
     try {
       const s = await api.saveStation(current, { role: d.role, guideline: d.guideline });
       saved[current] = { ...saved[current], ...s };
@@ -112,8 +116,9 @@ export function showStationEditor(opts: StationEditorOpts): void {
     input.onchange = async () => {
       const f = input.files?.[0];
       if (!f) return;
-      if (f.size > MAX_GUIDELINE) { toast('That file is over 64 KB', 'warn'); return; }
-      drafts[current].guideline = await f.text();
+      const text = await f.text();
+      if (text.length > MAX_GUIDELINE) { toast('That file is over 20,000 characters', 'warn'); return; }
+      drafts[current].guideline = text;
       draw();
     };
     input.click();
@@ -148,21 +153,22 @@ export function showStationEditor(opts: StationEditorOpts): void {
     if (!d || !s) return h('div.se-edit', null, h('div.muted', null, 'No station selected.'));
     const isReview = current === 'review';
     const ta = h('textarea.se-text', { value: d.guideline, spellcheck: false, placeholder: '# What this station does\n\nMarkdown the agent at this station reads before it starts.' }) as HTMLTextAreaElement;
-    ta.addEventListener('input', () => { d.guideline = ta.value; counter.textContent = size(); refreshChrome(); });
-    const size = () => `${(new Blob([d.guideline]).size / 1024).toFixed(1)} KB of 64`;
-    const counter = h('span.se-count', { class: new Blob([d.guideline]).size > MAX_GUIDELINE && 'over' }, size());
+    ta.addEventListener('input', () => { d.guideline = ta.value; counter.textContent = size(); counter.classList.toggle('over', d.guideline.length > MAX_GUIDELINE); refreshChrome(); });
+    const size = () => `${d.guideline.length.toLocaleString()} of ${MAX_GUIDELINE.toLocaleString()}`;
+    const counter = h('span.se-count', { class: d.guideline.length > MAX_GUIDELINE && 'over' }, size());
     const preview = h('div.se-preview.md');
     preview.innerHTML = d.guideline.trim() ? renderMarkdown(d.guideline) : '<p class="muted">Nothing to preview yet.</p>';
     const roleSel = h('select', { disabled: isReview, onchange: (e: Event) => { d.role = (e.target as HTMLSelectElement).value as StationRole; draw(); } },
       ROLES.map((r) => h('option', { value: r.value, selected: r.value === d.role }, r.label))) as HTMLSelectElement;
-    const saveBtn = h('button.btn.primary', { disabled: !isDirty(current), onclick: () => void save() }, 'Save') as HTMLButtonElement;
+    const canSave = () => isDirty(current) && d.guideline.length <= MAX_GUIDELINE;
+    const saveBtn = h('button.btn.primary', { disabled: !canSave(), onclick: () => void save() }, 'Save') as HTMLButtonElement;
     const revertBtn = h('button.btn', { disabled: !isDirty(current), onclick: () => { drafts[current] = { role: s.role, guideline: s.guideline }; draw(); } }, 'Revert');
-    const refreshChrome = () => { saveBtn.disabled = !isDirty(current); (revertBtn as HTMLButtonElement).disabled = !isDirty(current); };
+    const refreshChrome = () => { saveBtn.disabled = !canSave(); (revertBtn as HTMLButtonElement).disabled = !isDirty(current); };
     return h('div.se-edit', null,
       h('div.se-head', null,
         h('div.se-title', null, current, isDirty(current) ? h('span.unsaved', { title: 'Unsaved changes' }) : null),
         h('label.se-role', null, h('span.muted', null, 'Role'), h('div.select-wrap', null, roleSel, icon('chevron', 14))),
-        isReview ? null : h('button.btn.danger', { onclick: () => void removeStation(current) }, 'Remove')),
+        isReview ? null : h('button.btn.danger', { onclick: () => void removeStation(current) }, s.builtIn ? 'Reset' : 'Remove')),
       h('div.se-tabs', null,
         h('button', { class: tab === 'edit' && 'on', onclick: () => { tab = 'edit'; draw(); } }, 'Edit'),
         h('button', { class: tab === 'preview' && 'on', onclick: () => { tab = 'preview'; draw(); } }, 'Preview'),

@@ -5,6 +5,11 @@ import type {
 
 // TODO: import StationDef from src/types.ts once T9 (crew-6) merges.
 export interface StationDef { name: string; role: 'crew' | 'design' | 'captain'; guideline: string; builtIn: boolean }
+/** T9's server has shipped both `{stations: [...]}` and a bare array, and `builtin`/`builtIn`: accept either. */
+export function normalizeStations(raw: unknown): StationDef[] {
+  const list = Array.isArray(raw) ? raw : (raw as { stations?: unknown[] } | null)?.stations ?? [];
+  return (list as (StationDef & { builtin?: boolean })[]).map((s) => ({ name: s.name, role: s.role, guideline: s.guideline ?? '', builtIn: s.builtIn ?? s.builtin ?? false }));
+}
 
 /** Token: injected <meta name="muster-token">, else ?token= in the URL, else VITE_MUSTER_TOKEN (dev). */
 export function getToken(): string {
@@ -137,9 +142,9 @@ export const api = {
       if (e instanceof ApiError && e.status === 404) return { status: 'error', message: 'This Muster orchestrator has no /api/vellum yet. Restart it on the latest build.', checkedAt: new Date().toISOString(), files: [] };
       throw e;
     }),
-  stations: () => req<{ stations: StationDef[] }>('GET', '/api/stations'),
+  stations: () => req<unknown>('GET', '/api/stations').then(normalizeStations),
   saveStation: (name: string, body: { role?: StationDef['role']; guideline?: string }) =>
-    req<StationDef>('PUT', `/api/stations/${enc(name)}`, body),
-  deleteStation: (name: string) => req<{ ok: boolean }>('DELETE', `/api/stations/${enc(name)}`),
+    req<unknown>('PUT', `/api/stations/${enc(name)}`, body).then((r) => normalizeStations([r])[0]),
+  deleteStation: (name: string) => req<unknown>('DELETE', `/api/stations/${enc(name)}`).then(normalizeStations),
   usage: () => req<UsageState & { paused: boolean }>('GET', '/api/usage'),
 };
