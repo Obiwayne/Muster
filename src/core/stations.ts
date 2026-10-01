@@ -119,3 +119,10 @@ export function deleteStation(p: MusterPaths, rawName: unknown): void {
   if (!existsSync(fileOf(p, name))) throw notFound(`No station "${name}"`);
   rmSync(fileOf(p, name), { force: true });
 }
+
+/** The guideline as shown to an agent at a station ('' when the station has none). */
+export function guidelineBlock(p: MusterPaths, station: string): string {
+  const text = readGuideline(p, station).trim();
+  return text ? `Station guideline (${station}):
+${text}` : '';
+}

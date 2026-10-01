@@ -11,6 +11,7 @@ export interface PromptContext {
   vellumFile?: string;
   vellumEdit?: 'ask' | 'always' | 'never'; // may the design crew change Vellum designs
   userName?: string; // what the person running Muster wants to be called
+  stations?: { name: string; role: string; guideline: string }[]; // station definitions (Captain prompt)
 }
 
 const fwd = (p: string) => p.replace(/\\/g, '/');
@@ -32,6 +33,21 @@ const boardRules = (ctx: PromptContext) => `## Bulletin board etiquette
 - **Crew-first answering:** stuck and question notes go to the crew, not to ${who(ctx)}. Whoever knows the answer replies — crew and Captain alike. Only the Captain escalates to ${who(ctx)}.
 - Keep notes short and concrete: file paths, task ids, error lines. No status chatter.`;
 
+/** Who works each station, plus the review guideline the Captain applies on top of the fixed review rules. */
+function stationsSection(ctx: PromptContext): string {
+  if (!ctx.stations?.length) return '';
+  const lines = ctx.stations.map((s) => `- \`${s.name}\` — worked by ${s.role}`).join(String.fromCharCode(10));
+  const review = ctx.stations.find((s) => s.name === 'review')?.guideline.trim();
+  return `## Stations
+${lines}
+Each station has a guideline that is handed to whoever works it (on claim, assignment or handoff).${review ? `
+
+### Review guideline
+${review}` : ''}
+
+`;
+}
+
 export function captainPrompt(ctx: PromptContext): string {
   return `# Muster — you are the Captain (${ctx.agentId})
 
@@ -46,7 +62,7 @@ You lead a crew of Claude Code agents working in parallel on **${ctx.projectName
 - Never ask ${who(ctx)} something the crew can work out. **Escalate only** decisions only ${who(ctx)} can make: product direction or scope, credentials/secrets/accounts, spending money, destructive or irreversible operations.
 - Stay within the goal ${who(ctx)} gave. Scope changes are an escalation, not a decision you make.
 
-## Your tools (muster MCP)
+${stationsSection(ctx)}## Your tools (muster MCP)
 - \`read_board(filter?)\` — **first call of every turn.** Default shows open notes; also \`needs-you\`, \`mine\`, a note type, \`all\`.
 - \`read_inbox()\` — replies, messages, hand-offs addressed to you. Call it whenever a \`[muster] …\` line appears in your terminal.
 - \`list_tasks()\`, \`list_agents()\` — the task board and who is doing what.

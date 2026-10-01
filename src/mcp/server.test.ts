@@ -48,6 +48,14 @@ describe('muster-mcp calls', () => {
     expect(r.text).toContain('Claimed T3 [in_progress] Share dialog · station build 1/2');
     expect(r.text).toContain('Build it');
   });
+  it('claim_task appends the station guideline', async () => {
+    const task = { id: 'T3', title: 'Share dialog', description: 'Build it', status: 'in_progress', stations: ['build', 'review'], stationIndex: 0, dependsOn: [] };
+    const { call, calls } = await connect('crew', (c) => (c.path === '/api/tasks/claim' ? task : { name: 'build', role: 'crew', builtin: true, guideline: 'Keep it small.' }));
+    const r = await call('claim_task');
+    expect(calls[1].path).toBe('/api/stations/build');
+    expect(r.text).toContain('Station guideline (build):');
+    expect(r.text).toContain('Keep it small.');
+  });
   it('turns API errors into isError results', async () => {
     const { call } = await connect('captain', () => {
       throw new Error('Paused: 5-hour window at 83% (resets 21:40)');

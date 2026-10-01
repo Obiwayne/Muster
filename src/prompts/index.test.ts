@@ -31,6 +31,13 @@ describe('captainPrompt', () => {
     expect(p).toContain('F:/Proj');
     expect(p).toContain('Proj');
   });
+  it('lists the stations and the review guideline', () => {
+    const withStations = captainPrompt({ ...ctx, agentId: 'captain', worktree: ctx.repoRoot, branch: 'main', stations: [{ name: 'test', role: 'crew', guideline: '' }, { name: 'review', role: 'captain', guideline: 'Check the docs too.' }] });
+    expect(withStations).toContain('## Stations');
+    expect(withStations).toContain('worked by crew');
+    expect(withStations).toContain('### Review guideline' + String.fromCharCode(10) + 'Check the docs too.');
+    expect(p).not.toContain('## Stations');
+  });
   it('is reasonably tight', () => {
     expect(lines(p)).toBeGreaterThan(40);
     expect(lines(p)).toBeLessThan(130);

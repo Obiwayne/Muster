@@ -1,9 +1,10 @@
 // Everything needed to launch `claude` for an agent: executable path, config files and argv.
 import { existsSync, mkdirSync, readFileSync, writeFileSync } from 'node:fs';
 import { delimiter, dirname, join } from 'node:path';
+import { listStations } from './stations.js';
 import { captainPrompt, crewPrompt, designPrompt, type PromptContext } from '../prompts/index.js';
 import type { Agent, MusterConfig, Role } from '../types.js';
-import { MUSTER_HOME, posix, type MusterPaths } from './paths.js';
+import { MUSTER_HOME, musterPaths, posix, type MusterPaths } from './paths.js';
 import { deriveAgentToken } from './tokens.js';
 
 const DEFAULT_VELLUM_ENTRY = 'F:/Vellum/mcp/dist/index.js';
@@ -129,6 +130,7 @@ export function rolePrompt(agent: Agent, ctx: LaunchContext): string {
     vellumFile: ctx.config.vellumFile?.trim() || undefined,
     vellumEdit: ctx.config.vellumEdit ?? 'ask',
     userName: ctx.config.userName,
+    stations: agent.role === 'captain' ? listStations(musterPaths(ctx.repoRoot), ctx.config) : undefined,
   };
   return agent.role === 'captain' ? captainPrompt(p) : agent.role === 'design' ? designPrompt(p) : crewPrompt(p);
 }
