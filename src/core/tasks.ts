@@ -1,7 +1,7 @@
 // Task board: creation, dependencies, claiming, stations, review and send-back.
 // Pure state mutations; git side effects (branch merges/renames) live in the API layer.
 import { STATION_ROLE, type Agent, type MusterConfig, type MusterState, type Note, type Role, type Task, type TaskBranchInput, type TaskEvent } from '../types.js';
-import { addFeed, addInbox, captainOf, closeNoteIfOpen, findAgent, HUMAN, idNum, isCaptain, nowIso, postNote, requireActor, requireAgent } from './board.js';
+import { addFeed, addInbox, captainOf, closeNoteIfOpen, findAgent, HUMAN, idNum, isCaptain, nowIso, postNote, requireActor, requireAgent, SYSTEM } from './board.js';
 import { badRequest, conflict, forbidden, notFound } from './errors.js';
 import { nextId } from './store.js';
 import { assertNotPaused } from './usage.js';
@@ -292,8 +292,28 @@ export function requestReview(state: MusterState, taskId: string, actor: string,
     to: HUMAN,
     text: `Ready for review: ${task.id} ${task.title}${task.branch ? ` (${task.branch})` : ''}. ${summary?.trim() ?? ''}`.trim(),
   });
+  // The reviewed commit is what gets merged: tell whoever owns the branch to leave it alone now.
+  for (const a of state.agents) {
+    if (a.role === 'captain' || a.branch !== task.branch) continue;
+    addInbox(state, { agentId: a.id, from: actor, kind: 'system', taskId: task.id, text: `${task.id} is flagged ready for merge at ${reviewed?.sha?.slice(0, 8) ?? 'its current commit'}. Don't commit to ${task.branch} any more; if it needs a change, ask the Captain to send it back.` });
+  }
   recomputeReadiness(state);
   return { task, note };
+}
+
+/**
+ * The branch moved after the Captain's review, so the reviewed commit is no longer what's on it.
+ * Back to the Captain's review station (instead of leaving the human to chase it); returns who moved it.
+ */
+export function reviewAgain(state: MusterState, task: Task, head: string): string {
+  const mover = state.agents.find((a) => a.branch === task.branch && a.role !== 'captain')?.id ?? 'someone';
+  for (const n of state.notes) if (n.type === 'review' && n.taskId === task.id) closeNoteIfOpen(n);
+  const text = `${task.id} ${task.title}: ${mover} committed to ${task.branch} after your review (now ${head.slice(0, 8)}, you reviewed ${task.reviewedSha?.slice(0, 8) ?? '?'}). Review the branch again: get_diff, run_tests, then request_review or send_back.`;
+  task.reviewedSha = undefined;
+  toReview(state, task, SYSTEM, text);
+  event(task, SYSTEM, 'note', `re-review: ${task.branch} moved to ${head.slice(0, 8)} after review`);
+  addFeed(state, { kind: 'event', from: SYSTEM, taskId: task.id, text: `sent ${task.id} back to the Captain for re-review: ${mover} committed after the review` });
+  return mover;
 }
 
 /** The agent that first took the task at its build station. */

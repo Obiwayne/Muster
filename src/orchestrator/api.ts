@@ -160,8 +160,8 @@ export function createApi(ctx: ApiContext) {
     if (task?.reviewedSha && !body.force) {
       const head = await gitOps.revParse(ctx.paths.root, branch);
       if (head && head !== task.reviewedSha) {
-        const who = s.agents.find((a) => a.branch === branch && a.role !== 'captain')?.id ?? `Someone`;
-        throw conflict(`${who} committed after review (${branch} is at ${head.slice(0, 8)}, the Captain reviewed ${task.reviewedSha.slice(0, 8)}); ask the Captain to re-review`);
+        const mover = mutate(() => tasks.reviewAgain(s, task, head));
+        throw conflict(`Not merged: ${mover} changed ${task.id} after the Captain's review. It's back with the Captain for a re-review and will show under Needs you again when it's ready.`);
       }
       ref = task.reviewedSha;
     }

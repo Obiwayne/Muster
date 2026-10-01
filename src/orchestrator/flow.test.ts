@@ -99,12 +99,18 @@ describe('task flows', () => {
     await ok('crew-2', 'POST', '/api/tasks/T1/done', { summary: 'alpha' });
     const reviewed = await ok<Task>('captain', 'POST', '/api/tasks/T1/review', { summary: 'tested' });
     expect(reviewed.reviewedSha).toBe(head('crew-2/alpha'));
+    // the branch owner is told to leave the reviewed branch alone
+    expect(state().inbox.some((i) => i.agentId === 'crew-2' && i.taskId === 'T1' && /Don't commit to crew-2\/alpha/.test(i.text))).toBe(true);
 
     commitFile(wt, 'late.ts', 'export const late = 1;\n'); // after the review
     const refused = await call('you', 'POST', '/api/agents/crew-2/merge', { taskId: 'T1' });
     expect(refused.status).toBe(409);
-    expect(refused.data.error).toMatch(/^crew-2 committed after review .*ask the Captain to re-review$/);
+    expect(refused.data.error).toMatch(/^Not merged: crew-2 changed T1 after the Captain's review\. It's back with the Captain/);
     expect(existsSync(join(repo, 'alpha.ts'))).toBe(false);
+    // ...and it went straight back to the Captain, so nobody has to chase it
+    expect(task('T1')).toMatchObject({ status: 'review', assignee: 'captain', reviewedSha: undefined });
+    expect(state().inbox.some((i) => i.agentId === 'captain' && i.taskId === 'T1' && /Review the branch again/.test(i.text))).toBe(true);
+    expect(state().notes.filter((n) => n.type === 'review' && n.taskId === 'T1' && n.open)).toHaveLength(0);
 
     const again = await ok<Task>('captain', 'POST', '/api/tasks/T1/review', { summary: 'late.ts is fine too' });
     expect(again.reviewedSha).toBe(head('crew-2/alpha'));
