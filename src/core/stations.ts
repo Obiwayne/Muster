@@ -21,7 +21,7 @@ const DEFAULT_GUIDELINE: Record<string, string> = {
   build: 'Implement the task as described. Keep the change small and reviewable, run the tests, and commit before handing on.',
   test: 'Verify the build station\'s work: run the tests, add missing tests for the new behaviour, and report anything that fails.',
   design: 'Compare the UI changes against the design framework and report pass or drift for each check.',
-  review: "Extra checks for the Captain's review. The fixed rules (tests pass, diff matches the task, only the human merges) always apply and can't be relaxed here.",
+  review: "Extra checks for the Captain's review. The fixed rules (tests pass, diff matches the task, only the human merges) always apply and can't be relaxed here. Read the diff, run the tests, and check the acceptance criteria before flagging the branch ready for merge.",
 };
 
 const dirOf = (p: MusterPaths) => join(p.dir, 'stations');
