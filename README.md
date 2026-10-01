@@ -28,7 +28,7 @@ Double-click **Muster**: pick a project folder (or a recent one), and the dashbo
 
 ## Use
 
-From inside any git repo with at least one commit:
+From inside any project folder. Add `--create` to `muster up` (or `muster init`) and Muster makes the folder a local git repo with a first commit if it is not one yet; nothing is uploaded:
 
 ```powershell
 muster up                      # starts the orchestrator + the Captain, opens the dashboard

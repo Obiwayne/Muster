@@ -86,7 +86,7 @@
       <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M3 7a2 2 0 0 1 2-2h4l2 2h8a2 2 0 0 1 2 2v8a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2z"/></svg>
       Open a project folder
     </button>
-    <span class="hint">Any git repo with at least one commit</span>
+    <span class="hint">Any folder; Muster sets up git if needed</span>
   </div>
   <div class="error" id="error"></div>
   <div style="display:flex;flex-direction:column;gap:10px">
@@ -104,7 +104,7 @@
     showError('');
     busy('Starting the Captain for ' + root.split(/[\\/]/).pop() + '…');
     const r = await window.muster.open(root);
-    if (!r.ok) { busy(''); showError(r.error); render(); }
+    if (!r.ok) { busy(''); if (!r.canceled) showError(r.error); render(); }
   }
 
   async function render() {

@@ -4,6 +4,7 @@ import * as cmd from './commands.js';
 import { CliError, defaultCtx, type Ctx } from './context.js';
 import { initMuster } from './init.js';
 import { attach, chat } from './live.js';
+import { inspectFolder } from './setup.js';
 import { newApp } from './newapp.js';
 import { down, ui, up } from './lifecycle.js';
 
@@ -23,8 +24,11 @@ export function buildProgram(ctx: Ctx): Command {
   program
     .command('init')
     .description('set up .muster/ in this repo and add it to .gitignore')
-    .action(() => {
-      const r = initMuster(ctx.repoRoot ?? ctx.cwd);
+    .option('--create', 'make this folder a git repo with a first commit if it is not one')
+    .option('--inspect', 'print JSON: is this folder ready, and how many files setup would commit')
+    .action((o: { create?: boolean; inspect?: boolean }) => {
+      if (o.inspect) return ctx.out(JSON.stringify(inspectFolder(ctx.repoRoot ?? ctx.cwd)));
+      const r = initMuster(ctx.repoRoot ?? ctx.cwd, false, o.create);
       ctx.out(r.created.length ? `Muster set up in ${r.root}: ${r.created.join(', ')}` : `Muster is already set up in ${r.root}.`);
     });
 
@@ -41,7 +45,8 @@ export function buildProgram(ctx: Ctx): Command {
     .description('start the orchestrator and the Captain, then open the dashboard')
     .option('--port <n>', 'port to listen on (default 47800)', int)
     .option('--no-ui', "don't open the dashboard")
-    .action((o: { port?: number; ui: boolean }) => up(ctx, o));
+    .option('--create', 'make this folder a git repo with a first commit if it is not one')
+    .action((o: { port?: number; ui: boolean; create?: boolean }) => up(ctx, o));
 
   program
     .command('down')

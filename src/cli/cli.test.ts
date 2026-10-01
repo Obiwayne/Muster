@@ -3,13 +3,14 @@ import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync
 import { createServer, type IncomingMessage, type Server } from 'node:http';
 import type { AddressInfo } from 'node:net';
 import { tmpdir } from 'node:os';
-import { join } from 'node:path';
+import { basename, join } from 'node:path';
 import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it } from 'vitest';
 import type { MusterState } from '../types.js';
 import { DEFAULT_CONFIG } from '../types.js';
 import { NOT_RUNNING, type Ctx } from './context.js';
 import { colors } from './format.js';
 import { initMuster } from './init.js';
+import { inspectFolder } from './setup.js';
 import { main } from './program.js';
 
 const saved: Record<string, string | undefined> = {};
@@ -80,6 +81,91 @@ describe('muster init', () => {
     expect(existsSync(join(initMuster(join(d, 'sub')).root, '.muster'))).toBe(true);
     expect(() => initMuster(repo(false))).toThrow(/no commits yet/);
     expect(() => initMuster(tmp())).toThrow(/Not a git repository/);
+  });
+});
+
+describe('muster init --create', () => {
+  const log = (d: string) => execFileSync('git', ['log', '--format=%s|%an'], { cwd: d, encoding: 'utf8' }).trim();
+  const clean = (d: string) => execFileSync('git', ['status', '--porcelain'], { cwd: d, encoding: 'utf8' });
+  const noIdentity = { GIT_CONFIG_GLOBAL: '/nonexistent', GIT_CONFIG_NOSYSTEM: '1', GIT_CONFIG_SYSTEM: '/nonexistent' };
+  const savedEnv: Record<string, string | undefined> = {};
+  beforeEach(() => {
+    for (const [k, v] of Object.entries(noIdentity)) (savedEnv[k] = process.env[k], (process.env[k] = v));
+  });
+  afterEach(() => {
+    for (const [k, v] of Object.entries(savedEnv)) v === undefined ? delete process.env[k] : (process.env[k] = v);
+  });
+
+  it('an empty folder gets README.md, .gitignore and a first commit (placeholder identity, no global config)', () => {
+    const d = tmp();
+    const r = initMuster(d, false, true);
+    expect(readFileSync(join(d, 'README.md'), 'utf8')).toBe(`# ${basename(d)}\n`);
+    expect(readFileSync(join(d, '.gitignore'), 'utf8')).toBe('node_modules\ndist\n.env\n.muster/\n');
+    expect(log(d)).toBe('Initial commit (set up by Muster)|Muster');
+    expect(clean(d)).toBe('');
+    expect(existsSync(join(r.root, '.muster', 'config.json'))).toBe(true);
+    expect(() => execFileSync('git', ['config', '--local', 'user.name'], { cwd: d, stdio: 'ignore' })).toThrow();
+  });
+
+  it('a folder with files commits them, leaving ignored ones out and an existing .gitignore alone', () => {
+    const d = tmp();
+    writeFileSync(join(d, 'app.js'), 'x');
+    mkdirSync(join(d, 'node_modules'));
+    writeFileSync(join(d, 'node_modules', 'big.js'), 'x');
+    initMuster(d, false, true);
+    const files = execFileSync('git', ['ls-files'], { cwd: d, encoding: 'utf8' }).split('\n').filter(Boolean);
+    expect(files.sort()).toEqual(['.gitignore', 'app.js']);
+    const e = tmp();
+    writeFileSync(join(e, '.gitignore'), 'secret.txt\n');
+    writeFileSync(join(e, 'secret.txt'), 's');
+    writeFileSync(join(e, 'a.txt'), 'a');
+    initMuster(e, false, true);
+    expect(readFileSync(join(e, '.gitignore'), 'utf8')).toBe('secret.txt\n');
+    expect(execFileSync('git', ['ls-files'], { cwd: e, encoding: 'utf8' }).split('\n').filter(Boolean).sort()).toEqual(['.gitignore', 'a.txt']);
+  });
+
+  it('a repo with no commits just gets the first commit', () => {
+    const d = repo(false);
+    writeFileSync(join(d, 'a.txt'), 'a');
+    initMuster(d, false, true);
+    expect(log(d)).toMatch(/^Initial commit \(set up by Muster\)/);
+    expect(existsSync(join(d, 'README.md'))).toBe(false);
+  });
+
+  it('a subfolder of a repo opens the parent and creates nothing', () => {
+    const d = repo();
+    mkdirSync(join(d, 'sub'));
+    const r = initMuster(join(d, 'sub'), false, true);
+    expect(r.root).toBe(d);
+    expect(existsSync(join(d, 'sub', '.git'))).toBe(false);
+    expect(existsSync(join(d, 'sub', 'README.md'))).toBe(false);
+    expect(log(d)).toBe('init|t');
+    // ...and a subfolder of a repo with no commits commits at the repo root, still no nesting
+    const e = repo(false);
+    mkdirSync(join(e, 'sub'));
+    writeFileSync(join(e, 'sub', 'a.txt'), 'a');
+    expect(initMuster(join(e, 'sub'), false, true).root).toBe(e);
+    expect(existsSync(join(e, 'sub', '.git'))).toBe(false);
+  });
+
+  it('without the flag it still errors and changes nothing', () => {
+    const d = tmp();
+    expect(() => initMuster(d)).toThrow(/Not a git repository/);
+    expect(existsSync(join(d, '.git'))).toBe(false);
+    expect(existsSync(join(d, 'README.md'))).toBe(false);
+    expect(() => initMuster(repo(false))).toThrow(/no commits yet/);
+  });
+
+  it('inspectFolder reports state and file count, honouring ignores', () => {
+    const d = tmp();
+    writeFileSync(join(d, 'a.txt'), '12345');
+    mkdirSync(join(d, 'node_modules'));
+    writeFileSync(join(d, 'node_modules', 'x'), 'x');
+    expect(inspectFolder(d)).toMatchObject({ state: 'not-a-repo', files: 1, bytes: 5, large: false });
+    expect(inspectFolder(repo())).toMatchObject({ state: 'ready', files: 0 });
+    const e = repo(false);
+    writeFileSync(join(e, 'b.txt'), 'b');
+    expect(inspectFolder(e)).toMatchObject({ state: 'no-commits', files: 1 });
   });
 });
 
@@ -262,7 +348,7 @@ describe('command wiring (fake orchestrator)', () => {
 const FAKE_ORCH = `
 import { createServer } from 'node:http';
 import { writeFileSync, rmSync } from 'node:fs';
-import { join } from 'node:path';
+import { basename, join } from 'node:path';
 const repo = process.argv[process.argv.indexOf('--repo') + 1];
 const file = join(repo, '.muster', 'server.json');
 const token = 'b'.repeat(32);
