@@ -10,6 +10,8 @@
 > - `GET /api/agents/:id/diff` takes `?branch=`; `POST /api/agents/:id/merge` takes `branch` or `taskId`; `PATCH /api/config` treats `null` as unset.
 > - Agents get `MUSTER_BASE_BRANCH` in their environment; parent Claude Code session variables are stripped from it.
 
+> **Design crew and Vellum edits (1 Oct):** `config.vellumEdit` is `ask` (default: change designs only when the Captain asks), `always`, or `never`. The design prompt follows it; `never` is enforced by adding Vellum's editing tools to the design crew's `permissions.deny` (`VELLUM_EDIT_TOOLS` in core/claude.ts). Changing it restarts a running design crew (same session) to apply.
+>
 > **Correctness changes (1 Oct), these override the sections below:**
 > - Tasks record `reviewedSha` when review is requested; `merge` (body normally `{ taskId }`) merges exactly that commit and returns 409 if the branch moved since ("ask the Captain to re-review"). Re-review is allowed from `ready_for_merge`.
 > - One branch per task: taking a task gives the agent a fresh `<id>/<slug>` from base (or renames an unused `<id>/work`); a dirty worktree refuses with 409. An agent holds one open task at a time (409 otherwise). `request_review` only from `in_progress`/`review`.

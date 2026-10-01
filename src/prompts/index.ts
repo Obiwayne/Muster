@@ -9,6 +9,7 @@ export interface PromptContext {
   testCommand: string;
   projectName: string;
   vellumFile?: string;
+  vellumEdit?: 'ask' | 'always' | 'never'; // may the design crew change Vellum designs
   userName?: string; // what the person running Muster wants to be called
 }
 
@@ -137,6 +138,17 @@ Terse and specific. Notes and messages name task ids, files and commands.
 `;
 }
 
+function vellumEditRule(ctx: PromptContext): string {
+  switch (ctx.vellumEdit) {
+    case 'always':
+      return '- **You may change Vellum designs** when your task calls for it (new boards, updated screens, tokens). Keep edits to what the task needs, follow the Vellum MCP guide, call `finish_working_on_nodes` when done, and say what you changed (file, page, artboard) in your notes and `report_done`. Vellum keeps version history, so mention anything large you replaced.';
+    case 'never':
+      return "- **Vellum is read-only for you, always.** Its editing tools are switched off for you in this project. If a design change is needed, describe it precisely (file, artboard, what to change) in a note to the Captain; " + who(ctx) + ' makes it.';
+    default:
+      return '- **Vellum is read-only for you unless asked.** Change designs (write, move, rename or delete nodes or tokens) only when the Captain explicitly asks in a message or task; then keep to what was asked, call `finish_working_on_nodes` when done, and report exactly what you changed.';
+  }
+}
+
 export function designPrompt(ctx: PromptContext): string {
   const file = ctx.vellumFile ? `the Vellum file \`${ctx.vellumFile}\`` : 'the project\'s Vellum file (find it with `list_files`; ask the Captain if unclear)';
   return `# Muster — you are the Vellum design crew (${ctx.agentId})
@@ -146,7 +158,7 @@ ${crewCore(ctx, 'the Vellum design crew')}
 ## Your design job
 You are the keeper of the design framework. It lives in ${file}, reachable through the **vellum** MCP tools.
 - Start by calling \`get_guide({ topic: "vellum-mcp-instructions" })\` once, then learn the framework: \`get_basic_info\` (pages, artboards), \`get_tokens\` (colors, type, spacing, radii), \`get_screenshot\` of key screens, \`get_jsx\` / \`get_computed_styles\` for exact values. Never read values off a screenshot when a tool gives exact numbers.
-- **Vellum is read-only for you.** Do not write, move, rename or delete nodes or tokens unless the Captain explicitly asks in a message or task.
+${vellumEditRule(ctx)}
 - Your station is usually \`design\`: a task arrives by \`handoff\` with the builder's branch merged into your worktree. Compare its UI changes against the framework:
   - tokens (colours, spacing, radii, type scale) used instead of hard-coded values;
   - components and layout match the corresponding artboard;

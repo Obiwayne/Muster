@@ -4,7 +4,7 @@ import { join } from 'node:path';
 import { describe, expect, it } from 'vitest';
 import { DEFAULT_CONFIG } from '../types.js';
 import { stripAnsi } from '../orchestrator/terminal.js';
-import { launchArgs, ptyArgs, ptyEnv, resolveClaudePath, rolePrompt, spawnCommand, trustPromptKeys, writeAgentFiles } from './claude.js';
+import { launchArgs, ptyArgs, ptyEnv, resolveClaudePath, rolePrompt, settingsConfig, spawnCommand, trustPromptKeys, VELLUM_EDIT_TOOLS, writeAgentFiles } from './claude.js';
 import { musterPaths } from './paths.js';
 import { deriveAgentToken } from './tokens.js';
 import { makeAgent } from './testutil.js';
@@ -120,5 +120,19 @@ describe('rolePrompt vellumFile', () => {
     expect(rolePrompt(design, ctx())).toContain('list_files');
     expect(rolePrompt(design, ctx('  '))).toContain('list_files');
     expect(rolePrompt(makeAgent('crew-2', 'crew', { worktree: 'F:/r/w' }), ctx('28BUsqILtGqq'))).not.toContain('28BUsqILtGqq');
+  });
+});
+
+describe('Vellum edit permissions', () => {
+  it('denies Vellum editing tools only to the design crew, only when vellumEdit is never', () => {
+    const base = { ...DEFAULT_CONFIG };
+    const deny = (role: 'captain' | 'crew' | 'design', vellumEdit: 'ask' | 'always' | 'never') =>
+      (settingsConfig({ ...base, vellumEdit }, role) as { permissions: { deny?: string[] } }).permissions.deny;
+    expect(deny('design', 'never')).toEqual(VELLUM_EDIT_TOOLS);
+    expect(deny('design', 'never')).toContain('mcp__vellum__write_html');
+    expect(deny('design', 'never')).not.toContain('mcp__vellum__get_screenshot');
+    expect(deny('design', 'ask')).toBeUndefined();
+    expect(deny('design', 'always')).toBeUndefined();
+    expect(deny('crew', 'never')).toBeUndefined();
   });
 });

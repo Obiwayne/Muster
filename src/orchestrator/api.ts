@@ -46,7 +46,7 @@ const TEST_TIMEOUT_MS = 10 * 60_000;
 const MAX_BODY = 2 * 1024 * 1024;
 const CONFIG_KEYS = new Set<string>([
   'port', 'captainModel', 'crewModel', 'designModel', 'maxCrew', 'pauseAtFiveHourPct', 'warnAtWeeklyPct', 'shutdownIdleCrew',
-  'defaultStations', 'testCommand', 'baseBranch', 'permissionMode', 'claudePath', 'vellum', 'notify', 'allowedTools', 'projectName', 'userName', 'vellumFile',
+  'defaultStations', 'testCommand', 'baseBranch', 'permissionMode', 'claudePath', 'vellum', 'notify', 'allowedTools', 'projectName', 'userName', 'vellumFile', 'vellumEdit',
 ]);
 
 const str = (v: unknown, name: string): string => {
@@ -92,8 +92,19 @@ export function createApi(ctx: ApiContext) {
     const patch = Object.fromEntries(Object.entries(body).filter(([k]) => CONFIG_KEYS.has(k))) as ConfigPatch;
     if (patch.vellumFile !== undefined && patch.vellumFile !== null && typeof patch.vellumFile !== 'string') throw badRequest('vellumFile must be a string, or null to clear it');
     if (patch.vellumFile === '') patch.vellumFile = null;
+    if (patch.vellumEdit !== undefined && patch.vellumEdit !== null && !['ask', 'always', 'never'].includes(patch.vellumEdit)) {
+      throw badRequest('vellumEdit must be "ask", "always" or "never"');
+    }
     const before = ctx.config().userName;
+    const beforeEdit = ctx.config().vellumEdit;
     const config = ctx.updateConfig(patch);
+    // The design crew's tool permissions and prompt are fixed at launch: restart it (same session) to apply.
+    if (config.vellumEdit !== beforeEdit) {
+      for (const a of state().agents) {
+        if (a.role !== 'design' || !agents.isRunning(a.id)) continue;
+        void agents.restart(a.id).catch(() => {});
+      }
+    }
     return mutate(() => {
       refreshGuard(state(), config);
       // Running agents learned the old name from their launch prompt; tell them now.

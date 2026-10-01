@@ -93,3 +93,14 @@ describe('the user’s name', () => {
     expect(p).toContain('never "the human"');
   });
 });
+
+describe('design crew and Vellum edits', () => {
+  it('follows the vellumEdit setting', () => {
+    expect(designPrompt({ ...ctx })).toContain('read-only for you unless asked');
+    expect(designPrompt({ ...ctx, vellumEdit: 'ask' })).toContain('only when the Captain explicitly asks');
+    expect(designPrompt({ ...ctx, vellumEdit: 'always' })).toContain('You may change Vellum designs');
+    const never = designPrompt({ ...ctx, vellumEdit: 'never', userName: 'Wayne' });
+    expect(never).toContain('read-only for you, always');
+    expect(never).toContain('Wayne makes it');
+  });
+});

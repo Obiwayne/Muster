@@ -9,6 +9,7 @@ import { ago, agentStatusLong, ms } from '../util';
 import { parseCheck, type DesignCheck } from '../vellumchecks';
 
 const SWATCH = ['linear-gradient(135deg,#1e3a5f,#2563eb)', 'linear-gradient(135deg,#3b0d0d,#ef4444)', 'linear-gradient(135deg,#171A1F,#F2A93B)', 'linear-gradient(135deg,#2a2048,#A78BFA)'];
+const EDIT_BADGE: Record<string, string> = { ask: 'Edits when asked', always: 'Design crew can edit', never: 'Read only' };
 const STATE_TITLE: Record<VellumStatus['status'], string> = {
   connected: 'Vellum connected', not_configured: 'Vellum not configured', unreachable: 'Vellum unreachable', error: 'Vellum error',
 };
@@ -66,7 +67,9 @@ export function createVellum(): Page {
           h('div.t', null, title),
           h('div.s', { title: v ? [v.command, ...v.args].join(' ') : '' }, detail),
           info ? h('div.s', null, `checked ${ago(info.checkedAt)}`) : null),
-        st === 'connected' ? h('span.badge.b-design', { style: 'font-size:11px;font-weight:700;letter-spacing:.08em;text-transform:uppercase' }, 'Read only') : null),
+        st === 'connected'
+          ? h('span.badge.b-design', { style: 'font-size:11px;font-weight:700;letter-spacing:.08em;text-transform:uppercase', title: 'Whether the design crew may change Vellum designs (Settings → Agents and permissions)' }, EDIT_BADGE[config.vellumEdit ?? 'ask'])
+          : null),
       h('div', { style: 'margin-top:-12px;display:flex;justify-content:flex-end' }, testBtn),
       h('div.v-sec', null,
         h('div.section-label', null, 'Design framework file'),

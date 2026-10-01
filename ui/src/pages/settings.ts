@@ -12,7 +12,14 @@ const MODELS = [
   { value: 'sonnet', label: 'Sonnet' },
   { value: 'haiku', label: 'Haiku' },
 ];
+const VELLUM_EDIT = [
+  { value: 'ask', label: 'Only when asked' },
+  { value: 'always', label: 'Always' },
+  { value: 'never', label: 'Never' },
+];
+
 const MODES = [
+  { value: 'auto', label: 'Auto (recommended)' },
   { value: 'default', label: 'Ask each time' },
   { value: 'acceptEdits', label: 'Accept edits' },
   { value: 'plan', label: 'Plan only' },
@@ -146,6 +153,8 @@ export function createSettings(): Page {
           panel('Agents and permissions',
             row('Crew permission mode', 'Edits outside an agent\'s own worktree are always blocked',
               ctl(select(withCurrent(MODES, c.permissionMode), c.permissionMode, (v) => save({ permissionMode: v })))),
+            row('Design crew can edit Vellum', c.vellumEdit === 'never' ? 'Never: its Vellum editing tools are switched off' : c.vellumEdit === 'always' ? 'Always: it changes designs when its task needs it' : 'Only when the Captain asks in a message or task',
+              ctl(select(withCurrent(VELLUM_EDIT, c.vellumEdit ?? 'ask'), c.vellumEdit ?? 'ask', (v) => save({ vellumEdit: v as MusterConfig['vellumEdit'] })))),
             row('Vellum MCP for the design crew', c.vellum ? 'Starts the Vellum MCP server' : 'Not set: design crew runs without Vellum',
               ctl(vellumInput(c), 260)),
             row('Vellum design framework file', 'File id the design crew learns the framework from. Empty: it finds the file itself',

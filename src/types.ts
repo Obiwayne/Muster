@@ -160,6 +160,9 @@ export interface VellumStatus {
   files: VellumFile[];
 }
 
+/** Design crew and Vellum: edit only when the Captain asks (default), whenever the task needs it, or never (enforced). */
+export type VellumEdit = 'ask' | 'always' | 'never';
+
 export interface MusterConfig {
   port: number; // default 47800
   captainModel: string; // default "opus"
@@ -178,6 +181,7 @@ export interface MusterConfig {
   notify: boolean; // default true: Windows toast when a branch is ready or the Captain escalates
   allowedTools: string[]; // passed as permissions.allow in each agent's settings so crew can work unattended
   projectName?: string; // shown under "Muster" in the dashboard; defaults to the repo folder name
+  vellumEdit: VellumEdit; // whether the design crew may change Vellum designs; 'never' is enforced by denying Vellum's editing tools
   vellumFile?: string; // id of the Vellum file holding the design framework; the design crew's prompt names it (else it finds it with list_files)
   userName?: string; // what agents call the person running Muster; stored per OS user (core/user.ts), not in config.json
 }
@@ -222,6 +226,7 @@ export const DEFAULT_CONFIG: MusterConfig = {
   testCommand: 'npm test',
   baseBranch: 'main',
   permissionMode: 'auto',
+  vellumEdit: 'ask',
   notify: true,
   allowedTools: [
     'Bash(npm *)', // no Bash(node *) / Bash(npx *): either runs arbitrary code without a prompt

@@ -127,6 +127,7 @@ export function rolePrompt(agent: Agent, ctx: LaunchContext): string {
     testCommand: ctx.config.testCommand,
     projectName: ctx.config.projectName ?? '',
     vellumFile: ctx.config.vellumFile?.trim() || undefined,
+    vellumEdit: ctx.config.vellumEdit ?? 'ask',
     userName: ctx.config.userName,
   };
   return agent.role === 'captain' ? captainPrompt(p) : agent.role === 'design' ? designPrompt(p) : crewPrompt(p);
@@ -150,11 +151,19 @@ export function mcpConfig(agent: Agent, ctx: LaunchContext): object {
 /** Tools the guard hook checks (hooks/guard.ts). PowerShell is Claude Code's Windows shell tool. */
 export const PRE_TOOL_MATCHER = 'Edit|Write|MultiEdit|NotebookEdit|Bash|PowerShell|Read|Grep|Glob';
 
-export function settingsConfig(config: MusterConfig): object {
+/** Vellum MCP tools that change a design. Denied to the design crew when config.vellumEdit is 'never'. */
+export const VELLUM_EDIT_TOOLS = [
+  'create_artboard', 'create_file', 'create_page', 'create_tokens', 'delete_nodes', 'duplicate_nodes', 'move_nodes',
+  'rename_nodes', 'rename_pages', 'set_text_content', 'set_theme_mode', 'set_tokens', 'update_styles', 'write_html',
+  'reply_to_comment_thread', 'set_comment_thread_status',
+].map((t) => `mcp__vellum__${t}`);
+
+export function settingsConfig(config: MusterConfig, role?: Agent['role']): object {
   const node = `"${posix(process.execPath)}"`;
   const hook = (event: string) => [{ type: 'command', command: `${node} "${posix(MUSTER_HOME)}/dist/hooks/hook.js" ${event}` }];
+  const deny = role === 'design' && config.vellumEdit === 'never' ? VELLUM_EDIT_TOOLS : [];
   return {
-    permissions: { allow: config.allowedTools },
+    permissions: { allow: config.allowedTools, ...(deny.length ? { deny } : {}) },
     statusLine: { type: 'command', command: `${node} "${posix(MUSTER_HOME)}/dist/usage/statusline.js"` },
     hooks: {
       PreToolUse: [{ matcher: PRE_TOOL_MATCHER, hooks: hook('pre-tool') }],
@@ -177,7 +186,7 @@ export function writeAgentFiles(paths: MusterPaths, agent: Agent, ctx: LaunchCon
   mkdirSync(dir, { recursive: true });
   const files = { mcp: join(dir, 'mcp.json'), settings: join(dir, 'settings.json'), prompt: join(dir, 'prompt.md') };
   writeFileSync(files.mcp, JSON.stringify(mcpConfig(agent, ctx), null, 2));
-  writeFileSync(files.settings, JSON.stringify(settingsConfig(ctx.config), null, 2));
+  writeFileSync(files.settings, JSON.stringify(settingsConfig(ctx.config, agent.role), null, 2));
   writeFileSync(files.prompt, rolePrompt(agent, ctx));
   return files;
 }

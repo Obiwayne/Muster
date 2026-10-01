@@ -357,6 +357,13 @@ describe('orchestrator API', () => {
     expect(gitSync(repo, 'log', '-1', '--format=%s')).toMatch(/^Merge (crew-2|captain)\/invite-api \(T2 Invite API\)$/);
   });
 
+  it('saves vellumEdit and rejects unknown values', async () => {
+    expect((await ok('GET', '/api/config')).vellumEdit).toBe('ask');
+    expect((await ok('PATCH', '/api/config', { vellumEdit: 'never' })).vellumEdit).toBe('never');
+    expect((await call('PATCH', '/api/config', { vellumEdit: 'sometimes' })).status).toBe(400);
+    expect((await ok('PATCH', '/api/config', { vellumEdit: null })).vellumEdit).toBe('ask');
+  });
+
   it('saves and clears vellumFile', async () => {
     expect((await ok('PATCH', '/api/config', { vellumFile: 'F1' })).vellumFile).toBe('F1');
     expect((await ok('PATCH', '/api/config', { vellumFile: null })).vellumFile).toBeUndefined();
