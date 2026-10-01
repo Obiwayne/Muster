@@ -32,6 +32,7 @@ export type TaskStatus =
   | 'blocked' // waiting on dependsOn tasks
   | 'ready' // can be claimed
   | 'in_progress' // held by an agent at stations[stationIndex]
+  | 'awaiting_approval' // at a 'human' station: you Approve or Reject from the board
   | 'review' // at the Captain's review station
   | 'ready_for_merge' // Captain called request_review; waiting for the human
   | 'merged'

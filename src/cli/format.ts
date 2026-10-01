@@ -200,7 +200,7 @@ export function formatTasks(tasks: Task[], c: Colors, now: Date = new Date()): s
   if (!tasks.length) return 'No tasks yet.';
   const rows = tasks.map((t) => {
     const station = t.stations.length ? `${t.stations[t.stationIndex] ?? '?'} ${t.stationIndex + 1}/${t.stations.length}` : '-';
-    const status = t.status === 'ready_for_merge' ? c.amber(t.status) : t.status === 'merged' || t.status === 'cancelled' ? c.dim(t.status) : t.status;
+    const status = t.status === 'ready_for_merge' || t.status === 'awaiting_approval' ? c.amber(t.status) : t.status === 'merged' || t.status === 'cancelled' ? c.dim(t.status) : t.status;
     return [t.id, status, station, t.assignee ?? '-', t.dependsOn.length ? t.dependsOn.join(',') : '-', relativeTime(t.updatedAt, now), truncate(t.title, 60)];
   });
   return table(['TASK', 'STATUS', 'STATION', 'ASSIGNEE', 'DEPENDS', 'UPDATED', 'TITLE'], rows, c);
