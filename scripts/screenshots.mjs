@@ -12,7 +12,7 @@ import { fileURLToPath } from 'node:url';
 
 const root = join(dirname(fileURLToPath(import.meta.url)), '..');
 const out = join(root, 'docs', 'screenshots');
-const PORT = 47899;
+const PORT = Number(process.env.SHOT_PORT) || 47899;
 const TOKEN = 'dev-token';
 const W = 1600, H = 1000;
 const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
@@ -56,7 +56,7 @@ async function main() {
   await waitForServer();
   await shot('dashboard', 'dashboard');
   await shot('board', 'board?note=N21');
-  await shot('chat', 'chat');
+  await shot('chat', 'chat', "(() => { const f = document.querySelector('.feed'); if (f) f.scrollTop = 0; })()");
   await shot('tasks', 'tasks');
   await shot('branches', 'branches');
   // Vellum: blur every file card except the Muster framework file (the other cards are private projects).

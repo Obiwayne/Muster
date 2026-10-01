@@ -11,7 +11,7 @@ Runs natively on Windows (no WSL, no tmux). macOS and Linux work too.
 - **Windows** 10/11 (macOS and Linux work too, without the desktop shortcuts)
 - **Node.js 22 or newer**
 - **Claude Code CLI** (`claude`), logged in
-- **git**, in a repo with at least one commit
+- **git** (any folder works; Muster sets up git if needed)
 - **Vellum** (optional): the design tool the design crew checks UI work against
 
 ## Install
@@ -34,7 +34,7 @@ Double-click **Muster**: pick a project folder (or a recent one), and the dashbo
 
 ## Quick start
 
-From inside your project's git repo:
+From inside your project folder:
 
 ```powershell
 muster up                                       # starts the orchestrator + the Captain, opens the dashboard
