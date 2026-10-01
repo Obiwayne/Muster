@@ -1,5 +1,5 @@
 // "Edit line" modal: the station list (order, add, remove) and, per station, its role and Markdown guideline.
-import { ApiError, api, type StationDef } from './api';
+import { ApiError, api, type LineDef, type StationDef } from './api';
 import { confirmDialog, h, icon, showModal, toast } from './dom';
 import { errToast } from './actions';
 import { renderMarkdown } from './markdown';
@@ -9,6 +9,7 @@ const ROLES: { value: StationRole; label: string }[] = [
   { value: 'crew', label: 'Crew' },
   { value: 'design', label: 'Vellum design crew' },
   { value: 'captain', label: 'Captain' },
+  { value: 'human', label: 'Human (you approve)' },
 ];
 const MAX_GUIDELINE = 20_000; // characters
 const NAME_RE = /^[a-z0-9][a-z0-9-]{0,29}$/;
@@ -32,6 +33,8 @@ export function showStationEditor(opts: StationEditorOpts): void {
   let loading = true;
   let confirmDiscard = false;
   let adding = false;
+  let lines: LineDef[] = [];
+  let presetsErr = false;
 
   const root = h('div.se');
   const isDirty = (n: string) => { const d = drafts[n], s = saved[n]; return !!d && !!s && (d.role !== s.role || d.guideline !== s.guideline); };
@@ -48,6 +51,7 @@ export function showStationEditor(opts: StationEditorOpts): void {
 
   async function load(select?: string): Promise<void> {
     try {
+      try { lines = (await api.lines()).lines; presetsErr = false; } catch { lines = []; presetsErr = true; } // older server: no presets
       const list = await api.stations();
       saved = Object.fromEntries(list.map((s) => [s.name, s]));
       order = list.map((s) => s.name).filter((n) => n !== 'review');
@@ -83,6 +87,29 @@ export function showStationEditor(opts: StationEditorOpts): void {
       await opts.setOrder([...order, name]);
       await load(name);
     } catch (e) { errToast(e); draw(); }
+  }
+
+  async function applyPreset(name: string): Promise<void> {
+    const line = lines.find((l) => l.name === name);
+    if (!line) return;
+    const names = line.stations.filter((n) => n !== 'review');
+    if (anyDirty() && !(await confirmDialog('Discard unsaved edits?', 'Applying a preset reloads the stations from this machine.', 'Apply', 'danger'))) { draw(); return; }
+    if (!(await confirmDialog(`Use the ${line.label} line?`, `The line becomes ${[...names, 'review'].join(' → ')}. Tasks created from now on use it; existing tasks keep theirs. Station guidelines you already wrote are kept.`, 'Use this line'))) { draw(); return; }
+    try {
+      await opts.setOrder(names);
+      for (const k of Object.keys(drafts)) delete drafts[k];
+      await load(names[0]);
+    } catch (e) { errToast(e); draw(); }
+  }
+
+  function presetBar(): HTMLElement | null {
+    if (!lines.length) return presetsErr ? h('div.se-presets.muted', null, 'Presets need the latest Muster build.') : null;
+    const cur = [...order, 'review'].join('>');
+    const match = lines.find((l) => [...l.stations.filter((n) => n !== 'review'), 'review'].join('>') === cur);
+    const sel = h('select', { onchange: (e: Event) => { const v = (e.target as HTMLSelectElement).value; if (v) void applyPreset(v); } },
+      h('option', { value: '', selected: !match }, match ? 'Custom…' : 'Custom'),
+      lines.map((l) => h('option', { value: l.name, selected: match?.name === l.name }, l.label))) as HTMLSelectElement;
+    return h('div.se-presets', null, h('div.section-label', null, 'Preset'), h('div.select-wrap', null, sel, icon('chevron', 14)));
   }
 
   async function removeStation(name: string): Promise<void> {
@@ -145,7 +172,7 @@ export function showStationEditor(opts: StationEditorOpts): void {
     } else {
       add = h('button.st-add', { onclick: () => { adding = true; draw(); } }, '+ station');
     }
-    return h('div.se-list', null, h('div.section-label', null, 'Line'), items, review, add);
+    return h('div.se-list', null, presetBar(), h('div.section-label', null, 'Line'), items, review, add);
   }
 
   function editCol(): HTMLElement {
@@ -176,7 +203,7 @@ export function showStationEditor(opts: StationEditorOpts): void {
         h('span.sp'), counter,
         h('button.btn.sm', { onclick: importMd }, 'Import .md')),
       tab === 'edit' ? ta : preview,
-      h('div.se-note', null, 'Saved on this machine only (.muster/stations). Review guidelines add to the Captain\'s checks; they can\'t relax them.'),
+      h('div.se-note', null, current !== 'review' && d.role === 'human' ? 'A human station pauses the task. The work shows on Tasks and the board as an approval note with Approve and Send back. No agent works it.' : 'Saved on this machine only (.muster/stations). Review guidelines add to the Captain\'s checks; they can\'t relax them.'),
       h('div.se-foot', null, revertBtn, saveBtn));
   }
 

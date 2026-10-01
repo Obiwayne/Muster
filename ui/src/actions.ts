@@ -1,7 +1,7 @@
 // Actions shared by several pages: add agent, diff modal, merge, role changes, caches.
 import type { Agent, MusterState, Role, Task } from '../../src/types';
 import { api, type DiffResult } from './api';
-import { confirmDialog, h, icon, showModal, showPopover, toast, select } from './dom';
+import { confirmDialog, promptDialog, h, icon, showModal, showPopover, toast, select } from './dom';
 import { events } from './events';
 import { branchOwnerId, summarizeTests } from './util';
 
@@ -121,6 +121,19 @@ export async function mergeTask(state: MusterState, task: Task): Promise<boolean
   const r = await run(api.merge(owner, task.id));
   if (r) toast(`Merged ${task.branch ?? task.id}`);
   return !!r;
+}
+
+// ---- human approval ----
+export async function approveTask(task: Task): Promise<void> {
+  const note = await promptDialog(`Approve ${task.id}?`, `${task.id} ${task.title}. The task moves on to the next station. Add a note for the next agent if you like.`, 'Approve', 'Optional note…', true);
+  if (note === null) return;
+  await run(api.approve(task.id, note || undefined), `Approved ${task.id}`);
+}
+
+export async function sendBackApproval(task: Task): Promise<void> {
+  const note = await promptDialog(`Send ${task.id} back?`, 'Say what needs to change. The note goes to the agent who did the work.', 'Send back', 'What needs to change?');
+  if (!note) return;
+  await run(api.reject(task.id, note), `Sent ${task.id} back`);
 }
 
 // ---- roles and closing ----

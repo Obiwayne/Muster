@@ -4,7 +4,10 @@ import type {
 } from '../../src/types';
 
 // TODO: import StationDef from src/types.ts once T9 (crew-6) merges.
-export interface StationDef { name: string; role: 'crew' | 'design' | 'captain'; guideline: string; builtin: boolean }
+// Contract with T12/T14 (crew-8): GET /api/lines.
+export interface LineDef { name: string; label: string; stations: string[]; builtin: boolean }
+export interface LinesResponse { lines: LineDef[]; defaultLine: string }
+export interface StationDef { name: string; role: 'crew' | 'design' | 'captain' | 'human'; guideline: string; builtin: boolean }
 
 /** Token: injected <meta name="muster-token">, else ?token= in the URL, else VITE_MUSTER_TOKEN (dev). */
 export function getToken(): string {
@@ -137,6 +140,10 @@ export const api = {
       if (e instanceof ApiError && e.status === 404) return { status: 'error', message: 'This Muster orchestrator has no /api/vellum yet. Restart it on the latest build.', checkedAt: new Date().toISOString(), files: [] };
       throw e;
     }),
+  lines: () => req<LinesResponse>('GET', '/api/lines'),
+  saveLine: (name: string, body: { stations: string[]; label?: string }) => req<LineDef>('PUT', `/api/lines/${enc(name)}`, body),
+  approve: (taskId: string, note?: string) => req<Task>('POST', `/api/tasks/${enc(taskId)}/approve`, { actor: YOU, ...(note ? { note } : {}) }),
+  reject: (taskId: string, note: string) => req<Task>('POST', `/api/tasks/${enc(taskId)}/reject`, { actor: YOU, note }),
   stations: () => req<StationDef[]>('GET', '/api/stations'),
   saveStation: (name: string, body: { role?: StationDef['role']; guideline?: string }) =>
     req<StationDef>('PUT', `/api/stations/${enc(name)}`, body),

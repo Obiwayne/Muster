@@ -298,6 +298,19 @@ async function api(req, url) {
     return config;
   }
   const sm = /^\/api\/stations\/([^/]+)$/.exec(p);
+  if (m === 'GET' && p === '/api/lines') return { defaultLine: 'standard', lines: [
+    { name: 'standard', label: 'Standard', stations: ['build', 'review'], builtin: true },
+    { name: 'tested', label: 'Build + test', stations: ['build', 'test', 'review'], builtin: true },
+    { name: 'designed', label: 'Design, build, approve', stations: ['design', 'build', 'approve', 'review'], builtin: true }] };
+  const am = /^\/api\/tasks\/([^/]+)\/(approve|reject)$/.exec(p);
+  if (am && m === 'POST') {
+    const b = await body(req); const t = state.tasks.find((x) => x.id === am[1]);
+    need(t, 404, 'No such task');
+    if (am[2] === 'reject') need(b.note, 400, 'A note is required');
+    t.status = am[2] === 'approve' ? 'ready' : 'in_progress'; if (am[2] === 'approve') t.stationIndex++;
+    for (const n of state.notes) if (n.taskId === t.id && n.type === 'approval') n.open = false;
+    broadcast(); return t;
+  }
   if (m === 'GET' && p === '/api/stations') {
     const names = [...config.defaultStations.filter((n) => n !== 'review'), ...Object.keys(stationDefs).filter((n) => !config.defaultStations.includes(n)), 'review'];
     return names.map((name) => ({ name, ...stationDefs[name] ?? { role: 'crew', guideline: '', builtin: false } }));

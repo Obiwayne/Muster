@@ -4,12 +4,12 @@ import { h, icon, setChildren } from '../dom';
 import type { Snapshot } from '../events';
 import type { Page } from '../page';
 import { api } from '../api';
-import { mergeTask, run } from '../actions';
+import { approveTask, mergeTask, run, sendBackApproval } from '../actions';
 import { NOTE_BADGE, ageShort, ago, displayName, initial, isEscalated, isNeedsYou, ms, noteLabel, roleOf, taskById } from '../util';
 
-type Filter = 'open' | 'stuck' | 'question' | 'waiting' | 'review' | 'all' | 'needsYou';
+type Filter = 'open' | 'stuck' | 'question' | 'waiting' | 'review' | 'approval' | 'all' | 'needsYou';
 
-const TYPE_ORDER: Partial<Record<NoteType, number>> = { escalation: 0, stuck: 1, question: 2 };
+const TYPE_ORDER: Partial<Record<string, number>> = { approval: 0, escalation: 0, stuck: 1, question: 2 };
 
 function sortNotes(notes: Note[]): Note[] {
   return [...notes].sort((a, b) => {
@@ -24,7 +24,7 @@ function sortNotes(notes: Note[]): Note[] {
 function matches(n: Note, f: Filter): boolean {
   switch (f) {
     case 'open': return n.open;
-    case 'stuck': case 'question': case 'waiting': case 'review': return n.open && n.type === f;
+    case 'stuck': case 'question': case 'waiting': case 'review': case 'approval': return n.open && (n.type as string) === f;
     case 'needsYou': return isNeedsYou(n);
     case 'all': return true;
   }
@@ -84,6 +84,7 @@ export function createBoard(): Page {
       chip('question', 'Question', count('question')),
       chip('waiting', 'Waiting', count('waiting')),
       chip('review', 'Review', count('review')),
+      ...(count('approval' as NoteType) || filter === 'approval' ? [chip('approval', 'Approval', count('approval' as NoteType), 'c-stuck')] : []),
       chip('all', 'All', undefined, 'c-faint'),
       h('button.chip.dashed', {
         class: [filter === 'needsYou' && 'active', needs > 0 && 'hot'],
@@ -105,15 +106,18 @@ export function createBoard(): Page {
 
   function row(state: MusterState, n: Note): HTMLElement {
     const t = n.type;
-    const selColor = t === 'stuck' ? 'var(--color-stuck)' : t === 'question' ? 'var(--color-captain)' : t === 'waiting' ? 'var(--color-design)' : t === 'review' ? 'var(--color-crew)' : t === 'escalation' ? 'var(--color-warm)' : 'var(--color-muted)';
+    const selColor = t === 'stuck' ? 'var(--color-stuck)' : t === 'question' ? 'var(--color-captain)' : t === 'waiting' ? 'var(--color-design)' : t === 'review' ? 'var(--color-crew)' : (t as string) === 'approval' ? 'var(--color-warm)' : t === 'escalation' ? 'var(--color-warm)' : 'var(--color-muted)';
     const task = taskById(state, n.taskId);
-    const side = n.type === 'review' && n.open && task?.status === 'ready_for_merge'
+    const side0 = n.type === 'review' && n.open && task?.status === 'ready_for_merge'
       ? h('span.merge', {
           role: 'button',
           onclick: (e: MouseEvent) => { e.stopPropagation(); mergeTask(state, task); },
         }, 'Merge')
       : (n.open || n.replies.length) && n.type !== 'progress' && n.type !== 'system'
         ? h('span.faint', null, `${n.replies.length} ${n.replies.length === 1 ? 'reply' : 'replies'}`) : null;
+    const isApproval = (n.type as string) === 'approval' && n.open && (task?.status as string) === 'awaiting_approval';
+    const approveSide = isApproval ? h('span.merge', { role: 'button', onclick: (e: MouseEvent) => { e.stopPropagation(); void approveTask(task!); } }, 'Approve') : null;
+    const side = approveSide ?? side0;
     return h('button.note-row', {
       class: [n.id === selected && 'sel', !n.open && 'closed'],
       style: { '--sel': selColor },
@@ -158,10 +162,17 @@ export function createBoard(): Page {
     if (n.open && (n.type === 'stuck' || n.type === 'question' || n.type === 'waiting') && !isEscalated(state, n)) {
       items.push(h('div.banner', null, icon('users', 16), h('div.flex1', null, 'Being handled by the crew. This only reaches you if the Captain escalates it.')));
     } else if (isNeedsYou(n) || (n.open && isEscalated(state, n))) {
-      const msg = n.type === 'review'
+      const isApproval = (n.type as string) === 'approval' && (task?.status as string) === 'awaiting_approval';
+      const msg = isApproval
+        ? 'Waiting for your approval. Approve to move the task on, or send it back with what needs to change.'
+        : n.type === 'review'
         ? 'Ready for review: the Captain has checked this branch. Merge it from Tasks or Branches, or reply to send it back.'
         : 'Needs you: the Captain escalated this. Reply below; the answer goes to the agents involved.';
-      const act = n.type === 'review' && task?.status === 'ready_for_merge'
+      const act = isApproval
+        ? h('span.flex', { style: 'display:flex;gap:6px' },
+            h('button.btn.sm', { onclick: () => void sendBackApproval(task!) }, 'Send back'),
+            h('button.btn.sm.merge', { onclick: () => void approveTask(task!) }, 'Approve'))
+        : n.type === 'review' && task?.status === 'ready_for_merge'
         ? h('button.btn.sm.merge', { onclick: () => mergeTask(state, task) }, 'Merge') : null;
       items.push(h('div.banner.warm', null, icon('alert', 16), h('div.flex1', null, msg), act));
     }

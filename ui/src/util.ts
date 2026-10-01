@@ -95,7 +95,8 @@ export function resetsIn(iso?: string): string {
   return new Date(ms(iso)).toLocaleDateString(undefined, { weekday: 'short' });
 }
 
-export const NOTE_BADGE: Record<NoteType, string> = {
+export const NOTE_BADGE: Record<NoteType | 'approval', string> = {
+  approval: 'b-warm',
   stuck: 'b-stuck',
   question: 'b-captain',
   waiting: 'b-design',
@@ -107,12 +108,12 @@ export const NOTE_BADGE: Record<NoteType, string> = {
   system: 'neutral',
 };
 
-export function noteLabel(t: NoteType): string {
-  return t === 'escalation' ? 'Needs you' : t;
+export function noteLabel(t: NoteType | 'approval'): string {
+  return t === 'escalation' ? 'Needs you' : t === 'approval' ? 'Approval' : t;
 }
 
 export function isNeedsYou(n: Note): boolean {
-  return n.open && (n.type === 'escalation' || n.type === 'review' || n.to === YOU);
+  return n.open && (n.type === 'escalation' || n.type === 'review' || (n.type as string) === 'approval' || n.to === YOU);
 }
 
 /** A stuck/question note counts as escalated if the note is addressed to you or an open escalation mentions it. */
