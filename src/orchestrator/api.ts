@@ -10,6 +10,8 @@ import type { Store } from '../core/store.js';
 import * as lines from '../core/lines.js';
 import * as stations from '../core/stations.js';
 import * as tasks from '../core/tasks.js';
+import { readPartial } from '../core/config.js';
+import { ghStatus, realGh, validRepoName, type GhRunner } from '../core/github.js';
 import { createVellumChecker, type VellumCall } from '../core/vellum.js';
 import { applyUsage, refreshGuard, type RawUsage } from '../core/usage.js';
 import type { AgentManager } from './agents.js';
@@ -27,6 +29,8 @@ export interface ApiContext {
   shutdown(clean: boolean): void;
   /** Test seam: replaces the real Vellum MCP call. */
   vellumCall?: VellumCall;
+  /** Test seam: replaces the real `gh` CLI. */
+  ghRunner?: GhRunner;
 }
 
 interface Req {
@@ -279,6 +283,31 @@ ${block}`;
     const output = await gitOps.mergeToBase(ctx.paths.root, base, ref, `Merge ${branch}${task ? ` (${task.id} ${task.title})` : ''}`);
     mutate(() => (task ? tasks.markMerged(s, task, board.HUMAN) : board.feedEvent(s, board.HUMAN, `merged ${branch}`)));
     return { ok: true, output };
+  });
+
+  // ------------------------------------------------------------------ project / GitHub
+  const gh = ctx.ghRunner ?? realGh;
+  const originUrl = async (): Promise<string | undefined> => (await gitOps.git(ctx.paths.root, ['remote', 'get-url', 'origin'], true)).stdout.trim() || undefined;
+  route('GET', '/api/project', async () => {
+    const remoteUrl = await originUrl();
+    return { name: ctx.config().projectName ?? '', root: ctx.paths.root, ...(remoteUrl ? { remoteUrl } : {}), gh: await ghStatus(gh, ctx.paths.root) };
+  });
+  route('POST', '/api/project/github', async ({ body }) => {
+    const name = str(body.name, 'name').trim();
+    if (!validRepoName(name)) throw badRequest('Repository name may only use letters, digits, ".", "_" and "-" (optionally owner/name)');
+    if (body.description !== undefined && typeof body.description !== 'string') throw badRequest('description must be a string');
+    if (body.private !== undefined && typeof body.private !== 'boolean') throw badRequest('private must be true or false');
+    if (await originUrl()) throw conflict('This project already has an "origin" remote');
+    const status = await ghStatus(gh, ctx.paths.root);
+    if (!status.installed) throw new HttpError(424, 'The GitHub CLI (gh) is not installed. Install it from https://cli.github.com, then run `gh auth login`.');
+    if (!status.authed) throw new HttpError(424, 'The GitHub CLI is not signed in. Run `gh auth login`.');
+    const args = ['repo', 'create', name, body.private === false ? '--public' : '--private', '--source', ctx.paths.root, '--remote', 'origin', '--push'];
+    if (typeof body.description === 'string' && body.description.trim()) args.push('--description', body.description.trim());
+    const r = await gh(args, ctx.paths.root);
+    if (r.code !== 0) throw new HttpError(502, `gh repo create failed: ${(r.stderr || r.stdout).trim() || `exit ${r.code}`}`);
+    const url = (await originUrl()) ?? r.stdout.trim().split(/\s+/).find((w) => /^https?:\/\//.test(w)) ?? '';
+    if (!readPartial(ctx.paths).projectName) ctx.updateConfig({ projectName: name.split('/').pop()! });
+    return { url };
   });
 
   // ------------------------------------------------------------------ goal

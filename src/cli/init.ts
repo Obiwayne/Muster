@@ -17,8 +17,9 @@ function gitOk(cwd: string, args: string[]): string | null {
   }
 }
 
-export function initMuster(cwd: string): InitResult {
-  const root = gitMainRoot(cwd);
+/** `exact`: cwd is the repo root itself (skips MUSTER_REPO / worktree discovery). */
+export function initMuster(cwd: string, exact = false): InitResult {
+  const root = exact ? cwd : gitMainRoot(cwd);
   if (!root) throw new CliError('Not a git repository. Run `git init` in your project first (Muster works on one git repo).');
   if (gitOk(root, ['rev-parse', '--verify', '--quiet', 'HEAD']) === null) {
     throw new CliError('This repo has no commits yet. Make a first commit (worktrees branch from it), then run muster again.');

@@ -166,6 +166,17 @@ Muster acts as a read-only MCP client to the Vellum server (`vellumServer(config
 ### Goal
 | POST | /api/ask | `{ text }` | `{ ok }` — records `state.goal`, types it into the Captain's terminal (submit), adds a feed item from "you" to captain |
 
+### New apps (src/core/newproject.ts, src/core/github.ts, src/cli/newapp.ts)
+
+Start from nothing: `muster new "<idea>" [--dir <parent>] [--title <t>] [--no-open]` calls `createNewProject({ parentDir, idea, title? })`, which makes `<parent>/<slug>` (slug from the title, else `idea-YYYY-MM-DD`; `-2`, `-3`… on a clash), runs `git init -b main`, writes `README.md` (`# <title|Untitled idea>` + the idea) and `.gitignore` (node_modules, dist, .env), makes the first commit (your git identity; if none is set, `-c user.name=Muster -c user.email=muster@localhost` for that one commit only), runs `initMuster` and returns `{ root, slug }`. The CLI then starts the orchestrator like `muster up`, POSTs the idea to `/api/ask` (retrying while the Captain starts) and prints the path.
+
+| Method | Path | Body | Returns |
+|---|---|---|---|
+| GET | /api/project | – | `{ name, root, remoteUrl?, gh: { installed, authed, user? } }` (`remoteUrl` = origin) |
+| POST | /api/project/github | `{ name, private? = true, description? }` | `{ url }`. Human only (403 for agents). 400 bad name (letters, digits, `.` `_` `-`, optional `owner/`), 409 origin already exists, 424 gh missing or not signed in (message says to run `gh auth login`), 502 if `gh` itself fails |
+
+The route runs `gh repo create <name> --private|--public --source <root> --remote origin --push [--description d]` through an injectable `GhRunner` (`OrchestratorOptions.ghRunner`, used by tests), and sets `config.projectName` to the repo name if config.json has none.
+
 ### Tasks
 | Method | Path | Body | Returns |
 |---|---|---|---|

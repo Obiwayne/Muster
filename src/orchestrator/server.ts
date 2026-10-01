@@ -14,6 +14,7 @@ import { newSecret, removeHumanToken, writeHumanToken } from '../core/tokens.js'
 import { installRefGuard } from '../core/refguard.js';
 import { refreshGuard } from '../core/usage.js';
 import { AgentManager, type Timings } from './agents.js';
+import type { GhRunner } from '../core/github.js';
 import { createApi, sendJson } from './api.js';
 import { TokenBook, type Caller } from './auth.js';
 import { nodePtyLauncher, type PtyLauncher } from './terminal.js';
@@ -29,6 +30,8 @@ export interface OrchestratorOptions {
   uiDir?: string;
   /** Test seam: replaces the real Vellum MCP call behind GET /api/vellum. */
   vellumCall?: VellumCall;
+  /** Test seam: replaces the real `gh` CLI behind /api/project. */
+  ghRunner?: GhRunner;
   timings?: Partial<Timings>;
   /** Resume previously running agents and create the Captain if missing (default true). */
   autoStart?: boolean;
@@ -167,6 +170,7 @@ export async function startOrchestrator(opts: OrchestratorOptions): Promise<Orch
     toast: (level, text) => broadcast({ type: 'toast', level, text }),
     shutdown: (clean) => void shutdown(clean).then(() => opts.onShutdown?.()),
     vellumCall: opts.vellumCall,
+    ghRunner: opts.ghRunner,
   });
 
   const serveUi = (res: ServerResponse, pathname: string) => {
