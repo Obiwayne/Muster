@@ -7,7 +7,7 @@ const path = require('node:path');
 
 const HOME = path.resolve(__dirname, '..');
 const CLI = path.join(HOME, 'bin', 'muster.js');
-const ICON = path.join(__dirname, 'icon.ico');
+const ICON = path.join(__dirname, 'muster.ico');
 const SETTINGS = () => path.join(app.getPath('userData'), 'settings.json');
 
 app.setAppUserModelId('com.obiwayne.muster');

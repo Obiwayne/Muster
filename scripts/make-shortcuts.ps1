@@ -7,7 +7,7 @@
 # through the shortcut's hidden launcher.
 $ErrorActionPreference = 'Stop'
 $root = Split-Path -Parent $PSScriptRoot
-$icon = Join-Path $root 'desktop\icon.ico'
+$icon = Join-Path $root 'desktop\muster.ico'
 $appId = 'com.obiwayne.muster'
 
 Add-Type -TypeDefinition @'
@@ -68,3 +68,6 @@ foreach ($dir in @($root, [Environment]::GetFolderPath('Desktop'), $startMenu)) 
 }
 # Ask Explorer to drop cached icons for these shortcuts.
 & "$env:WINDIR\System32\ie4uinit.exe" -show 2>$null
+# Tell Explorer that icons changed so the Desktop redraws without a sign-out.
+Add-Type -Namespace Muster -Name Shell -MemberDefinition '[DllImport("shell32.dll")] public static extern void SHChangeNotify(int e, uint f, IntPtr a, IntPtr b);'
+[Muster.Shell]::SHChangeNotify(0x08000000, 0, [IntPtr]::Zero, [IntPtr]::Zero)

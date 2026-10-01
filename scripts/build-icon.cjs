@@ -1,4 +1,4 @@
-// Builds the app icon from the Ember logo: desktop/icon.svg (the tile), icon.png (256) and icon.ico.
+// Builds the app icon from the Ember logo: desktop/icon.svg (the tile), icon.png (256) and muster.ico.
 // Run with Electron (it renders the SVG): node_modules/electron/dist/electron.exe scripts/build-icon.cjs
 //
 // The .ico holds 16–256 px. Sizes below 256 are stored as classic 32-bit bitmaps (DIB), not PNG:
@@ -85,7 +85,7 @@ app.whenReady().then(async () => {
     head.writeUInt32LE(offset, o + 12);
     offset += data.length;
   });
-  fs.writeFileSync(path.join(desk, 'icon.ico'), Buffer.concat([head, ...entries.map((e) => e.data)]));
-  console.log('icon.ico:', entries.map((e) => `${e.size}${e.size === 256 ? 'png' : 'bmp'}`).join(' '));
+  fs.writeFileSync(path.join(desk, 'muster.ico'), Buffer.concat([head, ...entries.map((e) => e.data)]));
+  console.log('muster.ico:', entries.map((e) => `${e.size}${e.size === 256 ? 'png' : 'bmp'}`).join(' '));
   app.quit();
 });
