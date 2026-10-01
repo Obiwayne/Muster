@@ -251,10 +251,10 @@ export const STATION_ROLE: Record<string, Role> = {
   review: 'captain',
 };
 
-/** One station as defined on this machine (GET /api/stations). */
+/** One station as defined on this machine (GET /api/stations → { stations }). */
 export interface StationDef {
   name: string; // lowercase, e.g. "build"
   role: Role; // which role works it
-  builtin: boolean; // build, test, design, review
+  builtIn: boolean; // build, test, design, review
   guideline: string; // Markdown shown to the agent working the station; '' when none
 }

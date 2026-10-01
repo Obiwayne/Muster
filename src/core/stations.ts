@@ -1,54 +1,31 @@
-// Station definitions: which role works each station, plus a Markdown guideline for it. Stored once per
-// OS user (not per repo), next to the human tokens, so every project and the desktop app share them:
-//   <secretsBase>/stations.json            [{ name, role }] custom roles for built-in and added stations
-//   <secretsBase>/stations/<name>.md       the guideline text (absent = no guideline)
-import { existsSync, mkdirSync, readFileSync, rmSync, statSync, writeFileSync } from 'node:fs';
+// Station definitions: which role works each station, plus a Markdown guideline for it. One file per
+// station in <repo>/.muster/stations/<name>.md (.muster is per machine, never committed):
+//   ---
+//   role: crew
+//   ---
+//   <guideline Markdown>
+// Station order stays in config.defaultStations; this only says who works a station and how.
+import { existsSync, mkdirSync, readdirSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
-import { STATION_ROLE, type Role, type StationDef } from '../types.js';
-import { badRequest } from './errors.js';
-import { secretsBase } from './tokens.js';
+import { STATION_ROLE, type MusterConfig, type Role, type StationDef } from '../types.js';
+import { badRequest, notFound } from './errors.js';
+import type { MusterPaths } from './paths.js';
 
 export const MAX_GUIDELINE = 20_000;
 const ROLES: Role[] = ['captain', 'crew', 'design'];
 const NAME_RE = /^[a-z0-9][a-z0-9-]{0,29}$/;
-/** The review station is the Captain's; it cannot be reassigned or removed. */
-const LOCKED = 'review';
+const REVIEW = 'review';
+const BUILT_IN = Object.keys(STATION_ROLE);
 
-const dir = () => secretsBase();
-const indexFile = () => join(dir(), 'stations.json');
-const guidelineFile = (name: string) => join(dir(), 'stations', `${name}.md`);
+const DEFAULT_GUIDELINE: Record<string, string> = {
+  build: 'Implement the task as described. Keep the change small and reviewable, run the tests, and commit before handing on.',
+  test: 'Verify the build station\'s work: run the tests, add missing tests for the new behaviour, and report anything that fails.',
+  design: 'Compare the UI changes against the design framework and report pass or drift for each check.',
+  review: 'Read the diff, run the tests, and check the acceptance criteria before flagging the branch ready for merge.',
+};
 
-interface Index {
-  roles: Record<string, Role>;
-}
-
-let cache: { key: string; index: Index } | undefined;
-
-function readIndex(): Index {
-  const f = indexFile();
-  if (!existsSync(f)) return { roles: {} };
-  const key = `${f}:${statSync(f).mtimeMs}:${statSync(f).size}`;
-  if (cache?.key === key) return cache.index;
-  const roles: Record<string, Role> = {};
-  try {
-    const raw = JSON.parse(readFileSync(f, 'utf8'));
-    for (const s of Array.isArray(raw?.stations) ? raw.stations : []) {
-      if (s && NAME_RE.test(s.name) && ROLES.includes(s.role)) roles[s.name] = s.role;
-    }
-  } catch {
-    /* unreadable file: fall back to the built-ins */
-  }
-  const index = { roles };
-  cache = { key, index };
-  return index;
-}
-
-function writeIndex(roles: Record<string, Role>): void {
-  mkdirSync(dir(), { recursive: true });
-  const stations = Object.entries(roles).map(([name, role]) => ({ name, role }));
-  writeFileSync(indexFile(), JSON.stringify({ stations }, null, 2) + '\n');
-  cache = undefined;
-}
+const dirOf = (p: MusterPaths) => join(p.dir, 'stations');
+const fileOf = (p: MusterPaths, name: string) => join(dirOf(p), `${name}.md`);
 
 export function stationName(raw: unknown): string {
   const name = typeof raw === 'string' ? raw.trim().toLowerCase() : '';
@@ -56,69 +33,87 @@ export function stationName(raw: unknown): string {
   return name;
 }
 
-/** Which role works `station`. Unknown stations are worked by crew. */
-export function roleOfStation(station: string): Role {
-  if (station === LOCKED) return 'captain';
-  return readIndex().roles[station] ?? STATION_ROLE[station] ?? 'crew';
+function parse(text: string): { role?: Role; guideline: string } {
+  const m = /^---\r?\n([\s\S]*?)\r?\n---\r?\n?/.exec(text);
+  if (!m) return { guideline: text };
+  const role = /^role:\s*(\S+)\s*$/m.exec(m[1])?.[1];
+  return { role: ROLES.includes(role as Role) ? (role as Role) : undefined, guideline: text.slice(m[0].length) };
 }
 
-export function readGuideline(station: string): string {
-  if (!NAME_RE.test(station)) return '';
+const serialise = (role: Role, guideline: string) => `---\nrole: ${role}\n---\n${guideline}`;
+
+function read(p: MusterPaths, name: string): { role?: Role; guideline: string } | undefined {
+  if (!NAME_RE.test(name)) return undefined;
   try {
-    return readFileSync(guidelineFile(station), 'utf8');
+    return parse(readFileSync(fileOf(p, name), 'utf8'));
   } catch {
-    return '';
+    return undefined;
   }
 }
 
-const describe = (name: string, roles: Record<string, Role>): StationDef => ({
-  name,
-  role: name === LOCKED ? 'captain' : (roles[name] ?? STATION_ROLE[name] ?? 'crew'),
-  builtin: name in STATION_ROLE,
-  guideline: readGuideline(name),
-});
+const roleFor = (name: string, file?: { role?: Role }): Role => (name === REVIEW ? 'captain' : (file?.role ?? STATION_ROLE[name] ?? 'crew'));
 
-/** Built-in stations first (build, test, design, review), then the ones added on this machine. */
-export function listStations(): StationDef[] {
-  const { roles } = readIndex();
-  const names = [...Object.keys(STATION_ROLE), ...Object.keys(roles).filter((n) => !(n in STATION_ROLE))];
-  return names.map((n) => describe(n, roles));
+/** Writes build/test/design/review.md when missing; existing files are never touched. */
+export function seedStations(p: MusterPaths): void {
+  mkdirSync(dirOf(p), { recursive: true });
+  for (const name of BUILT_IN) {
+    if (!existsSync(fileOf(p, name))) writeFileSync(fileOf(p, name), serialise(STATION_ROLE[name], DEFAULT_GUIDELINE[name] + '\n'));
+  }
 }
 
-export function getStation(name: string): StationDef | undefined {
-  return listStations().find((s) => s.name === name);
+/** station → role for every station file, for the pure task functions (anything absent falls back to the built-ins). */
+export function stationRoles(p: MusterPaths): Record<string, Role> {
+  const roles: Record<string, Role> = {};
+  for (const s of listStations(p, undefined)) roles[s.name] = s.role;
+  return roles;
 }
 
-/** Creates or updates a station. Omitted fields keep their value (a new station defaults to role crew, no guideline). */
-export function saveStation(rawName: unknown, patch: { role?: unknown; guideline?: unknown }): StationDef {
+/** Stations in config.defaultStations order (plus review), then the other files alphabetically. */
+export function listStations(p: MusterPaths, config: Pick<MusterConfig, 'defaultStations'> | undefined): StationDef[] {
+  let files: string[] = [];
+  try {
+    files = readdirSync(dirOf(p)).filter((f) => f.endsWith('.md')).map((f) => f.slice(0, -3)).filter((n) => NAME_RE.test(n));
+  } catch {
+    /* no folder yet */
+  }
+  const ordered = [...(config?.defaultStations ?? []), REVIEW].filter((n) => NAME_RE.test(n));
+  const names = [...new Set([...ordered, ...files.sort()])].filter((n) => files.includes(n) || BUILT_IN.includes(n));
+  return names.map((n) => describe(p, n));
+}
+
+function describe(p: MusterPaths, name: string): StationDef {
+  const file = read(p, name);
+  return { name, role: roleFor(name, file), guideline: file?.guideline ?? DEFAULT_GUIDELINE[name] ?? '', builtIn: BUILT_IN.includes(name) };
+}
+
+export function getStation(p: MusterPaths, name: string): StationDef | undefined {
+  return NAME_RE.test(name) && (existsSync(fileOf(p, name)) || BUILT_IN.includes(name)) ? describe(p, name) : undefined;
+}
+
+/** The guideline text for a station ('' when it has none). */
+export const readGuideline = (p: MusterPaths, name: string): string => getStation(p, name)?.guideline ?? '';
+
+/** Creates or updates a station. Omitted fields keep their value (a new station defaults to role crew, empty guideline). */
+export function saveStation(p: MusterPaths, rawName: unknown, patch: { role?: unknown; guideline?: unknown }): StationDef {
   const name = stationName(rawName);
-  const { roles } = readIndex();
-  const next = { ...roles };
-  if (patch.role !== undefined) {
-    if (typeof patch.role !== 'string' || !ROLES.includes(patch.role as Role)) throw badRequest('role must be "captain", "crew" or "design"');
-    if (name === LOCKED && patch.role !== 'captain') throw badRequest('The review station is always worked by the captain');
-    next[name] = patch.role as Role;
-  } else if (!(name in STATION_ROLE) && !(name in next)) {
-    next[name] = 'crew';
-  }
+  if (patch.role !== undefined && (typeof patch.role !== 'string' || !ROLES.includes(patch.role as Role))) throw badRequest('role must be "captain", "crew" or "design"');
+  if (name === REVIEW && patch.role !== undefined && patch.role !== 'captain') throw badRequest('The review station is always worked by the captain');
   if (patch.guideline !== undefined) {
     if (typeof patch.guideline !== 'string') throw badRequest('guideline must be a string');
     if (patch.guideline.length > MAX_GUIDELINE) throw badRequest(`guideline is longer than ${MAX_GUIDELINE} characters`);
-    mkdirSync(join(dir(), 'stations'), { recursive: true });
-    if (patch.guideline.trim()) writeFileSync(guidelineFile(name), patch.guideline);
-    else rmSync(guidelineFile(name), { force: true });
   }
-  writeIndex(next);
-  return describe(name, next);
+  const current = describe(p, name);
+  const role = (patch.role as Role | undefined) ?? current.role;
+  const guideline = (patch.guideline as string | undefined) ?? current.guideline;
+  mkdirSync(dirOf(p), { recursive: true });
+  writeFileSync(fileOf(p, name), serialise(role, guideline));
+  return describe(p, name);
 }
 
-/** Removes an added station; a built-in one is reset to its default role and an empty guideline. */
-export function deleteStation(rawName: unknown): void {
+/** Removes a station file. The review station cannot be removed. */
+export function deleteStation(p: MusterPaths, rawName: unknown): void {
   const name = stationName(rawName);
-  const { roles } = readIndex();
-  if (!(name in STATION_ROLE) && !(name in roles)) throw badRequest(`No station "${name}"`);
-  const next = { ...roles };
-  delete next[name];
-  rmSync(guidelineFile(name), { force: true });
-  writeIndex(next);
+  if (name === REVIEW) throw badRequest('The review station cannot be removed');
+  if (!existsSync(fileOf(p, name))) throw notFound(`No station "${name}"`);
+  rmSync(fileOf(p, name), { force: true });
 }

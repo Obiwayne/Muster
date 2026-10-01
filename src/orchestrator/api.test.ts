@@ -398,23 +398,19 @@ describe('orchestrator API', () => {
     await ok('PATCH', '/api/config', { vellum: null });
   });
 
-  it('serves per-machine stations: agents read, only you write', async () => {
-    const prev = process.env.MUSTER_SECRETS_DIR;
-    process.env.MUSTER_SECRETS_DIR = mkdtempSync(join(tmpdir(), 'muster-stations-api-'));
-    try {
-      expect((await ok<any[]>('GET', '/api/stations')).map((s) => s.name)).toEqual(['build', 'test', 'design', 'review']);
-      const put = await ok('PUT', '/api/stations/lint', { role: 'crew', guideline: '# Lint\nRun eslint.' });
-      expect(put).toMatchObject({ name: 'lint', role: 'crew', builtin: false, guideline: '# Lint\nRun eslint.' });
-      expect(await ok('GET', '/api/stations/lint')).toEqual(put);
-      expect((await call('PUT', '/api/stations/lint', { guideline: 'x', actor: 'crew-2' })).status).toBe(403);
-      expect((await call('GET', '/api/stations', undefined, orch.agentToken('crew-2'))).status).toBe(200);
-      expect((await call('PUT', '/api/stations/review', { role: 'crew' })).status).toBe(400);
-      expect((await call('GET', '/api/stations/nope')).status).toBe(404);
-      expect((await ok<any[]>('DELETE', '/api/stations/lint')).map((s) => s.name)).not.toContain('lint');
-    } finally {
-      if (prev === undefined) delete process.env.MUSTER_SECRETS_DIR;
-      else process.env.MUSTER_SECRETS_DIR = prev;
-    }
+  it('serves stations from .muster/stations: agents read, only you write', async () => {
+    const list = async () => (await ok<{ stations: any[] }>('GET', '/api/stations')).stations;
+    expect((await list()).map((s) => s.name)).toEqual(['build', 'review', 'design', 'test']);
+    expect(existsSync(join(repo, '.muster', 'stations', 'build.md'))).toBe(true);
+    const put = await ok('PUT', '/api/stations/lint', { role: 'crew', guideline: '# Lint - run eslint.' });
+    expect(put).toMatchObject({ name: 'lint', role: 'crew', builtIn: false, guideline: '# Lint - run eslint.' });
+    expect(await ok('GET', '/api/stations/lint')).toEqual(put);
+    expect((await call('PUT', '/api/stations/lint', { guideline: 'x', actor: 'crew-2' })).status).toBe(403);
+    expect((await call('GET', '/api/stations', undefined, orch.agentToken('crew-2'))).status).toBe(200);
+    expect((await call('PUT', '/api/stations/review', { role: 'crew' })).status).toBe(400);
+    expect((await call('DELETE', '/api/stations/review')).status).toBe(400);
+    expect((await call('GET', '/api/stations/nope')).status).toBe(404);
+    expect((await ok<{ stations: any[] }>('DELETE', '/api/stations/lint')).stations.map((s) => s.name)).not.toContain('lint');
   });
 
   it('shuts down, then resumes the agents that were running on the next start', async () => {

@@ -1,13 +1,13 @@
 // Task board: creation, dependencies, claiming, stations, review and send-back.
 // Pure state mutations; git side effects (branch merges/renames) live in the API layer.
-import { roleOfStation } from './stations.js';
-import { type Agent, type MusterConfig, type MusterState, type Note, type Role, type Task, type TaskBranchInput, type TaskEvent } from '../types.js';
+import { STATION_ROLE, type Agent, type MusterConfig, type MusterState, type Note, type Role, type Task, type TaskBranchInput, type TaskEvent } from '../types.js';
 import { addFeed, addInbox, captainOf, closeNoteIfOpen, findAgent, HUMAN, idNum, isCaptain, nowIso, postNote, requireActor, requireAgent, SYSTEM } from './board.js';
 import { badRequest, conflict, forbidden, notFound } from './errors.js';
 import { nextId } from './store.js';
 import { assertNotPaused } from './usage.js';
 
-export const stationRole = (station: string): Role => roleOfStation(station);
+/** Which role works a station: `roles` (from the station files) first, then the built-in defaults; unknown stations are crew. */
+export const stationRole = (station: string, roles: Record<string, Role> = {}): Role => (station === 'review' ? 'captain' : (roles[station] ?? STATION_ROLE[station] ?? 'crew'));
 
 export function currentStation(task: Task): string {
   return task.stations[task.stationIndex] ?? 'review';
@@ -143,18 +143,18 @@ function release(state: MusterState, task: Task): void {
 }
 
 /** The task claim_task would give this agent (no changes made). */
-export function nextClaimable(state: MusterState, agent: Agent): Task | undefined {
+export function nextClaimable(state: MusterState, agent: Agent, roles?: Record<string, Role>): Task | undefined {
   return state.tasks
-    .filter((t) => !t.assignee && (t.status === 'ready' || (t.status === 'blocked' && depsMet(state, t))) && stationRole(currentStation(t)) === agent.role)
+    .filter((t) => !t.assignee && (t.status === 'ready' || (t.status === 'blocked' && depsMet(state, t))) && stationRole(currentStation(t), roles) === agent.role)
     .sort((a, b) => a.createdAt.localeCompare(b.createdAt) || idNum(a.id) - idNum(b.id))[0];
 }
 
-export function claimTask(state: MusterState, actor: string): Task | null {
+export function claimTask(state: MusterState, actor: string, roles?: Record<string, Role>): Task | null {
   const agent = requireAgent(state, actor);
   assertNotPaused(state);
   assertCanTake(state, agent);
   recomputeReadiness(state);
-  const task = nextClaimable(state, agent);
+  const task = nextClaimable(state, agent, roles);
   if (!task) return null;
   takeTask(state, task, agent);
   event(task, agent.id, 'claimed');
@@ -204,7 +204,7 @@ export interface HandoffResult {
  * Moves the task to its next station. `from` is the finishing station's branch (checked by the caller
  * to contain the task's inputs); it becomes the task branch and an input every later branch must contain.
  */
-export function handoffTask(state: MusterState, taskId: string, actor: string, to: string | undefined, note: string, from?: StationBranch): HandoffResult {
+export function handoffTask(state: MusterState, taskId: string, actor: string, to: string | undefined, note: string, from?: StationBranch, roles?: Record<string, Role>): HandoffResult {
   requireActor(state, actor);
   const task = requireTask(state, taskId);
   requireHolder(state, task, actor);
@@ -220,7 +220,7 @@ export function handoffTask(state: MusterState, taskId: string, actor: string, t
   task.stationIndex = Math.min(task.stationIndex + 1, task.stations.length - 1);
   const station = currentStation(task);
   const noteText = note?.trim() || '(no note)';
-  event(task, actor, 'handoff', `to ${station === 'review' ? 'review' : (receiver?.id ?? 'any ' + stationRole(station))}: ${noteText}`);
+  event(task, actor, 'handoff', `to ${station === 'review' ? 'review' : (receiver?.id ?? 'any ' + stationRole(station, roles))}: ${noteText}`);
 
   if (station === 'review') {
     toReview(state, task, actor, `${actor} handed ${task.id} ${task.title} to review: ${noteText}`);
@@ -236,7 +236,7 @@ export function handoffTask(state: MusterState, taskId: string, actor: string, t
   } else {
     task.status = 'ready';
     // Tell free agents of the next station's role, so the task doesn't wait for the Captain to route it.
-    const role = stationRole(station);
+    const role = stationRole(station, roles);
     for (const a of state.agents) {
       if (a.id === actor || a.role !== role || a.status === 'stopped' || a.taskId) continue;
       addInbox(state, { agentId: a.id, from: actor, kind: 'handoff', taskId: task.id, text: `${task.id} ${task.title} is ready at the ${station} station: call claim_task` });
@@ -246,7 +246,7 @@ export function handoffTask(state: MusterState, taskId: string, actor: string, t
   return { task, fromBranch, receiver };
 }
 
-export function doneTask(state: MusterState, taskId: string, actor: string, summary: string, from?: StationBranch): Task {
+export function doneTask(state: MusterState, taskId: string, actor: string, summary: string, from?: StationBranch, roles?: Record<string, Role>): Task {
   requireActor(state, actor);
   const task = requireTask(state, taskId);
   requireHolder(state, task, actor);
@@ -256,7 +256,7 @@ export function doneTask(state: MusterState, taskId: string, actor: string, summ
   // the task goes on to the next one rather than jumping straight to the Captain.
   if (task.stations[task.stationIndex + 1] !== 'review' && task.stationIndex < task.stations.length - 1) {
     postNote(state, { actor, type: 'done', taskId: task.id, text: `${task.id} ${task.title} (${currentStation(task)}): ${text}` });
-    return handoffTask(state, taskId, actor, undefined, text, from).task;
+    return handoffTask(state, taskId, actor, undefined, text, from, roles).task;
   }
   if (from) {
     task.branch = from.branch;
