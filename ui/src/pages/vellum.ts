@@ -37,9 +37,9 @@ export function createVellum(): Page {
       h('div.conn-card', null,
         h('span.dot', { style: { background: v ? 'var(--color-crew)' : 'var(--color-faint)' } }),
         h('div', { style: 'display:flex;flex-direction:column;gap:2px;flex:1;min-width:0' },
-          h('div.t', null, v ? 'Vellum MCP configured' : 'Vellum not configured'),
+          h('div.t', null, v ? 'Vellum connected' : 'Vellum not configured'),
           h('div.s', { title: v ? [v.command, ...v.args].join(' ') : '' }, v ? cmd : 'Set the Vellum MCP path in Settings')),
-        v ? h('span.badge.b-design', { style: 'font-size:11px' }, 'Read only') : null),
+        v ? h('span.badge.b-design', { style: 'font-size:11px;font-weight:700;letter-spacing:.08em;text-transform:uppercase' }, 'Read only') : null),
       h('div.v-sec', null,
         h('div.section-label', null, 'Design crew'),
         design
@@ -71,7 +71,7 @@ export function createVellum(): Page {
       h('div.v-head', null,
         h('div', { style: 'display:flex;flex-direction:column;gap:3px;flex:1;min-width:0' },
           h('div.t', null, 'Design checks'),
-          h('div.s', null, design ? `Notes from ${design.id}${latest ? ` · last ${ago(latest)}` : ' · nothing posted yet'}` : 'Notes posted by the design crew show up here')),
+          h('div.s', null, design ? `By the design crew (${design.id})${latest ? ` · last run ${ago(latest)}` : ' · nothing posted yet'}` : 'Notes posted by the design crew show up here')),
         passed ? h('span', { style: 'font-size:12px;color:var(--color-crew)' }, `${passed} passed`) : null,
         drift ? h('span', { style: 'font-size:12px;color:var(--color-stuck)' }, `${drift} drift`) : null),
       h('div.checks-list', null, checks.length ? checks.map(({ n, v: vd }) => checkRow(state, n, vd))
