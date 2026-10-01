@@ -22,6 +22,14 @@ describe('tasks', () => {
     expect([a.id, b.id]).toEqual(['T1', 'T2']);
   });
 
+  it('routes a custom station by its configured role', () => {
+    const roles = { docs: 'design' as const };
+    createTask(s, config, { title: 'Docs', stations: ['docs'], actor: 'captain' });
+    expect(claimTask(s, 'crew-2', roles)).toBeNull();
+    expect(claimTask(s, 'design', roles)?.title).toBe('Docs');
+    expect(claimTask(s, 'crew-2')).toBeNull(); // without the mapping an unknown station is crew work
+  });
+
   it('blocks on dependencies until they reach ready_for_merge', () => {
     const api = createTask(s, config, { title: 'API', actor: 'captain' });
     const tests = createTask(s, config, { title: 'Tests', dependsOn: ['t1'], actor: 'captain' });

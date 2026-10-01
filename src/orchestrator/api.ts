@@ -7,6 +7,7 @@ import { badRequest, conflict, forbidden, HttpError, notFound } from '../core/er
 import * as gitOps from '../core/git.js';
 import type { MusterPaths } from '../core/paths.js';
 import type { Store } from '../core/store.js';
+import * as stations from '../core/stations.js';
 import * as tasks from '../core/tasks.js';
 import { createVellumChecker, type VellumCall } from '../core/vellum.js';
 import { applyUsage, refreshGuard, type RawUsage } from '../core/usage.js';
@@ -117,6 +118,21 @@ export function createApi(ctx: ApiContext) {
       return config;
     });
   });
+  // ------------------------------------------------------------------ stations (files in .muster/stations)
+  route('GET', '/api/stations', () => stations.listStations(ctx.paths, ctx.config()));
+  route('GET', '/api/stations/:name', ({ params }) => {
+    const s = stations.getStation(ctx.paths, stations.stationName(decodeURIComponent(params.name)));
+    if (!s) throw notFound(`No station "${params.name}"`);
+    return s;
+  });
+  route('PUT', '/api/stations/:name', ({ params, body }) => stations.saveStation(ctx.paths, decodeURIComponent(params.name), { role: body.role, guideline: body.guideline }));
+  route('DELETE', '/api/stations/:name', ({ params }) => {
+    const name = stations.stationName(decodeURIComponent(params.name));
+    stations.deleteStation(ctx.paths, name);
+    const defaults = ctx.config().defaultStations;
+    if (defaults.includes(name)) ctx.updateConfig({ defaultStations: defaults.filter((n) => n !== name) });
+    return stations.listStations(ctx.paths, ctx.config());
+  });
   route('GET', '/api/vellum', ({ query }) => vellum.check(ctx.config(), flag(query, 'refresh')));
   route('POST', '/api/shutdown', ({ body }) => {
     setImmediate(() => ctx.shutdown(Boolean(body.clean)));
@@ -221,8 +237,8 @@ export function createApi(ctx: ApiContext) {
   });
   route('POST', '/api/tasks/claim', async ({ body }) => {
     const claimer = board.findAgent(state(), body.actor);
-    if (claimer) await agents.assertCanTakeBranch(claimer.id, tasks.nextClaimable(state(), claimer));
-    const task = mutate(() => tasks.claimTask(state(), str(body.actor, 'actor')));
+    if (claimer) await agents.assertCanTakeBranch(claimer.id, tasks.nextClaimable(state(), claimer, stations.stationRoles(ctx.paths)));
+    const task = mutate(() => tasks.claimTask(state(), str(body.actor, 'actor'), stations.stationRoles(ctx.paths)));
     if (task) await afterTake(board.findAgent(state(), body.actor), task);
     return task;
   });
@@ -236,13 +252,13 @@ export function createApi(ctx: ApiContext) {
     const current = tasks.requireTask(state(), params.id);
     const from = await agents.stationBranch(current); // 409 unless it contains the earlier stations' work
     if (body.to) await agents.assertCanTakeBranch(body.to, current);
-    const r = mutate(() => tasks.handoffTask(state(), params.id, str(body.actor, 'actor'), body.to || undefined, body.note ?? '', from));
+    const r = mutate(() => tasks.handoffTask(state(), params.id, str(body.actor, 'actor'), body.to || undefined, body.note ?? '', from, stations.stationRoles(ctx.paths)));
     if (r.receiver) await afterTake(r.receiver, r.task);
     return r.task;
   });
   route('POST', '/api/tasks/:id/done', async ({ params, body }) => {
     const from = await agents.stationBranch(tasks.requireTask(state(), params.id));
-    return mutate(() => tasks.doneTask(state(), params.id, str(body.actor, 'actor'), body.summary ?? '', from));
+    return mutate(() => tasks.doneTask(state(), params.id, str(body.actor, 'actor'), body.summary ?? '', from, stations.stationRoles(ctx.paths)));
   });
   route('POST', '/api/tasks/:id/review', async ({ params, body }) => {
     const reviewed = await agents.stationBranch(tasks.requireTask(state(), params.id)); // records the commit the merge will take

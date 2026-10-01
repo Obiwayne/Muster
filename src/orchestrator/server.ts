@@ -7,6 +7,7 @@ import type { MusterConfig, MusterEvent, TermClientMessage } from '../types.js';
 import { resolveClaudePath } from '../core/claude.js';
 import { loadConfig, saveConfig, type ConfigPatch } from '../core/config.js';
 import { notify } from '../core/notify.js';
+import { seedStations } from '../core/stations.js';
 import { ensureDirs, MUSTER_HOME, musterPaths } from '../core/paths.js';
 import { Store } from '../core/store.js';
 import { newSecret, removeHumanToken, writeHumanToken } from '../core/tokens.js';
@@ -91,6 +92,7 @@ async function listen(server: Server, port: number): Promise<number> {
 export async function startOrchestrator(opts: OrchestratorOptions): Promise<Orchestrator> {
   const paths = musterPaths(opts.repoRoot);
   ensureDirs(paths);
+  seedStations(paths);
   const log = opts.log ?? ((msg: string) => console.log(`${new Date().toISOString()} ${msg}`));
   let config = loadConfig(paths);
   const store = new Store(paths);

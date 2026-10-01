@@ -398,6 +398,21 @@ describe('orchestrator API', () => {
     await ok('PATCH', '/api/config', { vellum: null });
   });
 
+  it('serves stations from .muster/stations: agents read, only you write', async () => {
+    const list = async () => ok<any[]>('GET', '/api/stations');
+    expect((await list()).map((s) => s.name)).toEqual(['build', 'design', 'test', 'review']);
+    expect(existsSync(join(repo, '.muster', 'stations', 'build.md'))).toBe(true);
+    const put = await ok('PUT', '/api/stations/lint', { role: 'crew', guideline: '# Lint - run eslint.' });
+    expect(put).toMatchObject({ name: 'lint', role: 'crew', builtin: false, guideline: '# Lint - run eslint.' });
+    expect(await ok('GET', '/api/stations/lint')).toEqual(put);
+    expect((await call('PUT', '/api/stations/lint', { guideline: 'x', actor: 'crew-2' })).status).toBe(403);
+    expect((await call('GET', '/api/stations', undefined, orch.agentToken('crew-2'))).status).toBe(200);
+    expect((await call('PUT', '/api/stations/review', { role: 'crew' })).status).toBe(400);
+    expect((await call('DELETE', '/api/stations/review')).status).toBe(400);
+    expect((await call('GET', '/api/stations/nope')).status).toBe(404);
+    expect((await ok<any[]>('DELETE', '/api/stations/lint')).map((s) => s.name)).not.toContain('lint');
+  });
+
   it('shuts down, then resumes the agents that were running on the next start', async () => {
     const running = orch.store.state.agents.filter((a) => a.status !== 'stopped').map((a) => a.id).sort();
     await orch.shutdown();
