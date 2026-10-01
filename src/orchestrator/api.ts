@@ -90,6 +90,8 @@ export function createApi(ctx: ApiContext) {
   route('GET', '/api/config', () => ctx.config());
   route('PATCH', '/api/config', ({ body }) => {
     const patch = Object.fromEntries(Object.entries(body).filter(([k]) => CONFIG_KEYS.has(k))) as ConfigPatch;
+    if (patch.vellumFile !== undefined && patch.vellumFile !== null && typeof patch.vellumFile !== 'string') throw badRequest('vellumFile must be a string, or null to clear it');
+    if (patch.vellumFile === '') patch.vellumFile = null;
     const before = ctx.config().userName;
     const config = ctx.updateConfig(patch);
     return mutate(() => {

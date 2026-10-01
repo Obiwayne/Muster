@@ -67,6 +67,12 @@ describe('designPrompt', () => {
     expect(p).toMatch(/PASS/);
     expect(p).toMatch(/DRIFT/);
   });
+  it('states the PASS/DRIFT reporting convention', () => {
+    expect(p).toContain('`PASS T# <summary>`');
+    expect(p).toContain('`DRIFT T# <summary>`');
+    expect(p).toContain('`path:line — what differs`');
+    expect(p).toContain('ui/src/pages/vellum.ts:42 — card radius 8px, design says 12px');
+  });
   it('works without a vellum file', () => {
     expect(designPrompt({ ...ctx, vellumFile: undefined })).toContain('list_files');
   });

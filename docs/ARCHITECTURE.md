@@ -247,6 +247,9 @@ Stdio MCP server named `muster`. Tools by role (`MUSTER_ROLE`):
 
 `captainPrompt(ctx)`, `crewPrompt(ctx)`, `designPrompt(ctx)` where `ctx = { agentId, repoRoot, worktree, branch, baseBranch, testCommand, projectName, vellumFile? }` → markdown string. Must encode the SPEC rules: Captain checks the board first every turn, never writes code or merges, crew answer each other first, escalate only decisions only the human can make, request_review when a branch is tested; Crew work only in their worktree, commit on their branch, post progress, ask other crew before the Captain, never merge or push; Design crew read the Vellum design framework (read-only unless the Captain asks) and flag drift with notes/messages.
 
+### Design check reporting (designPrompt; parsed by the Vellum page's Design checks list)
+Every design check the design crew posts, as a `done` note or a `report_done`/`handoff` summary, starts with a line `PASS T# <summary>` or `DRIFT T# <summary>`. For drift, one line per difference follows: `path:line — what differs` (e.g. `ui/src/pages/vellum.ts:42 — card radius 8px, design says 12px`). `config.vellumFile` (string; `null` or `""` clears it, other types get 400) names the framework file in that prompt.
+
 ## Dashboard (ui/)
 
 Vite + TypeScript, no framework needed (vanilla TS + small render helpers), `@xterm/xterm` + `@xterm/addon-fit`. Must match the approved Vellum design (file "Muster", id `28BUsqILtGqq`): 7 screens (Dashboard, Bulletin board, Crew chat, Tasks, Branches, Vellum boards, Settings) + the "Design system" page tokens. Uses only the HTTP API and WebSockets above. Hash routing (`#/board`, `#/chat`, ...). Grid layouts: 1 → full, 2 → side by side, 3 → two on top + one wide, 4 → 2×2, >4 → pages. Right-click a tile (or ⋯): Set as Captain / Crew / Vellum design crew, View diff, Close.
