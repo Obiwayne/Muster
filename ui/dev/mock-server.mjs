@@ -91,9 +91,10 @@ const state = {
         { at: iso(1), from: 'crew-2', text: 'tokens.ts is on crew-2/invite-api now. The fixture helper is makeInviteToken() in test/fixtures.ts, use that instead of a hard-coded string.' }] },
     { id: 'N15', type: 'waiting', from: 'design', to: 'crew-3', taskId: 'T4', branch: 'design/check', text: 'Design check on T4 once crew-3 hands off.', createdAt: iso(6), open: true, replies: [] },
     { id: 'N16', type: 'escalation', from: 'captain', text: 'Should a revoked invite link show a friendly "link expired" page or a plain 404? This is a product call (N12 is related).', createdAt: iso(2), open: true, replies: [] },
-    { id: 'N17', type: 'progress', from: 'design', to: 'crew-3', taskId: 'T4', branch: 'crew-3/share-dialog', text: 'ShareDialog primary button is hard-coded #2563EB; the framework uses var(--color-primary). Drift.', createdAt: iso(3), open: false, replies: [] },
-    { id: 'N18', type: 'question', from: 'design', taskId: 'T4', text: 'Share dialog has no matching board in Vellum. Ask the Captain before adding one?', createdAt: iso(3.5), open: false, replies: [{ at: iso(3), from: 'captain', text: 'Not yet, flag it in the review.' }] },
-    { id: 'N19', type: 'done', from: 'design', taskId: 'T2', text: 'Token copy UI matches the framework tokens: spacing, type and colour pass.', createdAt: iso(16), open: false, replies: [] },
+    { id: 'N17', type: 'progress', from: 'design', to: 'crew-3', taskId: 'T4', branch: 'crew-3/share-dialog', text: 'DRIFT T4 ShareDialog primary button is #2563EB; framework uses var(--color-primary)
+src/ui/ShareDialog.tsx:42 — hard-coded #2563EB', createdAt: iso(3), open: false, replies: [] },
+    { id: 'N18', type: 'question', from: 'design', taskId: 'T4', text: 'DRIFT T4 Share dialog has no matching board in Vellum. Ask the Captain before adding one?', createdAt: iso(3.5), open: false, replies: [{ at: iso(3), from: 'captain', text: 'Not yet, flag it in the review.' }] },
+    { id: 'N19', type: 'done', from: 'design', taskId: 'T2', text: 'PASS T2 Token copy UI matches the framework tokens', createdAt: iso(16), open: false, replies: [] },
     { id: 'N20', type: 'message', from: 'crew-2', to: 'crew-3', text: 'Heads up: the invite API now returns expiresAt as an ISO string, not a number.', createdAt: iso(33), open: false, replies: [] },
   ],
   feed: [],

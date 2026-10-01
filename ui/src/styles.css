@@ -484,6 +484,7 @@ textarea.field { height: auto; min-height: 40px; padding: 10px 14px; resize: ver
 .dcheck .type { width: 64px; flex-shrink: 0; }
 .dcheck .body { flex: 1; display: flex; flex-direction: column; gap: 5px; min-width: 0; }
 .dcheck .text { font-size: 14px; line-height: 20px; white-space: pre-wrap; overflow-wrap: anywhere; }
+.dcheck .meta.diff { color: var(--color-muted); }
 .dcheck .meta { font-family: var(--font-mono); font-size: 11px; color: var(--color-faint); }
 
 /* ---------- settings ---------- */
