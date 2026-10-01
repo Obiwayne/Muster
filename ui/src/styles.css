@@ -85,6 +85,9 @@ a { color: inherit; text-decoration: none; }
   padding: 18px 12px; gap: 22px; overflow: hidden;
 }
 .logo { display: flex; align-items: center; gap: 10px; padding: 0 8px; }
+.logo-switch { width: 100%; height: 48px; margin: -6px 0; border-radius: var(--radius-sm); color: inherit; cursor: pointer; }
+.logo-switch:hover { background: color-mix(in oklab, var(--color-text) 5%, transparent); }
+.logo-switch > svg:last-child { color: var(--color-faint); flex-shrink: 0; }
 .logo-name { font-size: 16px; font-weight: 650; letter-spacing: -0.01em; line-height: 19px; }
 .logo-project { font-size: 11px; line-height: 14px; color: var(--color-muted); }
 .nav { display: flex; flex-direction: column; gap: 2px; }

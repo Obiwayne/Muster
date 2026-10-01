@@ -1,7 +1,7 @@
 // Muster dashboard: shell (sidebar, top bar), hash router, toasts.
 import './styles.css';
 import type { Agent } from '../../src/types';
-import { h, icon, logo, setChildren, toast } from './dom';
+import { h, icon, logo, setChildren, showMenu, showModal, toast, type MenuItem } from './dom';
 import { events, type Snapshot } from './events';
 import { openAddAgent } from './actions';
 import { agentStatusWord, agoLong, resetsIn, setUserName, sortedAgents } from './util';
@@ -42,8 +42,56 @@ const agentList = h('div.agent-list');
 const addSide = h('button.icon-btn', { title: 'Add agent' }, icon('plus', 14));
 addSide.onclick = () => openAddAgent(addSide, 'left');
 
+// ---------- project switcher (desktop app only: window.musterApp comes from its preload) ----------
+interface MusterApp {
+  projects(): Promise<{ current: string | null; projects: { root: string; name: string; running: boolean }[] } | null>;
+  switchTo(root: string): Promise<{ ok: boolean; error?: string }>;
+  openFolder(): Promise<unknown>;
+  stopCurrent(): Promise<void>;
+  showPicker(): Promise<void>;
+}
+const desk = (window as unknown as { musterApp?: MusterApp }).musterApp;
+const sameRoot = (a: string, b: string) => a.replace(/\\/g, '/').toLowerCase() === b.replace(/\\/g, '/').toLowerCase();
+
+async function openProjectMenu(anchor: HTMLElement): Promise<void> {
+  if (!desk) return;
+  const data = await desk.projects();
+  if (!data) return;
+  const items: (MenuItem | 'sep')[] = data.projects.map((p) => ({
+    label: p.running ? p.name : `${p.name}  ·  stopped`,
+    role: p.running ? 'crew' : undefined,
+    tone: p.running ? undefined : 'muted',
+    current: !!data.current && sameRoot(p.root, data.current),
+    onClick: () => void desk.switchTo(p.root),
+  }));
+  if (items.length) items.push('sep');
+  items.push({ label: 'Open another project…', onClick: () => void desk.openFolder() });
+  items.push({ label: 'All projects', tone: 'muted', onClick: () => void desk.showPicker() });
+  items.push('sep');
+  items.push({
+    label: "Stop this project's crew",
+    tone: 'danger',
+    onClick: () =>
+      showModal({
+        title: "Stop this project's crew?",
+        body: h('p', { style: 'margin:0;color:var(--color-muted);font-size:13px;line-height:20px' }, 'Every agent on this project stops. Their work stays on their branches, and opening the project again resumes them.'),
+        actions: [{ label: 'Stop the crew', kind: 'danger', onClick: async (close) => { close(); await desk.stopCurrent(); } }],
+      }),
+  });
+  const r = anchor.getBoundingClientRect();
+  showMenu(items, r.left, r.bottom + 6);
+}
+
+const brand = desk
+  ? h('button.logo.logo-switch', { title: 'Switch project' },
+      logo(21),
+      h('div', { style: 'display:flex;flex-direction:column;gap:1px;min-width:0;flex:1;text-align:left' }, h('div.logo-name', null, 'Muster'), projectEl),
+      icon('chevron', 14, 2.5))
+  : h('div.logo', null, logo(21), h('div', { style: 'display:flex;flex-direction:column;gap:1px;min-width:0' }, h('div.logo-name', null, 'Muster'), projectEl));
+if (desk) brand.addEventListener('click', () => void openProjectMenu(brand));
+
 const sidebar = h('aside.sidebar', null,
-  h('div.logo', null, logo(21), h('div', { style: 'display:flex;flex-direction:column;gap:1px;min-width:0' }, h('div.logo-name', null, 'Muster'), projectEl)),
+  brand,
   h('nav.nav', null, ROUTES.map((r) => {
     const count = h('span');
     navCounts.set(r.id, count);

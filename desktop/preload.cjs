@@ -12,3 +12,14 @@ if (location.protocol === 'file:') contextBridge.exposeInMainWorld('muster', {
   setName: (name) => ipcRenderer.invoke('muster:setName', name),
   closeChoice: (r) => ipcRenderer.send('muster:closeChoice', r),
 });
+
+// The dashboard (served by the project's own orchestrator on localhost) gets project switching only.
+if (location.protocol === 'http:' && (location.hostname === '127.0.0.1' || location.hostname === 'localhost')) {
+  contextBridge.exposeInMainWorld('musterApp', {
+    projects: () => ipcRenderer.invoke('app:projects'),
+    switchTo: (root) => ipcRenderer.invoke('app:switch', root),
+    openFolder: () => ipcRenderer.invoke('app:openFolder'),
+    stopCurrent: () => ipcRenderer.invoke('app:stopCurrent'),
+    showPicker: () => ipcRenderer.invoke('app:picker'),
+  });
+}

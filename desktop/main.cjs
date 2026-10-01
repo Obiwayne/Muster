@@ -296,6 +296,35 @@ function writeUserName(name) {
 
 // ---------------------------------------------------------------- picker IPC
 ipcMain.handle('muster:getName', () => readUserName());
+
+// ---------------------------------------------------------------- dashboard project switcher IPC
+// Only the window's own dashboard can call these (the preload exposes them to localhost pages only).
+const fromWindow = (event) => win && event.sender === win.webContents;
+ipcMain.handle('app:projects', async (event) => {
+  if (!fromWindow(event)) return null;
+  const { recent } = loadSettings();
+  const list = await Promise.all(
+    recent.filter((r) => fs.existsSync(r)).map(async (root) => ({ root, name: path.basename(root), running: await isRunning(root) })),
+  );
+  return { current: current?.root ?? null, projects: list };
+});
+ipcMain.handle('app:switch', async (event, root) => {
+  if (!fromWindow(event)) return { ok: false, error: 'not allowed' };
+  if (current && String(root).toLowerCase() === current.root.toLowerCase()) return { ok: true };
+  const r = await openProject(String(root)); // the project being left keeps its crew running
+  if (!r.ok) await dialog.showMessageBox(win, { type: 'error', title: 'Could not open project', message: r.error });
+  return r;
+});
+ipcMain.handle('app:openFolder', (event) => (fromWindow(event) ? chooseAndOpen() : null));
+ipcMain.handle('app:picker', (event) => {
+  if (fromWindow(event)) showPicker();
+});
+ipcMain.handle('app:stopCurrent', async (event) => {
+  if (!fromWindow(event) || !current) return;
+  const root = current.root;
+  await stopProject(root);
+  showPicker();
+});
 ipcMain.handle('muster:setName', (_e, name) => writeUserName(name));
 
 ipcMain.handle('muster:recent', async () => {
