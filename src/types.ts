@@ -1,7 +1,7 @@
 // Shared types for Muster. This file is the contract between the orchestrator,
 // the CLI, muster-mcp, the hooks and the dashboard. Change it deliberately.
 
-export type Role = 'captain' | 'crew' | 'design' | 'human'; // human = an approval station: nobody claims it, you Approve or Send back from the board
+export type Role = 'captain' | 'crew' | 'design' | 'human' | 'research'; // research = the scout: reads public pages, posts ideas, never edits code or takes tasks // human = an approval station: nobody claims it, you Approve or Send back from the board
 
 export type AgentStatus =
   | 'starting' // PTY spawned, claude booting
@@ -120,6 +120,8 @@ export interface Note {
   text: string;
   createdAt: string;
   open: boolean; // stuck/question/waiting/review/escalation start open; others start closed
+  topic?: 'weekly_usage' | 'five_hour' | 'roadmap' | 'research'; // what a system/approval note is about, so the UI can offer the right controls
+  dismissed?: boolean; // you removed it from the board (POST /api/notes/:id/dismiss); kept in state for history, hidden by default
   closedAt?: string;
   replies: NoteReply[];
 }
@@ -164,7 +166,9 @@ export interface UsageState {
   updatedAt?: string;
   perAgentCostUsd: Record<string, number>;
   paused: boolean; // fiveHour >= config.pauseAtFiveHourPct
-  weeklyWarned: boolean; // sevenDay >= config.warnAtWeeklyPct (warning note already posted)
+  weeklyWarned: boolean; // the weekly alert for the current threshold was already posted
+  weeklyRemindAt?: number; // "remind me again at N%": the next threshold this week (overrides warnAtWeeklyPct until the reset)
+  weeklySnoozedUntil?: string; // "don't remind me again this week": ISO time of the reset; no weekly alerts before it
 }
 
 /** One Vellum file as shown on the Vellum boards page. */
@@ -194,6 +198,7 @@ export interface MusterConfig {
   maxCrew: number; // default 3 (crew running at once, not counting the captain or design crew)
   pauseAtFiveHourPct: number; // default 80
   warnAtWeeklyPct: number; // default 75
+  weeklyAlerts: boolean; // default true; false = "never remind me" (the 5-hour pause still applies)
   shutdownIdleCrew: boolean; // default true: stop a crew agent once its task reaches review and it has nothing else
   defaultStations: string[]; // alias for the default line's stations + review (PATCHing it edits that line)
   testCommand: string; // default "npm test"
@@ -225,7 +230,8 @@ export interface MusterState {
   usage: UsageState;
   goal?: { text: string; at: string }; // last goal given to the Captain (muster ask)
   roadmap?: Roadmap; // drafted by the Captain before work starts, approved by you
-  nextIds: { agent: number; task: number; note: number; feed: number; inbox: number; stage: number; goal: number };
+  research?: ResearchState; // scout runs and the ideas they found
+  nextIds: { agent: number; task: number; note: number; feed: number; inbox: number; stage: number; goal: number; idea: number; run: number };
 }
 
 // ---- Roadmap (src/core/roadmap.ts) ----
@@ -329,6 +335,7 @@ export const DEFAULT_CONFIG: MusterConfig = {
   crewNames: 'names',
   requireEvidence: true,
   notify: true,
+  weeklyAlerts: true,
   allowedTools: [
     'Bash(npm *)', // no Bash(node *) / Bash(npx *): either runs arbitrary code without a prompt
     'Bash(git status*)',
@@ -380,4 +387,72 @@ export interface LineDef {
   label: string;
   stations: string[];
   builtin: boolean; // shipped with Muster (edits are still saved per machine)
+}
+
+// ---- Research (src/core/research.ts) ----
+// You start a run from the Roadmap page; the orchestrator spawns the research agent "scout", which reads public pages
+// and posts ideas. You approve, reject, or ask the Captain for advice; an approved idea goes onto the roadmap through
+// the Captain without a second roadmap approval.
+
+export interface ResearchSources {
+  competitors: string[]; // similar apps to study (names or URLs), e.g. ["Padlet", "Wakelet"]
+  reviews: boolean; // app-store / G2 reviews of those apps, low ratings first
+  forums: string[]; // e.g. ["r/Teachers", "r/edtech"]; empty = skip Reddit and forums
+  ownApp: boolean; // read our own code and roadmap for rough edges
+}
+
+export type ResearchRunStatus = 'running' | 'done' | 'failed' | 'cancelled';
+
+export interface ResearchRun {
+  id: string; // "RR1"
+  status: ResearchRunStatus;
+  sources: ResearchSources;
+  focus?: string; // optional question from you
+  depth: 'quick' | 'thorough';
+  agentId: string; // "scout"
+  startedAt: string;
+  finishedAt?: string;
+  summary?: string; // scout's one-paragraph wrap-up
+  sourcesRead?: number;
+  ideaIds: string[];
+}
+
+export type IdeaImpact = 'high' | 'medium' | 'low' | 'business';
+export type IdeaStatus = 'new' | 'approved' | 'rejected';
+
+export interface IdeaEvidence {
+  kind: 'review' | 'forum' | 'competitor' | 'app' | 'web';
+  source: string; // "App Store review · Padlet · 2★", "r/Teachers · 412 upvotes", "Wakelet public roadmap"
+  text?: string; // a short quote or finding (≤ 300 chars)
+  url?: string;
+  count?: number; // "+37 similar"
+}
+
+export interface IdeaMessage {
+  at: string;
+  from: string; // "you" or "captain"
+  text: string;
+}
+
+export interface ResearchIdea {
+  id: string; // "R1", "R2"…
+  runId: string;
+  title: string;
+  summary: string; // the problem/opportunity in one or two sentences
+  impact: IdeaImpact;
+  effort: 'S' | 'M' | 'L';
+  stageId?: string; // stage it fits, as scout suggests
+  overlapsGoalId?: string; // an existing goal it overlaps
+  evidence: IdeaEvidence[];
+  status: IdeaStatus;
+  thread: IdeaMessage[]; // your questions and the Captain's advice
+  plan?: string[]; // Captain's proposed roadmap changes on approve, e.g. ["+ Add goal Moderation queue to M3 (Oct 13–17)", "~ Move M3 due Oct 17 → 20"]
+  goalId?: string; // the goal the Captain created for it after you approved
+  decidedAt?: string;
+  createdAt: string;
+}
+
+export interface ResearchState {
+  runs: ResearchRun[];
+  ideas: ResearchIdea[];
 }

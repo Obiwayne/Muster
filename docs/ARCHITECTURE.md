@@ -232,6 +232,46 @@ Progress (`computeProgress(state, today)`, pure, exported): task counts per goal
 
 **Dashboard:** nav item "Roadmap" (2nd, under Dashboard; trailing text = current stage id) on every page. `#/roadmap` = overview (summary strip, stage timeline by week with a today line, the current stage expanded to its goals, panels: recently landed, tasks merged per day, up next). `#/roadmap/M3` = stage detail (breadcrumb, stage stepper, header + stats, goal groups → task table, exit criteria, stage activity from the feed). Empty state: "No roadmap yet" + "Ask the Captain to draft one" (POST /api/ask). Draft state: banner "Roadmap draft · revision n — waiting for your approval" with Approve / Send back (note).
 
+### Roadmap upkeep (2 Oct, later)
+Progress counts linked tasks; a stage with none counts ticked exit criteria, then its goals (`basis` on stage progress); a done goal is 100%; `overall.percent` = stage percents weighted by live goal count; `overall.unlinked` = live tasks with no goal. `POST /api/roadmap/goals/:id/tasks { actor, taskIds, unlink? }` (Captain or you) puts existing tasks on a goal; a goal whose linked tasks are all merged finishes. The Captain gets an inbox item on approval when unlinked tasks exist and whenever a task merges without a goal; MCP `link_tasks(goal, tasks, unlink?)`. The Captain prompt says it owns the roadmap and keeps it current without being asked.
+
+### Research (src/core/research.ts — designed and approved 2 Oct)
+Design: Vellum "Muster", artboards "Roadmap" (Research button with new-idea count, "Captain updated it … ago" line), "Roadmap — new research" (modal), "Roadmap — research ideas". Types: `ResearchState`, `ResearchRun`, `ResearchIdea` in src/types.ts; `state.research`; ids `nextIds.run` ("RR1"…) and `nextIds.idea` ("R1"…).
+
+**Role `research`, agent id `scout`.** Spawned by the orchestrator when you start a run (only one scout; a stopped scout is restarted with its session). cwd = repo root (no worktree), model = `config.crewModel`. The guard hook denies it Edit/Write/MultiEdit/NotebookEdit and git writes (like the Captain). It loads the `muster:web-research` skill and reads public pages only — never signs in, never posts. It is not crew: never claims tasks, doesn't count toward maxCrew, can't be assigned tasks. First prompt: `[muster] You are scout (research). Call research_brief and start.` finish_research marks the run done and the orchestrator stops scout. While paused (5-hour), POST runs is 409 like spawns.
+
+| Method | Path | Body | Returns |
+|---|---|---|---|
+| GET | /api/research | – | `ResearchState` (empty lists when none) |
+| POST | /api/research/runs | `{ actor: "you", sources: ResearchSources, focus?, depth: 'quick' or 'thorough' }` | `ResearchRun` — human only; 409 while a run is running; 400 when no source is chosen. Starts scout. Feed event. |
+| POST | /api/research/runs/:id/cancel | `{ actor: "you" }` | `ResearchRun` — cancelled, scout stopped |
+| GET | /api/research/brief | – | `{ text }` — research agent (or you): the running run's sources, focus, depth; the product (roadmap title/summary, stages with ids, titles and goals so it can suggest `stageId`/`overlapsGoalId`); ideas already found (titles, to avoid duplicates); rules (public pages only; quotes ≤ 300 chars; 3–8 ideas quick, 6–12 thorough) |
+| POST | /api/research/ideas | `{ actor, title, summary, impact, effort, stageId?, overlapsGoalId?, evidence: IdeaEvidence[] }` | `ResearchIdea` — research agent only, while its run is running; 1–8 evidence items; unknown stage/goal ids → 400 |
+| POST | /api/research/runs/:id/finish | `{ actor, summary, sourcesRead? }` | `ResearchRun` — research agent only: done, toast + notification "scout found N ideas", scout stopped |
+| POST | /api/research/ideas/:id/ask | `{ actor: "you", text }` | `ResearchIdea` — appended to `thread`; Captain inbox: "You asked about R7 <title>: <text>. Read it with get_idea R7 and answer with advise_idea (include the roadmap changes you'd make on approval)." |
+| POST | /api/research/ideas/:id/advice | `{ actor, text, plan?: string[] }` | `ResearchIdea` — Captain only; appends its reply, sets `plan` when given; toast |
+| POST | /api/research/ideas/:id/approve | `{ actor: "you" }` | `ResearchIdea` — human only, from `new`; Captain inbox: "R7 <title> approved. Add it to the roadmap now: add_goal(stage, …, idea: "R7") (or update_goal/link_tasks if it overlaps a goal). That change is already approved — no second approval." |
+| POST | /api/research/ideas/:id/reject | `{ actor: "you", note? }` | `ResearchIdea` — rejected |
+| POST | /api/research/ideas/:id/reopen | `{ actor: "you" }` | `ResearchIdea` — back to `new` |
+
+`POST /api/roadmap/goals` and `add_goal` take `ideaId?`: only for an `approved` idea without a goal; sets `idea.goalId`; that plan change does **not** turn an approved roadmap into a draft (approving the idea was the approval). Feed event "added G14 for idea R8".
+
+**MCP.** Research role: `research_brief()`, `add_idea(title, summary, impact, effort, evidence[], stage?, overlaps?)`, `finish_research(summary, sourcesRead?)`, `read_inbox()`. Captain: `list_ideas(status?)`, `get_idea(idea)` (thread, evidence, plan), `advise_idea(idea, text, plan?)`; `add_goal` gains `idea?`.
+
+**Prompts.** `researchPrompt(ctx)`: public pages only, use muster:web-research; similar apps' public roadmaps/changelogs/pricing; low-star reviews; forum threads (quote briefly, give counts and links); own app (code + roadmap) for rough edges; each idea is a user problem backed by evidence, not a feature wish; one add_idea per idea; finish_research when done. Captain prompt: answer "You asked about R…" inbox items with advise_idea (honest cost, where it fits, what moves, a `plan` list); add approved ideas to the roadmap right away with `idea:`.
+
+**Dashboard.** Roadmap sub bar: Research button (blue, `--color-glow-blue`, count of `new` ideas) → `#/roadmap/research`; summary line "Captain updated it <ago> (<what>)" from `roadmap.updatedAt` and the latest roadmap feed event. "New research" modal: four sources (competitor chips default from the last run, "+ Add app"; reviews; forum chips "+ Add"; own app), focus textarea, depth toggle with time and usage estimate (quick ≈ 3%, thorough ≈ 6% of the 5-hour window), footer "Public pages only, never signs in. No code changes.", Cancel / Start research. Research page: run strip (running: "scout researching… N ideas so far" + Cancel; done: summary, sources read), filter New / On roadmap / Rejected with counts, idea cards (impact pill, effort, evidence chips, "fits Mx", footer: Captain advised / No advice yet / Approved · Captain added it to M5 as G14 → link), right rail for the selected idea (evidence quotes with links, thread, "On approve, Captain will" from `plan`, follow-up input → ask, Reject / Approve & add to roadmap). Scout shows in the agent list like other agents, coloured `--color-glow-blue`.
+
+### Usage alerts (designed and approved 2 Oct)
+Weekly alert note: `type: 'system'`, `topic: 'weekly_usage'`, to you, open. Threshold = `usage.weeklyRemindAt ?? config.warnAtWeeklyPct`; skipped when `config.weeklyAlerts === false` or before `usage.weeklySnoozedUntil`. A new week (sevenDay `resetsAt` passed, or the percentage drops below the base threshold) clears `weeklyRemindAt`, `weeklySnoozedUntil` and `weeklyWarned`. Five-hour pause/resume notes get `topic: 'five_hour'`; roadmap approval notes `topic: 'roadmap'`.
+
+| Method | Path | Body | Returns |
+|---|---|---|---|
+| POST | /api/notes/:id/dismiss | `{ actor: "you" }` | `Note` — human only: closed and `dismissed`; GET /api/notes leaves dismissed notes out unless `?dismissed=1`; never Needs you |
+| POST | /api/usage/weekly-alert | `{ actor: "you", action: 'remind_at' or 'snooze_week' or 'never', percent?, noteId? }` | `{ usage, config }` — human only. remind_at: percent 1–100, above the current weekly % (else 400) → `weeklyRemindAt`, `weeklyWarned = false`; snooze_week: `weeklySnoozedUntil = sevenDay.resetsAt` (or now + 7 days); never: `config.weeklyAlerts = false` (saved). `noteId` is dismissed in the same call |
+
+Board: a `weekly_usage` note shows the design's view (meter with the alert marker; What next?: Remind me again at 85/90/95/custom %, Don't remind me again this week, Never remind me; Just dismiss / Save & dismiss); every system note row has a dismiss ×. The thread banner says "the Captain escalated this" only for `escalation` notes. Settings → Usage: weekly alert % and weekly alerts on/off.
+
 ### Bulletin board, chat, inbox
 | Method | Path | Body | Returns |
 |---|---|---|---|
