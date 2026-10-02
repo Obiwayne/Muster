@@ -51,6 +51,7 @@ export interface GoalPatch {
   start?: string | null;
   due?: string | null;
   status?: GoalStatus;
+  ideaId?: string | null; // an approved research idea this edit delivers (e.g. widening an overlapping goal): no second approval
 }
 
 /** What a write did to the approval note, so the API can toast (and notify when a note was opened). */
@@ -524,6 +525,7 @@ export function patchGoal(state: MusterState, id: string, patch: GoalPatch, acto
   const due = 'due' in p ? checkDate(p.due, `${goal.id} due`) : goal.due;
   checkRange(start, due, goal.id);
   if (p.status !== undefined && !GOAL_STATUSES.includes(p.status)) throw badRequest(`status must be one of ${GOAL_STATUSES.join(', ')}`);
+  const idea = p.ideaId === undefined || p.ideaId === null || p.ideaId === '' ? undefined : ideaForGoal(state, p.ideaId);
   const before = planKey(r);
   goal.title = title;
   goal.description = description;
@@ -542,6 +544,14 @@ export function patchGoal(state: MusterState, id: string, patch: GoalPatch, acto
       goalFinished(state, goal, actor);
     }
     if (p.status === 'active' || p.status === 'planned') addFeed(state, { kind: 'event', from: actor, text: `set ${goal.id} ${goal.title} to ${p.status}` });
+  }
+  if (idea) {
+    idea.goalId = goal.id;
+    addFeed(state, { kind: 'event', from: actor, text: `updated ${goal.id} for idea ${idea.id}` });
+    if (r.status === 'approved') {
+      r.updatedAt = nowIso();
+      return { roadmap: r, goal };
+    }
   }
   return { ...afterEdit(state, before, actor), goal };
 }

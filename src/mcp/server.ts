@@ -490,7 +490,7 @@ ${r.output}`;
 
     tool(
       'update_goal',
-      'Edit one goal: title, description, dates or status (planned, active, done, cancelled). Goals normally finish on their own when all their tasks are merged.',
+      'Edit one goal: title, description, dates or status (planned, active, done, cancelled). Goals normally finish on their own when all their tasks are merged. idea = the approved research idea this edit delivers (e.g. widening an overlapping goal): it links the idea to the goal, no second approval.',
       {
         goal: z.string().describe('Goal id, e.g. G3'),
         title: z.string().min(1).max(120).optional(),
@@ -498,12 +498,14 @@ ${r.output}`;
         status: z.enum(['planned', 'active', 'done', 'cancelled']).optional(),
         start: day.optional(),
         due: day.optional(),
+        idea: z.string().optional().describe('Approved research idea id, e.g. R7'),
       },
-      async ({ goal, ...patch }) => {
+      async ({ goal, idea, ...patch }) => {
         const id = upId(goal);
-        const v = await api<RoadmapView>(`/api/roadmap/goals/${enc(id)}`, { method: 'PATCH', body: { actor: me, ...patch } });
+        const body = { actor: me, ...patch, ...(idea ? { ideaId: upId(idea) } : {}) };
+        const v = await api<RoadmapView>(`/api/roadmap/goals/${enc(id)}`, { method: 'PATCH', body });
         const g = v?.roadmap?.goals.find((x) => x.id === id);
-        return `Updated ${id}${g ? ` ${clip(g.title, 60)} [${g.status}]` : ''}.${draftNote(v?.roadmap)}`;
+        return `Updated ${id}${g ? ` ${clip(g.title, 60)} [${g.status}]` : ''}${idea ? ` for idea ${upId(idea)}` : ''}.${draftNote(v?.roadmap)}`;
       },
     );
 

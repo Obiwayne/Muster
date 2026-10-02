@@ -32,6 +32,13 @@ export function migrate(raw: Partial<MusterState>, repoRoot: string): MusterStat
   const research = raw.research && typeof raw.research === 'object' ? { runs: Array.isArray(raw.research.runs) ? raw.research.runs : [], ideas: Array.isArray(raw.research.ideas) ? raw.research.ideas : [] } : undefined;
   nextIds.run = Math.max(nextIds.run, above(research?.runs.map((x) => x.id)));
   nextIds.idea = Math.max(nextIds.idea, above(research?.ideas.map((x) => x.id)));
+  // System notes from before topics existed: tag them so the board offers the right controls.
+  for (const n of raw.notes ?? []) {
+    if (n.topic || (n.type !== 'system' && n.type !== 'approval')) continue;
+    if (n.type === 'system' && /^Weekly usage at \d/.test(n.text)) n.topic = 'weekly_usage';
+    else if (n.type === 'system' && /^(Paused: 5-hour window|Resumed: the 5-hour window)/.test(n.text)) n.topic = 'five_hour';
+    else if (n.type === 'approval' && !n.taskId && /^Roadmap ready for your approval/.test(n.text)) n.topic = 'roadmap';
+  }
   return {
     ...base,
     ...raw,

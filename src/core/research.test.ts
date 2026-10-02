@@ -2,7 +2,7 @@ import { beforeEach, describe, expect, it } from 'vitest';
 import type { IdeaEvidence, MusterState } from '../types.js';
 import { inboxFor } from './board.js';
 import { addIdea, adviseIdea, approveIdea, askIdea, cancelRun, failRun, finishRun, getResearch, reopenIdea, rejectIdea, researchBrief, startRun, type IdeaInput } from './research.js';
-import { addGoal, approveRoadmap, setRoadmap } from './roadmap.js';
+import { addGoal, approveRoadmap, patchGoal, setRoadmap } from './roadmap.js';
 import { emptyState, migrate } from './store.js';
 import { makeAgent } from './testutil.js';
 
@@ -132,6 +132,17 @@ describe('research ideas', () => {
     expect(status(() => reopenIdea(s, 'you', i.id))).toBe(409);
     // A plain new goal is still a replan.
     expect(addGoal(s, { stageId: 'M2', title: 'Plain' }, 'captain').roadmap.status).toBe('draft');
+  });
+
+  it('an approved idea can widen an existing goal (update_goal with idea) without a second approval', () => {
+    const i = addIdea(s, 'scout', idea({ stageId: 'M2' }));
+    approveIdea(s, 'you', i.id);
+    const target = s.roadmap!.goals.find((g) => g.stageId === 'M2')!;
+    const { goal, roadmap } = patchGoal(s, target.id, { description: 'Now with a moderation queue', due: '2026-12-01', ideaId: 'r1' }, 'captain');
+    expect(i.goalId).toBe(goal.id);
+    expect(roadmap.status).toBe('approved'); // even with a date change
+    expect(s.feed.some((f) => f.text === `updated ${goal.id} for idea R1`)).toBe(true);
+    expect(status(() => patchGoal(s, target.id, { ideaId: 'R1' }, 'captain'))).toBe(409); // already has a goal
   });
 
   it('reject with a note, and reopen', () => {

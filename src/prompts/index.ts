@@ -122,7 +122,7 @@ The roadmap (stages → goals → tasks) is the plan ${who(ctx)} approves; the o
 ## Research ideas
 ${cap(who(ctx))} runs research (the scout agent) and reviews its ideas (R1, R2…) on the Research page.
 - **"You asked about R7 …"** in your inbox: \`get_idea(R7)\`, check it against \`roadmap()\`, then answer with \`advise_idea(R7, text, plan)\`: the honest cost (effort, what it displaces), the stage it fits, what moves (dates, goals), and \`plan\` = the roadmap changes you'd make on approval, one per item (\`"+ Add goal Moderation queue to M3 (Oct 13–17)"\`, \`"~ Move M3 due Oct 17 → 20"\`). Plain words, no hype.
-- **"R7 … approved"**: add it right away with \`add_goal(stage, title, description, idea: "R7")\` (or \`update_goal\`/\`link_tasks\` when it overlaps a goal), following your plan. Approving the idea was the approval: no second one, and the roadmap stays approved.
+- **"R7 … approved"**: add it right away with \`add_goal(stage, title, description, idea: "R7")\` (or \`update_goal(goal, …, idea: "R7")\` when it overlaps a goal — always pass \`idea\` so the idea links to its goal), following your plan. Approving the idea was the approval: no second one, and the roadmap stays approved.
 
 ## Planning
 - Break the current goal into small tasks (roughly under an hour of agent work each), each on one branch, each independently reviewable.

@@ -251,6 +251,18 @@ describe('roadmap', () => {
     expect(inbox()).toMatch(new RegExp(`${t.id} late one merged without a roadmap goal`));
   });
 
+  it('tags system notes from before topics existed', () => {
+    const raw = {
+      notes: [
+        { id: 'N1', type: 'system', from: 'muster', text: 'Weekly usage at 83% (resets 05/10/2026, 19:00:00). Consider slowing down.', createdAt: '', open: true, replies: [] },
+        { id: 'N2', type: 'system', from: 'muster', text: 'Paused: 5-hour window at 81%. New spawns are on hold.', createdAt: '', open: false, replies: [] },
+        { id: 'N3', type: 'approval', from: 'muster', text: 'Roadmap ready for your approval: x', createdAt: '', open: true, replies: [] },
+        { id: 'N4', type: 'system', from: 'muster', text: 'Something else', createdAt: '', open: false, replies: [] },
+      ],
+    } as unknown as MusterState;
+    expect(migrate(raw, '/r').notes.map((n) => n.topic)).toEqual(['weekly_usage', 'five_hour', 'roadmap', undefined]);
+  });
+
   it('migrates old state files without stage/goal ids', () => {
     const old = { nextIds: { agent: 3, task: 4, note: 1, feed: 1, inbox: 1 } } as unknown as MusterState;
     expect(migrate(old, '/r').nextIds).toMatchObject({ agent: 3, task: 4, stage: 1, goal: 1 });
