@@ -22,6 +22,21 @@ describe('tasks', () => {
     expect([a.id, b.id]).toEqual(['T1', 'T2']);
   });
 
+  it('tells the Captain when a handed-on task has nobody free to claim it', () => {
+    s.agents = s.agents.filter((a) => a.id !== 'crew-3'); // crew-2 is the only crew agent
+    createTask(s, config, { title: 'Greeting', stations: ['build', 'test'], assignee: 'crew-2', actor: 'captain' });
+    handoffTask(s, 'T1', 'crew-2', undefined, 'built');
+    expect(inboxFor(s, 'crew-2').some((i) => i.text.includes('is ready at the test station'))).toBe(false);
+    expect(inboxFor(s, 'captain').at(-1)!.text).toMatch(/^T1 Greeting is ready at the test station and no free crew agent was told\. assign it \(crew-2 may take it/);
+    // with another free crew agent, that agent hears about it and the Captain doesn't
+    s.agents.push(makeAgent('crew-3', 'crew'));
+    createTask(s, config, { title: 'Footer', stations: ['build', 'test'], assignee: 'crew-2', actor: 'captain' });
+    const before = inboxFor(s, 'captain').length;
+    handoffTask(s, 'T2', 'crew-2', undefined, 'built');
+    expect(inboxFor(s, 'crew-3').at(-1)!.text).toBe('T2 Footer is ready at the test station: call claim_task');
+    expect(inboxFor(s, 'captain').length).toBe(before);
+  });
+
   it('routes a custom station by its configured role', () => {
     const roles = { docs: 'design' as const };
     createTask(s, config, { title: 'Docs', stations: ['docs'], actor: 'captain' });

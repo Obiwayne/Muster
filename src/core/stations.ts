@@ -215,7 +215,7 @@ export function evidenceStation(task: Pick<Task, 'stations'>, roles: Record<stri
 export function evidenceBlock(taskId: string, station: string): string {
   const when = station === REVIEW ? 'Before you call request_review' : 'Before you hand on or report done';
   return `## Evidence (required at ${station})
-This is the last working station before review. ${when}, prove ${taskId} does what it should and attach the proof with \`add_evidence(files, summary)\`. Load \`muster:${EVIDENCE_SKILL}\` for how. Save it under \`.muster-evidence/${taskId}/\` in your worktree:
+This is the last working station before review. ${when}, prove ${taskId} does what it should and attach the proof with \`add_evidence(files, summary)\`. Load \`muster:${EVIDENCE_SKILL}\` for how. Save it under \`.muster-evidence/${taskId}/\` in your worktree. Git ignores that folder: never \`git add -f\` it (a branch that commits it can't be handed on):
 - UI: a screenshot of every state the task changes, before and after.
 - Code: the test command's output, plus measured numbers or before/after command output when they show the change.
 - Docs, plans or designs: the document itself, or exported artboards.

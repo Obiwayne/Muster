@@ -200,9 +200,22 @@ function toReview(state: MusterState, task: Task, from: string, text: string): v
 function announceReady(state: MusterState, task: Task, actor: string, roles?: Record<string, Role>): void {
   const station = currentStation(task);
   const role = stationRole(station, roles);
+  let told = 0;
   for (const a of state.agents) {
     if (a.id === actor || a.role !== role || a.status === 'stopped' || a.taskId) continue;
     addInbox(state, { agentId: a.id, from: actor, kind: 'handoff', taskId: task.id, text: `${task.id} ${task.title} is ready at the ${station} station: call claim_task` });
+    told++;
+  }
+  // Nobody free to pick it up (e.g. the only crew agent just handed it on): the Captain decides who takes it.
+  const captain = captainOf(state);
+  if (!told && captain && captain.id !== actor) {
+    addInbox(state, {
+      agentId: captain.id,
+      from: actor,
+      kind: 'handoff',
+      taskId: task.id,
+      text: `${task.id} ${task.title} is ready at the ${station} station and no free ${role === 'design' ? 'design crew' : role} agent was told. assign it (${actor} may take it if nobody else can), or spawn_crew if the crew limit allows.`,
+    });
   }
 }
 

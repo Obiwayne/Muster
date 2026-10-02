@@ -88,6 +88,14 @@ describe('evidence API', () => {
     mkdirSync(dir, { recursive: true });
     writeFileSync(join(dir, '01-after-dialog.png'), Buffer.from([0x89, 0x50, 0x4e, 0x47]));
     expect(gitSync(crew.worktree, 'status', '--porcelain')).toBe(''); // ignored, so the worktree stays clean
+    // forcing it into a commit is refused until it is untracked again
+    gitSync(crew.worktree, 'add', '-f', '.muster-evidence');
+    gitSync(crew.worktree, 'commit', '-q', '-m', 'oops');
+    const forced = await call('POST', '/api/tasks/T1/done', { actor: 'crew-2', summary: 'dialog works' });
+    expect(forced.status).toBe(409);
+    expect(forced.data.error).toMatch(/commits \.muster-evidence\/ files \(1\)\. Evidence is attached with add_evidence, never committed: git rm -r --cached \.muster-evidence/);
+    gitSync(crew.worktree, 'rm', '-r', '-q', '--cached', '.muster-evidence');
+    gitSync(crew.worktree, 'commit', '-q', '-m', 'untrack evidence');
     await ok('POST', '/api/tasks/T1/done', { actor: 'crew-2', summary: 'dialog works' });
 
     const refused = await call('POST', '/api/tasks/T1/review', { actor: 'captain', summary: 'tested' });
