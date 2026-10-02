@@ -200,6 +200,8 @@ export function createBoard(): Page {
         : n.type === 'review'
         ? 'Ready for review: the Captain has checked this branch. Approve it and the Captain merges and pushes, merge it yourself, or reply to send it back.'
         : 'Needs you: the Captain escalated this. Reply below; the answer goes to the agents involved.';
+      const hint = isApproval && task?.line === 'new-app'
+        ? h('div.faint', { style: 'font-size:12px;margin-top:4px' }, 'Pick the product name in Settings → Project, then back it up to GitHub from Settings → GitHub.') : null;
       const act = isRoadmap
         ? h('span.flex', { style: 'display:flex;gap:6px' },
             h('button.btn.sm', { onclick: () => { location.hash = '#/roadmap'; } }, 'Open roadmap'),
@@ -215,7 +217,7 @@ export function createBoard(): Page {
             h('button.btn.sm', { onclick: () => mergeTask(state, task) }, 'Merge myself'),
             task.mergeApproval ? null : h('button.btn.sm.merge', { onclick: () => void approveMerge(task) }, 'Approve'))
         : null;
-      items.push(h('div.banner.warm', null, icon('alert', 16), h('div.flex1', null, msg), act));
+      items.push(h('div.banner.warm', null, icon('alert', 16), h('div.flex1', null, msg, hint), act));
       if (n.type === 'review' && task) items.push(evidenceStrip(task));
     }
     setChildren(replies, items);

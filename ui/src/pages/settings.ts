@@ -3,7 +3,7 @@ import type { MusterConfig } from '../../../src/types';
 import { h, select, setChildren, toast, toggle } from '../dom';
 import { events, type Snapshot } from '../events';
 import type { Page } from '../page';
-import { api } from '../api';
+import { api, type ProjectInfo } from '../api';
 import { errToast, openGithubBackup } from '../actions';
 import { stationRole } from '../util';
 import { showStationEditor } from '../stationeditor';
@@ -32,6 +32,15 @@ const MODES = [
   { value: 'bypassPermissions', label: 'Bypass all' },
 ];
 
+interface MusterApp {
+  renameProject?(name: string): Promise<{ ok: boolean; error?: string; canceled?: boolean }>;
+  openProjectFolder?(): Promise<void>;
+}
+const desk = (window as unknown as { musterApp?: MusterApp }).musterApp;
+// Same slug the desktop app uses for the folder name.
+const slugify = (s: string) => s.toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/^-+|-+$/g, '').slice(0, 48);
+const baseName = (p: string) => p.replace(/[\\/]+$/, '').split(/[\\/]/).pop() ?? p;
+
 function withCurrent(opts: { value: string; label: string }[], v: string) {
   return opts.some((o) => o.value === v) ? opts : [...opts, { value: v, label: v }];
 }
@@ -41,8 +50,8 @@ export function createSettings(): Page {
   let lastJson = '';
   let apiRoles: Record<string, string> = {}; // station roles from GET /api/stations, when the server has it
   let shownLabel = '';
+  let project: ProjectInfo | null = null; // GET /api/project, when the server has it
   let lineLabel = ''; // label of the default line preset, when the server has presets
-  let remoteUrl: string | null | undefined; // undefined: not loaded yet; null: no GitHub remote
   const body = h('div.settings');
   const el = h('div.page', null, body);
 
@@ -166,16 +175,39 @@ export function createSettings(): Page {
     });
   }
 
-  async function loadRemote(): Promise<void> {
+  async function loadProject(): Promise<void> {
     try {
-      const next = (await api.project()).remoteUrl ?? null;
-      if (next !== remoteUrl) { remoteUrl = next; if (cfg) render(cfg); }
-    } catch { /* older server: no GitHub panel */ }
+      const next = await api.project();
+      if (JSON.stringify(next) !== JSON.stringify(project)) { project = next; if (cfg) render(cfg); }
+    } catch { /* older server: no Project panel */ }
+  }
+
+  function projectPanel(c: MusterConfig): HTMLElement | null {
+    const p = project;
+    if (!p) return null;
+    const name = c.projectName ?? p.name;
+    const rows: HTMLElement[] = [
+      row('Name', 'Shown in the dashboard and used by the crew. Pick the product name here',
+        ctl(textInput(name, (v) => save({ projectName: v || (null as unknown as undefined) }), { width: 200 }), 200)),
+    ];
+    const slug = slugify(name);
+    const folderBtns: HTMLElement[] = [];
+    if (desk?.openProjectFolder) folderBtns.push(h('button.btn.sm', { onclick: () => void desk.openProjectFolder!() }, 'Open folder'));
+    if (desk?.renameProject && slug && slug !== baseName(p.root).toLowerCase()) folderBtns.push(h('button.btn.sm', {
+      title: `Rename the folder to ${slug}`,
+      onclick: async () => {
+        const r = await desk.renameProject!(name);
+        if (!r.ok && !r.canceled && r.error) toast(r.error, 'error', 8000);
+      },
+    }, 'Rename folder to match name'));
+    rows.push(row('Folder', p.root, folderBtns.length ? h('div.ctl', { style: 'width:auto;gap:8px' }, folderBtns) : null, true));
+    return panel('Project', ...rows);
   }
 
   function githubPanel(c: MusterConfig): HTMLElement | null {
+    const remoteUrl = project ? project.remoteUrl ?? null : undefined; // undefined: not loaded yet; null: no GitHub remote
     if (remoteUrl === undefined) return null;
-    const backUp = h('button.btn.sm', { onclick: async () => { if (await openGithubBackup()) void loadRemote(); } }, 'Back up…');
+    const backUp = h('button.btn.sm', { onclick: async () => { if (await openGithubBackup()) void loadProject(); } }, 'Back up…');
     return panel('GitHub',
       row('Backup', remoteUrl ?? 'Only on this computer so far', remoteUrl ? null : backUp, !!remoteUrl),
       remoteUrl ? null : row('Offer a backup', 'Ask once the first piece of work is merged',
@@ -189,6 +221,7 @@ export function createSettings(): Page {
         h('div.muted', { style: 'font-size:13px' }, 'Saved to .muster/config.json in this repo. The CLI reads the same file.')),
       h('div.settings-cols', null,
         h('div.settings-col', null,
+          projectPanel(c),
           panel('You',
             row('Your name', 'What the Captain and crew call you. Shared by every project on this PC',
               ctl(textInput(c.userName ?? '', (v) => save({ userName: v || (null as unknown as undefined) }), { placeholder: 'e.g. Wayne', width: 200 }), 200))),
@@ -243,7 +276,7 @@ export function createSettings(): Page {
       cfg = s.config;
       render(s.config);
       void loadRoles();
-      void loadRemote();
+      void loadProject();
     },
   };
 }

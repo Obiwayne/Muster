@@ -416,6 +416,15 @@ async function body(req) {
   try { return JSON.parse(Buffer.concat(chunks).toString('utf8')); } catch { throw new HttpError(400, 'Invalid JSON'); }
 }
 
+// GET /api/project (T17 contract). MOCK_GH=missing|unauthed simulates a machine without gh.
+let ghRemote;
+const project = () => ({
+  name: config.projectName ?? 'wall-education',
+  root: 'F:/Projects/wall-education',
+  ...(ghRemote ? { remoteUrl: ghRemote } : {}),
+  gh: { installed: process.env.MOCK_GH !== 'missing', authed: !process.env.MOCK_GH, ...(process.env.MOCK_GH ? {} : { user: 'mock-user' }) },
+});
+
 async function api(req, url) {
   const m = req.method;
   const p = url.pathname;
@@ -431,6 +440,14 @@ async function api(req, url) {
     state.usage.paused = !!paused();
     broadcast();
     return config;
+  }
+  if (m === 'GET' && p === '/api/project') return project();
+  if (m === 'POST' && p === '/api/project/github') {
+    const b = await body(req);
+    need(b.name && /^[\w.-]+$/.test(b.name), 400, 'Invalid repository name');
+    need(project().gh.installed && project().gh.authed, 400, 'gh is not installed or not logged in');
+    ghRemote = `https://github.com/mock-user/${b.name}`;
+    return { url: ghRemote };
   }
   const sm = /^\/api\/stations\/([^/]+)$/.exec(p);
   if (m === 'GET' && p === '/api/lines') return { defaultLine: config.defaultLine, lines: lineDefs };

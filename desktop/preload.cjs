@@ -10,6 +10,9 @@ if (location.protocol === 'file:') contextBridge.exposeInMainWorld('muster', {
   stop: (root) => ipcRenderer.invoke('muster:stop', root),
   getName: () => ipcRenderer.invoke('muster:getName'),
   setName: (name) => ipcRenderer.invoke('muster:setName', name),
+  newAppDir: () => ipcRenderer.invoke('muster:newAppDir'),
+  pickNewAppDir: () => ipcRenderer.invoke('muster:pickNewAppDir'),
+  newApp: (req) => ipcRenderer.invoke('muster:newApp', req),
   closeChoice: (r) => ipcRenderer.send('muster:closeChoice', r),
 });
 
@@ -20,6 +23,8 @@ if (location.protocol === 'http:' && (location.hostname === '127.0.0.1' || locat
     switchTo: (root) => ipcRenderer.invoke('app:switch', root),
     openFolder: () => ipcRenderer.invoke('app:openFolder'),
     stopCurrent: () => ipcRenderer.invoke('app:stopCurrent'),
+    renameProject: (name) => ipcRenderer.invoke('app:renameProject', name),
+    openProjectFolder: () => ipcRenderer.invoke('app:openProjectFolder'),
     showPicker: () => ipcRenderer.invoke('app:picker'),
   });
 }
