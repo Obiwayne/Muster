@@ -87,6 +87,11 @@ interface Runtime {
 
 const RESTING: AgentStatus[] = ['idle', 'done', 'stuck', 'waiting'];
 const QUICK_EXIT_MS = 20_000;
+/** Crew names, handed out in order (config.crewNames 'numbers' keeps crew-2, crew-3, …). */
+export const CREW_NAMES = [
+  'ada', 'bea', 'cleo', 'dex', 'eli', 'faye', 'gus', 'iris', 'juno', 'kit', 'leo', 'mabel', 'nico',
+  'otto', 'pia', 'quinn', 'rosa', 'sol', 'tess', 'uma', 'vik', 'wren', 'xena', 'yuri', 'zane',
+];
 const START_OUTPUT_MAX = 64 * 1024;
 const ID_PATTERN = /^[a-z0-9][a-z0-9_-]{0,39}$/i;
 const sleep = (ms: number) => new Promise((r) => setTimeout(r, ms));
@@ -127,6 +132,7 @@ export class AgentManager {
   private closing = new Set<string>(); // agents being tidied away after an idle shutdown
   private zombies = new Map<string, number>(); // agent id → pid that survived stop()
   private starting = new Map<string, Promise<Agent>>();
+  private flaggedStopped = new Set<string>(); // 'agent:task' keys of stopped agents the watchdog already told the Captain about
   private timings: Timings;
   private nudgeTimer?: NodeJS.Timeout;
   private nudgeRetryTimer?: NodeJS.Timeout;
@@ -172,8 +178,7 @@ export class AgentManager {
     }
     if (role === 'design' && state.agents.some((a) => a.role === 'design')) throw conflict('There is already a design crew agent');
     if (role === 'crew') {
-      const running = state.agents.filter((a) => a.role === 'crew' && a.status !== 'stopped').length;
-      if (running >= config.maxCrew) throw conflict(`Crew limit reached (${running}/${config.maxCrew} running). Stop one or raise maxCrew.`);
+      this.assertCrewRoom(config.maxCrew);
     }
     if (input.taskId) {
       const task = requireTask(state, input.taskId);
@@ -215,6 +220,18 @@ export class AgentManager {
     return agent;
   }
 
+  /**
+   * maxCrew counts running crew plus stopped crew that still hold an unfinished task: those are parked work that
+   * gets restarted, so a new agent in their place would push the crew past the limit.
+   */
+  private assertCrewRoom(maxCrew: number): void {
+    const parked = (a: Agent) => a.status === 'stopped' && !!a.taskId && this.state.tasks.some((t) => t.id === a.taskId && t.assignee === a.id && t.status !== 'merged' && t.status !== 'cancelled');
+    const crew = this.state.agents.filter((a) => a.role === 'crew' && (a.status !== 'stopped' || parked(a)));
+    if (crew.length < maxCrew) return;
+    const stopped = crew.filter((a) => a.status === 'stopped').map((a) => `${a.id} (${a.taskId})`);
+    throw conflict(`Crew limit reached (${crew.length}/${maxCrew})${stopped.length ? `, counting stopped crew that still hold a task: ${stopped.join(', ')}. Restart one of them to finish its task` : '. Wait for one to finish'}, or raise maxCrew.`);
+  }
+
   private newId(role: Role, name?: string): string {
     const taken = (id: string) => this.state.agents.some((a) => a.id.toLowerCase() === id.toLowerCase()) || id === HUMAN || id === SYSTEM || id === 'everyone';
     if (name) {
@@ -225,9 +242,19 @@ export class AgentManager {
     if (role !== 'crew') {
       for (let i = 1; ; i++) if (!taken(i === 1 ? role : `${role}-${i}`)) return i === 1 ? role : `${role}-${i}`;
     }
+    const named = this.o.config().crewNames !== 'numbers';
     let id: string;
-    do id = `crew-${this.state.nextIds.agent++}`;
-    while (taken(id));
+    do {
+      const n = this.state.nextIds.agent++;
+      if (!named) id = `crew-${n}`;
+      else {
+        // Each number gets its own name, so a name never comes back for a different agent (old branches carry it).
+        const i = Math.max(0, n - 2); // the counter starts at 2 (crew-2 is the first numbered crew)
+        const base = CREW_NAMES[i % CREW_NAMES.length];
+        const round = Math.floor(i / CREW_NAMES.length);
+        id = round ? `${base}-${round + 1}` : base;
+      }
+    } while (taken(id));
     return id;
   }
 
@@ -378,7 +405,12 @@ export class AgentManager {
       this.log(`${id}: --append-system-prompt-file rejected, retrying with --append-system-prompt`);
       return this.spawn(agent, { ...rt.launch, inlinePrompt: '' }, rt.firstPrompt);
     }
-    if (quick && rt.launch.resume && /no conversation found|session.*not found/i.test(out)) {
+    // The session exists although no prompt was recorded (e.g. hooks were off): resume it instead.
+    if (quick && !rt.launch.resume && !rt.launch.retried && /session id .* is already in use/i.test(out)) {
+      this.log(`${id}: session ${agent.sessionId} already exists, resuming it`);
+      return this.spawn(agent, { ...rt.launch, resume: true, retried: true }, this.resumePromptFor(agent));
+    }
+    if (quick && rt.launch.resume && /no conversation found|session.*not found|already in use/i.test(out)) {
       this.log(`${id}: session ${agent.sessionId} not resumable, starting a new one`);
       agent.sessionId = randomUUID();
       return this.spawn(agent, { ...rt.launch, resume: false }, this.firstPromptFor(agent));
@@ -513,8 +545,7 @@ export class AgentManager {
       if (agent.role !== role || agent.status !== 'stopped' || agent.taskId || this.runtimes.has(agent.id) || this.starting.has(agent.id)) continue;
       if (!existsSync(agent.worktree) || (await gitOps.uncommittedChanges(agent.worktree)).length) continue;
       if (role === 'crew') {
-        const running = state.agents.filter((a) => a.role === 'crew' && a.status !== 'stopped').length;
-        if (running >= config.maxCrew) throw conflict(`Crew limit reached (${running}/${config.maxCrew} running). Stop one or raise maxCrew.`);
+        this.assertCrewRoom(config.maxCrew);
       }
       if (input.taskId) {
         const task = assignTask(state, input.taskId, agent.id, input.actor === SYSTEM ? HUMAN : input.actor);
@@ -1068,6 +1099,20 @@ export class AgentManager {
     if (changed) this.o.store.commit();
   }
 
+  /** A stopped agent can't be nudged and its parked task counts toward maxCrew: tell the Captain once instead. */
+  private flagStopped(agent: Agent, now: number): boolean {
+    const task = agent.taskId ? this.state.tasks.find((t) => t.id === agent.taskId && t.assignee === agent.id && t.status !== 'merged' && t.status !== 'cancelled') : undefined;
+    if (!task || this.starting.has(agent.id) || now - Date.parse(agent.lastActivityAt) < this.timings.watchdogIdleMs) return false;
+    const key = `${agent.id}:${task.id}`;
+    if (this.flaggedStopped.has(key)) return false;
+    this.flaggedStopped.add(key);
+    const text = `${agent.id} is stopped holding ${task.id} (${task.title}); restart it to finish the task`;
+    postNote(this.state, { actor: SYSTEM, type: 'stuck', text, taskId: task.id });
+    this.log(text);
+    this.o.onStuck?.(text);
+    return true;
+  }
+
   /** An agent that proved it is alive (it called the API with its own token) is no longer 'starting'. */
   touch(id: string): void {
     const agent = findAgent(this.state, id);
@@ -1086,6 +1131,11 @@ export class AgentManager {
     let changed = false;
     for (const agent of this.state.agents) {
       const rt = this.runtimes.get(agent.id);
+      if (!rt && agent.status === 'stopped') {
+        if (this.flagStopped(agent, now)) changed = true;
+        continue;
+      }
+      this.flaggedStopped.delete(`${agent.id}:${agent.taskId}`);
       if (!rt || rt.stopping) continue;
       const unread = inboxFor(this.state, agent.id, true);
       const task = agent.taskId ? this.state.tasks.find((t) => t.id === agent.taskId) : undefined;

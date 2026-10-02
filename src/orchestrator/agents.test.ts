@@ -245,6 +245,19 @@ describe('AgentManager watchdog', () => {
     expect(stuckNotes(store)[0].text).toContain("stuck at 'starting'");
   });
 
+  it('does not nudge a stopped agent holding a task; flags it to the Captain once', async () => {
+    const { store, agents, crew, task, stucks, ptys, nudges } = await rig();
+    await agents.stop(crew.id);
+    await sleep(60);
+    for (let i = 0; i < 3; i++) agents.watchQuietTerminals();
+    expect(nudges()).toBe(0);
+    expect(ptys.get(crew.id)!.written.join('')).not.toContain('work waiting');
+    const notes = stuckNotes(store).filter((n) => n.text.includes('is stopped holding'));
+    expect(notes).toHaveLength(1);
+    expect(notes[0].text).toContain(task.id);
+    expect(stucks).toHaveLength(1);
+  });
+
   it('an API call from a starting agent proves it is alive', async () => {
     const { store, agents, crew } = await rig();
     const a = store.state.agents.find((x) => x.id === crew.id)!;
@@ -283,6 +296,9 @@ class CtlPty implements PtyProcess {
     this.written += d;
   }
   resize() {}
+  exit(code: number) {
+    this.exitCb({ exitCode: code });
+  }
   kill() {
     if (this.exitOnKill) setImmediate(() => this.exitCb({ exitCode: 0 }));
   }
@@ -331,10 +347,41 @@ describe('AgentManager after the first live run', () => {
     const { agents, store } = setup(f.launcher, {}, {}, { maxCrew: 1 });
     const crew = await Promise.allSettled([agents.create({ role: 'crew', actor: SYS }), agents.create({ role: 'crew', actor: SYS })]);
     expect(crew.map((r) => r.status).sort()).toEqual(['fulfilled', 'rejected']);
-    expect(String((crew.find((r) => r.status === 'rejected') as PromiseRejectedResult).reason)).toMatch(/Crew limit reached \(1\/1 running\)/);
+    expect(String((crew.find((r) => r.status === 'rejected') as PromiseRejectedResult).reason)).toMatch(/Crew limit reached \(1\/1\)/);
     const design = await Promise.allSettled([agents.create({ role: 'design', actor: SYS }), agents.create({ role: 'design', actor: SYS })]);
     expect(design.map((r) => r.status).sort()).toEqual(['fulfilled', 'rejected']);
     expect(store.state.agents.map((a) => a.role).sort()).toEqual(['crew', 'design']);
+  });
+
+  it('names new crew (ada, bea…) unless crewNames is "numbers"', async () => {
+    const f = ctlLauncher();
+    const { agents } = setup(f.launcher, {}, {}, { crewNames: 'names' });
+    expect((await agents.create({ role: 'crew', actor: SYS })).id).toBe('ada');
+    expect((await agents.create({ role: 'crew', actor: SYS })).id).toBe('bea');
+    expect((await agents.create({ role: 'crew', actor: SYS })).branch).toBe('cleo/work');
+  });
+
+  it('counts stopped crew that still hold an unfinished task toward maxCrew', async () => {
+    const f = ctlLauncher();
+    const { agents, store, config } = setup(f.launcher, {}, {}, { maxCrew: 1 });
+    await agents.create({ role: 'crew', actor: SYS });
+    createTask(store.state, config, { title: 'Build it', assignee: 'crew-2', actor: 'you' });
+    await agents.stop('crew-2');
+    await expect(agents.create({ role: 'crew', actor: SYS })).rejects.toThrow(/Crew limit reached \(1\/1\), counting stopped crew that still hold a task: crew-2 \(T1\)/);
+    expect(store.state.agents.map((a) => a.id)).toEqual(['crew-2']);
+  });
+
+  it('resumes the session when claude says its id is already in use', async () => {
+    const f = ctlLauncher();
+    const { agents } = setup(f.launcher);
+    await agents.create({ role: 'crew', actor: SYS });
+    await agents.stop('crew-2');
+    await agents.start('crew-2'); // no prompt was ever recorded, so this starts with --session-id
+    expect(f.spawns.at(-1)!.args[0]).toBe('--session-id');
+    f.last('crew-2').emit('Error: Session ID abc is already in use.');
+    f.last('crew-2').exit(1);
+    expect(f.spawns.at(-1)!.args[0]).toBe('--resume');
+    expect(agents.isRunning('crew-2')).toBe(true);
   });
 
   it('removes the reserved record when creating the worktree fails', async () => {

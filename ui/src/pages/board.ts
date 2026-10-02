@@ -5,6 +5,7 @@ import type { Snapshot } from '../events';
 import type { Page } from '../page';
 import { api } from '../api';
 import { approveTask, mergeTask, run, sendBackApproval, showDiffModal } from '../actions';
+import { evidenceStrip } from '../evidence';
 import { NOTE_BADGE, ageShort, ago, displayName, initial, isEscalated, isNeedsYou, branchOwnerId, ms, noteLabel, roleOf, taskById } from '../util';
 
 type Filter = 'open' | 'stuck' | 'question' | 'waiting' | 'review' | 'approval' | 'all' | 'needsYou';
@@ -178,6 +179,7 @@ export function createBoard(): Page {
         : n.type === 'review' && task?.status === 'ready_for_merge'
         ? h('button.btn.sm.merge', { onclick: () => mergeTask(state, task) }, 'Merge') : null;
       items.push(h('div.banner.warm', null, icon('alert', 16), h('div.flex1', null, msg), act));
+      if (n.type === 'review' && task) items.push(evidenceStrip(task));
     }
     setChildren(replies, items);
     if (wasBottom) replies.scrollTop = replies.scrollHeight;

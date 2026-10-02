@@ -1,8 +1,10 @@
 // HTTP API routes (see docs/ARCHITECTURE.md). Handlers return JSON-able values or throw HttpError.
 import type { IncomingMessage, ServerResponse } from 'node:http';
 import type { Agent, MusterConfig, NoteType, Role, Task } from '../types.js';
+import { createReadStream, statSync } from 'node:fs';
 import * as board from '../core/board.js';
 import type { ConfigPatch } from '../core/config.js';
+import * as evidence from '../core/evidence.js';
 import { badRequest, conflict, forbidden, HttpError, notFound } from '../core/errors.js';
 import * as gitOps from '../core/git.js';
 import type { MusterPaths } from '../core/paths.js';
@@ -41,6 +43,11 @@ interface Req {
 
 type Handler = (r: Req) => unknown;
 
+/** A handler result sent as a file rather than JSON. */
+class FileReply {
+  constructor(public path: string, public contentType: string) {}
+}
+
 interface Route {
   method: string;
   pattern: RegExp;
@@ -52,8 +59,9 @@ const TEST_TIMEOUT_MS = 10 * 60_000;
 const MAX_BODY = 2 * 1024 * 1024;
 const CONFIG_KEYS = new Set<string>([
   'port', 'captainModel', 'crewModel', 'designModel', 'maxCrew', 'pauseAtFiveHourPct', 'warnAtWeeklyPct', 'shutdownIdleCrew',
-  'defaultStations', 'testCommand', 'baseBranch', 'permissionMode', 'claudePath', 'vellum', 'notify', 'allowedTools', 'projectName', 'userName', 'vellumFile', 'vellumEdit', 'defaultLine', 'lines',
+  'defaultStations', 'testCommand', 'baseBranch', 'permissionMode', 'claudePath', 'vellum', 'notify', 'allowedTools', 'projectName', 'userName', 'vellumFile', 'vellumEdit', 'defaultLine', 'lines', 'githubOffer', 'crewNames', 'requireEvidence',
 ]);
+const MAX_EVIDENCE_TEXT = 200_000;
 
 const str = (v: unknown, name: string): string => {
   if (typeof v !== 'string' || !v.trim()) throw badRequest(`Missing ${name}`);
@@ -82,9 +90,9 @@ export function createApi(ctx: ApiContext) {
     if (typeof branch !== 'string' || branch.startsWith('-') || !(await gitOps.branchExists(ctx.paths.root, branch))) throw notFound(`No branch "${branch}"`);
   };
 
-  /** Appends the current station's guideline to the newest inbox item the task just produced for `agentId`. */
+  /** Appends the current station's brief (guideline, skills, evidence) to the newest inbox item the task just produced for `agentId`. */
   const attachGuideline = (agentId: string | undefined, task: Task, kinds: string[]) => {
-    const block = stations.guidelineBlock(ctx.paths, tasks.currentStation(task));
+    const block = stations.stationBrief(ctx.paths, task, stations.stationRoles(ctx.paths));
     const item = block && agentId ? [...state().inbox].reverse().find((i) => i.agentId === agentId && i.taskId === task.id && kinds.includes(i.kind) && !i.read) : undefined;
     if (item && !item.text.includes(block)) {
       item.text += `
@@ -172,6 +180,15 @@ ${block}`;
     if (patch.vellumEdit !== undefined && patch.vellumEdit !== null && !['ask', 'always', 'never'].includes(patch.vellumEdit)) {
       throw badRequest('vellumEdit must be "ask", "always" or "never"');
     }
+    if (patch.githubOffer !== undefined && patch.githubOffer !== null && !['ask', 'never'].includes(patch.githubOffer)) {
+      throw badRequest('githubOffer must be "ask" or "never"');
+    }
+    if (patch.crewNames !== undefined && patch.crewNames !== null && !['names', 'numbers'].includes(patch.crewNames)) {
+      throw badRequest('crewNames must be "names" or "numbers"');
+    }
+    if (patch.requireEvidence !== undefined && patch.requireEvidence !== null && typeof patch.requireEvidence !== 'boolean') {
+      throw badRequest('requireEvidence must be true or false');
+    }
     lineEdits(patch);
     const before = ctx.config().userName;
     const beforeEdit = ctx.config().vellumEdit;
@@ -202,7 +219,15 @@ ${block}`;
     if (!s) throw notFound(`No station "${params.name}"`);
     return s;
   });
-  route('PUT', '/api/stations/:name', ({ params, body }) => stations.saveStation(ctx.paths, decodeURIComponent(params.name), { role: body.role, guideline: body.guideline }));
+  route('PUT', '/api/stations/:name', ({ params, body }) => {
+    if (Array.isArray(body.skills)) {
+      const known = new Set(stations.listSkills().map((s) => s.name));
+      const unknown = body.skills.filter((s: unknown) => typeof s === 'string' && !known.has(s));
+      if (unknown.length) throw badRequest(`Unknown skill${unknown.length > 1 ? 's' : ''}: ${unknown.join(', ')}. Muster's skills are in plugin/skills: ${[...known].join(', ') || 'none'}`);
+    }
+    return stations.saveStation(ctx.paths, decodeURIComponent(params.name), { role: body.role, guideline: body.guideline, skills: body.skills });
+  });
+  route('GET', '/api/skills', () => stations.listSkills());
   route('DELETE', '/api/stations/:name', ({ params }) => {
     const name = stations.stationName(decodeURIComponent(params.name));
     stations.deleteStation(ctx.paths, name);
@@ -326,6 +351,45 @@ ${block}`;
 
   // ------------------------------------------------------------------ tasks
   route('GET', '/api/tasks', () => state().tasks);
+  /** What the worker of the task's current station is told: guideline, skills and (at the last working station) evidence. */
+  route('GET', '/api/tasks/:id/brief', ({ params }) => ({ text: stations.stationBrief(ctx.paths, tasks.requireTask(state(), params.id), stations.stationRoles(ctx.paths)) }));
+
+  // ------------------------------------------------------------------ evidence
+  route('POST', '/api/tasks/:id/evidence', async ({ params, body }) => {
+    const task = tasks.requireTask(state(), params.id);
+    const actor = str(body.actor, 'actor');
+    const agent = board.findAgent(state(), actor);
+    if (agent && agent.role !== 'captain' && task.assignee !== agent.id && task.branch !== agent.branch) {
+      throw forbidden(`${actor} doesn't hold ${task.id}; only its current worker or the Captain attaches evidence`);
+    }
+    const files = body.files === undefined ? [] : body.files;
+    if (!Array.isArray(files) || files.some((f: unknown) => typeof f !== 'string')) throw badRequest('files must be a list of paths in your worktree');
+    if (body.text !== undefined && typeof body.text !== 'string') throw badRequest('text must be a string');
+    if (typeof body.text === 'string' && body.text.length > MAX_EVIDENCE_TEXT) throw badRequest(`text is longer than ${MAX_EVIDENCE_TEXT} characters; save it to a file and attach that`);
+    const worktree = agent?.worktree ?? ctx.paths.root;
+    const record = evidence.attachEvidence(ctx.paths, {
+      task,
+      worktree,
+      files,
+      text: body.text,
+      summary: str(body.summary, 'summary'),
+      station: tasks.currentStation(task),
+      by: actor,
+      sha: await gitOps.revParse(worktree, 'HEAD'),
+      at: board.nowIso(),
+    });
+    mutate(() => {
+      const t = tasks.requireTask(state(), params.id);
+      t.evidence = [...(t.evidence ?? []), record];
+      t.updatedAt = record.at;
+      board.feedEvent(state(), actor, `attached evidence ${record.id} to ${t.id} (${record.files.length} file${record.files.length === 1 ? '' : 's'}): ${record.summary.split('\n')[0].slice(0, 120)}`);
+    });
+    return record;
+  });
+  route('GET', '/api/tasks/:id/evidence/:entry/:file', ({ params }) => {
+    const path = evidence.evidencePath(ctx.paths, tasks.requireTask(state(), params.id), params.entry, params.file);
+    return new FileReply(path, evidence.contentType(params.file));
+  });
   route('POST', '/api/tasks', async ({ body }) => {
     if (body.assignee) await agents.assertCanTakeBranch(body.assignee);
     const task = mutate(() =>
@@ -376,7 +440,9 @@ ${block}`;
   });
   route('POST', '/api/tasks/:id/review', async ({ params, body }) => {
     const reviewed = await agents.stationBranch(tasks.requireTask(state(), params.id)); // records the commit the merge will take
-    const { task, note } = mutate(() => tasks.requestReview(state(), params.id, str(body.actor, 'actor'), body.summary ?? '', reviewed));
+    const { task, note } = mutate(() =>
+      tasks.requestReview(state(), params.id, str(body.actor, 'actor'), body.summary ?? '', reviewed, { requireEvidence: ctx.config().requireEvidence }),
+    );
     await agents.syncDependents(task.id);
     store.commit();
     ctx.notify('Muster: ready for review', note.text);
@@ -472,7 +538,9 @@ ${block}`;
       const body = req.method === 'GET' || req.method === 'HEAD' ? {} : await readBody(req);
       if (req.method !== 'GET' && req.method !== 'HEAD') applyIdentity(caller, path, body);
       if (!caller.human) agents.touch(caller.actor);
-      sendJson(res, 200, (await r.handler({ params, query: url.searchParams, body })) ?? null);
+      const result = await r.handler({ params, query: url.searchParams, body });
+      if (result instanceof FileReply) return sendFile(res, result);
+      sendJson(res, 200, result ?? null);
     } catch (e) {
       const status = e instanceof HttpError ? e.status : 500;
       sendJson(res, status, { error: e instanceof Error ? e.message : String(e) });
@@ -503,6 +571,18 @@ function readBody(req: IncomingMessage): Promise<Record<string, any>> {
     });
     req.on('error', reject);
   });
+}
+
+function sendFile(res: ServerResponse, f: FileReply): void {
+  res.writeHead(200, {
+    'content-type': f.contentType,
+    'content-length': String(statSync(f.path).size),
+    'cache-control': 'private, max-age=3600',
+    'x-content-type-options': 'nosniff',
+    // Text files (an agent's .html report included) are sent as text/plain; this keeps anything else inert too.
+    'content-security-policy': "default-src 'none'; img-src 'self'; media-src 'self'; style-src 'unsafe-inline'; sandbox",
+  });
+  createReadStream(f.path).pipe(res);
 }
 
 export function sendJson(res: ServerResponse, status: number, data: unknown): void {

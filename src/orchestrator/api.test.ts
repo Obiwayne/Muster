@@ -366,6 +366,9 @@ describe('orchestrator API', () => {
     expect((await ok('PATCH', '/api/config', { vellumEdit: 'never' })).vellumEdit).toBe('never');
     expect((await call('PATCH', '/api/config', { vellumEdit: 'sometimes' })).status).toBe(400);
     expect((await ok('PATCH', '/api/config', { vellumEdit: null })).vellumEdit).toBe('ask');
+    expect((await ok('PATCH', '/api/config', { githubOffer: 'never' })).githubOffer).toBe('never');
+    expect((await call('PATCH', '/api/config', { githubOffer: 'later' })).status).toBe(400);
+    expect((await ok('PATCH', '/api/config', { githubOffer: null })).githubOffer).toBe('ask');
   });
 
   it('saves and clears vellumFile', async () => {

@@ -1,4 +1,5 @@
-// "Edit line" modal: the station list (order, add, remove) and, per station, its role and Markdown guideline.
+// "Edit line" modal: the station list (order, add, remove) and, per station, its role, skills and Markdown guideline.
+import type { SkillInfo } from '../../src/types';
 import { ApiError, api, type LineDef, type StationDef } from './api';
 import { confirmDialog, h, icon, showModal, toast } from './dom';
 import { errToast } from './actions';
@@ -24,7 +25,9 @@ export interface StationEditorOpts {
   onClose: () => void;
 }
 
-interface Draft { role: StationRole; guideline: string }
+interface Draft { role: StationRole; guideline: string; skills: string[] }
+
+const sameList = (a: string[] = [], b: string[] = []) => a.length === b.length && a.every((x, i) => x === b[i]);
 
 export function showStationEditor(opts: StationEditorOpts): void {
   let saved: Record<string, StationDef> = {};
@@ -41,9 +44,10 @@ export function showStationEditor(opts: StationEditorOpts): void {
   let viewLine = ''; // the preset the line was last applied from or matches
   let others: string[] = []; // saved stations that are not in the line
   let presetsErr = false;
+  let skills: SkillInfo[] = []; // Muster's plugin skills (GET /api/skills); empty on an older server
 
   const root = h('div.se');
-  const isDirty = (n: string) => { const d = drafts[n], s = saved[n]; return !!d && !!s && (d.role !== s.role || d.guideline !== s.guideline); };
+  const isDirty = (n: string) => { const d = drafts[n], s = saved[n]; return !!d && !!s && (d.role !== s.role || d.guideline !== s.guideline || !sameList(d.skills, s.skills)); };
   const anyDirty = () => Object.keys(drafts).some(isDirty);
 
   const close = showModal({
@@ -58,11 +62,12 @@ export function showStationEditor(opts: StationEditorOpts): void {
   async function load(select?: string): Promise<void> {
     try {
       try { const r = await api.lines(); lines = r.lines; defaultLine = r.defaultLine; presetsErr = false; } catch { lines = []; presetsErr = true; } // older server: no presets
+      try { skills = await api.skills(); } catch { skills = []; }
       const list = await api.stations();
       saved = Object.fromEntries(list.map((s) => [s.name, s]));
       order = opts.lineOrder().filter((n) => n !== 'review' && saved[n]);
       others = list.map((s) => s.name).filter((n) => n !== 'review' && !order.includes(n));
-      for (const s of list) if (!isDirty(s.name)) drafts[s.name] = { role: s.role, guideline: s.guideline };
+      for (const s of list) if (!isDirty(s.name)) drafts[s.name] = { role: s.role, guideline: s.guideline, skills: [...(s.skills ?? [])] };
       for (const n of Object.keys(drafts)) if (!saved[n]) delete drafts[n];
       current = select && saved[select] ? select : saved[current] ? current : order[0] ?? 'review';
       error = '';
@@ -164,9 +169,9 @@ export function showStationEditor(opts: StationEditorOpts): void {
     if (!d) return;
     if (d.guideline.length > MAX_GUIDELINE) { toast('A guideline can be at most 20,000 characters', 'warn'); return; }
     try {
-      const s = await api.saveStation(current, { role: d.role, guideline: d.guideline });
+      const s = await api.saveStation(current, { role: d.role, guideline: d.guideline, ...(skills.length ? { skills: d.skills } : {}) });
       saved[current] = { ...saved[current], ...s };
-      drafts[current] = { role: saved[current].role, guideline: saved[current].guideline };
+      drafts[current] = { role: saved[current].role, guideline: saved[current].guideline, skills: [...(saved[current].skills ?? [])] };
       toast('Saved');
       draw();
     } catch (e) { errToast(e); }
@@ -213,6 +218,31 @@ export function showStationEditor(opts: StationEditorOpts): void {
       add);
   }
 
+  /** The last station before review that an agent works: it attaches the evidence. */
+  function evidenceStationName(): string {
+    const roleOf = (n: string) => drafts[n]?.role ?? saved[n]?.role ?? 'crew';
+    return [...order].reverse().find((n) => roleOf(n) !== 'human') ?? 'review';
+  }
+
+  function skillsRow(d: Draft): HTMLElement | null {
+    if (!skills.length) return null;
+    const known = new Set(skills.map((k) => k.name));
+    const chips = skills.map((k) => {
+      const on = d.skills.includes(k.name);
+      return h('button.se-skill', {
+        class: on && 'on',
+        title: k.description,
+        'aria-pressed': on ? 'true' : 'false',
+        onclick: () => { d.skills = on ? d.skills.filter((x) => x !== k.name) : [...d.skills, k.name]; draw(); },
+      }, on ? icon('check', 12) : icon('plus', 12), k.name);
+    });
+    const missing = d.skills.filter((n) => !known.has(n)).map((n) => h('span.se-skill.missing', { title: "Not in Muster's plugin/skills folder" }, n));
+    const evidence = current === evidenceStationName()
+      ? h('div.se-evidence', null, icon('check', 12), current === 'review' ? 'No agent station before review: the Captain attaches the evidence.' : 'Last working station before review: it must attach evidence (add_evidence) before the Captain can pass the task.')
+      : null;
+    return h('div.se-skills', null, h('div.se-skills-row', null, h('span.muted', null, 'Skills'), chips, missing), evidence);
+  }
+
   function editCol(): HTMLElement {
     const d = drafts[current];
     const s = saved[current];
@@ -228,7 +258,7 @@ export function showStationEditor(opts: StationEditorOpts): void {
       ROLES.map((r) => h('option', { value: r.value, selected: r.value === d.role }, r.label))) as HTMLSelectElement;
     const canSave = () => isDirty(current) && d.guideline.length <= MAX_GUIDELINE;
     const saveBtn = h('button.btn.primary', { disabled: !canSave(), onclick: () => void save() }, 'Save') as HTMLButtonElement;
-    const revertBtn = h('button.btn', { disabled: !isDirty(current), onclick: () => { drafts[current] = { role: s.role, guideline: s.guideline }; draw(); } }, 'Revert');
+    const revertBtn = h('button.btn', { disabled: !isDirty(current), onclick: () => { drafts[current] = { role: s.role, guideline: s.guideline, skills: [...(s.skills ?? [])] }; draw(); } }, 'Revert');
     const refreshChrome = () => { saveBtn.disabled = !canSave(); (revertBtn as HTMLButtonElement).disabled = !isDirty(current); };
     return h('div.se-edit', null,
       h('div.se-head', null,
@@ -236,6 +266,7 @@ export function showStationEditor(opts: StationEditorOpts): void {
         h('label.se-role', null, h('span.muted', null, 'Role'), h('div.select-wrap', null, roleSel, icon('chevron', 14))),
         isReview ? null : order.includes(current) ? h('button.btn', { title: 'Takes it off the line; the station and its guideline stay on this machine', onclick: () => void removeFromLine(current) }, 'Remove from line') : h('button.btn', { onclick: () => void addToLine(current) }, 'Add to line'),
         isReview ? null : h('button.btn.danger', { onclick: () => void removeStation(current) }, s.builtin ? 'Reset' : 'Delete')),
+      skillsRow(d),
       h('div.se-tabs', null,
         h('button', { class: tab === 'edit' && 'on', onclick: () => { tab = 'edit'; draw(); } }, 'Edit'),
         h('button', { class: tab === 'preview' && 'on', onclick: () => { tab = 'preview'; draw(); } }, 'Preview'),

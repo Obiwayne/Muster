@@ -5,7 +5,7 @@ import { defaultLineName, listLines } from './lines.js';
 import { listStations } from './stations.js';
 import { captainPrompt, crewPrompt, designPrompt, type PromptContext } from '../prompts/index.js';
 import type { Agent, MusterConfig, Role } from '../types.js';
-import { MUSTER_HOME, musterPaths, posix, type MusterPaths } from './paths.js';
+import { MUSTER_HOME, musterPaths, PLUGIN_DIR, posix, type MusterPaths } from './paths.js';
 import { deriveAgentToken } from './tokens.js';
 
 const DEFAULT_VELLUM_ENTRY = 'F:/Vellum/mcp/dist/index.js';
@@ -130,6 +130,7 @@ export function rolePrompt(agent: Agent, ctx: LaunchContext): string {
     projectName: ctx.config.projectName ?? '',
     vellumFile: ctx.config.vellumFile?.trim() || undefined,
     vellumEdit: ctx.config.vellumEdit ?? 'ask',
+    requireEvidence: ctx.config.requireEvidence !== false,
     userName: ctx.config.userName,
     stations: agent.role === 'captain' ? listStations(musterPaths(ctx.repoRoot), ctx.config) : undefined,
     lines: agent.role === 'captain' ? listLines(ctx.config) : undefined,
@@ -168,6 +169,9 @@ export function settingsConfig(config: MusterConfig, role?: Agent['role']): obje
   const hook = (event: string) => [{ type: 'command', command: `${node} "${posix(MUSTER_HOME)}/dist/hooks/hook.js" ${event}` }];
   const deny = role === 'design' && config.vellumEdit === 'never' ? VELLUM_EDIT_TOOLS : [];
   return {
+    // A user-level "disableAllHooks": true (e.g. to mute sound hooks) would also switch off these hooks and the
+    // status line, leaving agents stuck on "starting", never resumable and unguarded. --settings outranks it.
+    disableAllHooks: false,
     permissions: { allow: config.allowedTools, ...(deny.length ? { deny } : {}) },
     statusLine: { type: 'command', command: `${node} "${posix(MUSTER_HOME)}/dist/usage/statusline.js"` },
     hooks: {
@@ -219,6 +223,7 @@ export function trustPromptKeys(screen: string): string | undefined {
 }
 
 export interface LaunchOptions {
+  retried?: boolean; // already retried once after a launch error (no loops)
   resume: boolean;
   /** Pass the prompt text inline instead of --append-system-prompt-file. */
   inlinePrompt?: string;
@@ -234,6 +239,8 @@ export function launchArgs(agent: Agent, config: MusterConfig, files: AgentFiles
     // Only user settings files (plus --settings above): a project's .claude/settings(.local).json in the
     // worktree can't loosen the agent's permissions or drop its hooks.
     '--setting-sources', 'user',
+    // Muster's skills (evidence, before/after, code structure, unslop) as muster:<name>, for agents only.
+    ...(existsSync(PLUGIN_DIR) ? ['--plugin-dir', PLUGIN_DIR] : []),
     ...(opts.inlinePrompt !== undefined ? ['--append-system-prompt', opts.inlinePrompt] : ['--append-system-prompt-file', files.prompt]),
     '--name', `muster ${agent.id}`,
   ];

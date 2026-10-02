@@ -4,7 +4,7 @@ import { h, select, setChildren, toast, toggle } from '../dom';
 import { events, type Snapshot } from '../events';
 import type { Page } from '../page';
 import { api } from '../api';
-import { errToast } from '../actions';
+import { errToast, openGithubBackup } from '../actions';
 import { stationRole } from '../util';
 import { showStationEditor } from '../stationeditor';
 
@@ -17,6 +17,11 @@ const VELLUM_EDIT = [
   { value: 'ask', label: 'Only when asked' },
   { value: 'always', label: 'Always' },
   { value: 'never', label: 'Never' },
+];
+
+const CREW_NAMES = [
+  { value: 'names', label: 'Names' },
+  { value: 'numbers', label: 'Numbers' },
 ];
 
 const MODES = [
@@ -37,6 +42,7 @@ export function createSettings(): Page {
   let apiRoles: Record<string, string> = {}; // station roles from GET /api/stations, when the server has it
   let shownLabel = '';
   let lineLabel = ''; // label of the default line preset, when the server has presets
+  let remoteUrl: string | null | undefined; // undefined: not loaded yet; null: no GitHub remote
   const body = h('div.settings');
   const el = h('div.page', null, body);
 
@@ -58,7 +64,7 @@ export function createSettings(): Page {
       h('div.lbl', null, h('div.t', null, title), typeof sub === 'string' ? h('div.s', { class: subMono && 'mono' }, sub) : sub),
       ctl);
   const ctl = (child: HTMLElement, width = 160) => h('div.ctl', { style: { width: `${width}px` } }, child);
-  const panel = (label: string, ...rows: HTMLElement[]) => h('div.panel', null, h('div.section-label.panel-label', null, label), rows);
+  const panel = (label: string, ...rows: (HTMLElement | null)[]) => h('div.panel', null, h('div.section-label.panel-label', null, label), rows);
 
   function pctInput(value: number, onSave: (v: number) => void): HTMLElement {
     const input = h('input', { type: 'text', inputmode: 'numeric', value: String(value) }) as HTMLInputElement;
@@ -160,6 +166,22 @@ export function createSettings(): Page {
     });
   }
 
+  async function loadRemote(): Promise<void> {
+    try {
+      const next = (await api.project()).remoteUrl ?? null;
+      if (next !== remoteUrl) { remoteUrl = next; if (cfg) render(cfg); }
+    } catch { /* older server: no GitHub panel */ }
+  }
+
+  function githubPanel(c: MusterConfig): HTMLElement | null {
+    if (remoteUrl === undefined) return null;
+    const backUp = h('button.btn.sm', { onclick: async () => { if (await openGithubBackup()) void loadRemote(); } }, 'Back up…');
+    return panel('GitHub',
+      row('Backup', remoteUrl ?? 'Only on this computer so far', remoteUrl ? null : backUp, !!remoteUrl),
+      remoteUrl ? null : row('Offer a backup', 'Ask once the first piece of work is merged',
+        toggle(c.githubOffer !== 'never', (v) => save({ githubOffer: v ? 'ask' : 'never' }))));
+  }
+
   function render(c: MusterConfig): void {
     setChildren(body,
       h('div', { style: 'display:flex;flex-direction:column;gap:4px' },
@@ -175,7 +197,9 @@ export function createSettings(): Page {
               ctl(select(withCurrent(MODELS, c.captainModel), c.captainModel, (v) => save({ captainModel: v })))),
             row('Crew and design crew model', 'Much cheaper per task',
               ctl(select(withCurrent(MODELS, c.crewModel), c.crewModel, (v) => save({ crewModel: v, designModel: v })))),
-            row('Crew running at once', 'Not counting the Captain and the design crew',
+            row('Crew names', c.crewNames === 'numbers' ? 'New crew are called crew-18, crew-19…' : 'New crew get names: ada, bea, cleo…',
+              ctl(select(CREW_NAMES, c.crewNames ?? 'names', (v) => save({ crewNames: v as MusterConfig['crewNames'] })))),
+            row('Crew running at once', 'Not counting the Captain and the design crew. Stopped crew that still hold a task count too',
               ctl(stepper(c.maxCrew, 1, 12, (v) => save({ maxCrew: v })))),
             row('Shut down idle crew', 'An idle agent still holds a session open',
               ctl(toggle(c.shutdownIdleCrew, (v) => save({ shutdownIdleCrew: v }))))),
@@ -194,12 +218,15 @@ export function createSettings(): Page {
               ctl(pctInput(c.pauseAtFiveHourPct, (v) => save({ pauseAtFiveHourPct: v })), 120)),
             row('Warn me at', 'Weekly window',
               ctl(pctInput(c.warnAtWeeklyPct, (v) => save({ warnAtWeeklyPct: v })), 120))),
+          githubPanel(c),
           h('div.panel', null,
             h('div.panel-head', null, h('div.section-label', null, 'Factory line and review'),
               h('button.btn.sm', { onclick: editLine, title: 'Reorder stations and edit the role and guideline of each station' }, 'Edit line')),
             h('div.srow.col', null, h('div.lbl', null, h('div.t', null, 'Default stations')), stationsEditor(c)),
             row('Test command', 'Run by the Captain in each worktree',
               ctl(textInput(c.testCommand, (v) => save({ testCommand: v }), { mono: true }))),
+            row('Require evidence', c.requireEvidence === false ? 'Off: the Captain can pass a task without proof' : 'The last station attaches proof (screenshots, test output) before the Captain can pass a task',
+              toggle(c.requireEvidence !== false, (v) => save({ requireEvidence: v }))),
             row('Notify me', 'Windows notification for escalations and branches ready to merge',
               toggle(c.notify, (v) => save({ notify: v })))))),
     );
@@ -216,6 +243,7 @@ export function createSettings(): Page {
       cfg = s.config;
       render(s.config);
       void loadRoles();
+      void loadRemote();
     },
   };
 }

@@ -5,7 +5,7 @@ import { describe, expect, it } from 'vitest';
 import { DEFAULT_CONFIG } from '../types.js';
 import { stripAnsi } from '../orchestrator/terminal.js';
 import { launchArgs, ptyArgs, ptyEnv, resolveClaudePath, rolePrompt, settingsConfig, spawnCommand, trustPromptKeys, VELLUM_EDIT_TOOLS, writeAgentFiles } from './claude.js';
-import { musterPaths } from './paths.js';
+import { musterPaths, PLUGIN_DIR } from './paths.js';
 import { deriveAgentToken } from './tokens.js';
 import { makeAgent } from './testutil.js';
 
@@ -74,11 +74,12 @@ describe('claude launch', () => {
     const hook = settings.hooks.PreToolUse[0].hooks[0].command as string;
     expect(hook).toMatch(/^"[^\\]+" "[^\\]+\/dist\/hooks\/hook\.js" pre-tool$/);
     expect(settings.statusLine.command).toMatch(/dist\/usage\/statusline\.js"$/);
+    expect(settings.disableAllHooks).toBe(false); // a user-level disableAllHooks must not switch Muster's hooks off
     expect(readFileSync(files.prompt, 'utf8')).toMatch(/crew-2/);
 
     expect(launchArgs(agent, DEFAULT_CONFIG, files, { resume: false })).toEqual([
       '--session-id', 's-crew-2', '--model', 'sonnet', '--permission-mode', 'auto',
-      '--mcp-config', files.mcp, '--settings', files.settings, '--setting-sources', 'user', '--append-system-prompt-file', files.prompt, '--name', 'muster crew-2',
+      '--mcp-config', files.mcp, '--settings', files.settings, '--setting-sources', 'user', '--plugin-dir', PLUGIN_DIR, '--append-system-prompt-file', files.prompt, '--name', 'muster crew-2',
     ]);
     const resumed = launchArgs(agent, DEFAULT_CONFIG, files, { resume: true, inlinePrompt: 'be nice' });
     expect(resumed.slice(0, 2)).toEqual(['--resume', 's-crew-2']);

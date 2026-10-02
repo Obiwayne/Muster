@@ -13,7 +13,7 @@ export type AgentStatus =
   | 'stopped'; // process exited or was stopped
 
 export interface Agent {
-  id: string; // "captain", "crew-2", "crew-3", or the name given to `muster add <name>`
+  id: string; // "captain", "design", a crew name ("ada", "bea"… or "crew-2" with crewNames "numbers"), or the name given to `muster add <name>`
   role: Role;
   model: string; // "opus" | "sonnet" | full model id
   branch: string; // "main" for the captain, "<id>/<slug>" for crew
@@ -58,10 +58,28 @@ export interface Task {
   branch?: string; // branch that currently carries the work
   reviewedSha?: string; // head commit of `branch` when the Captain requested review; merge merges exactly this commit
   inputs?: TaskBranchInput[]; // commits the task branch must contain (earlier stations, dependencies); checked before done/review
+  evidence?: Evidence[]; // proof the work does what it should (screenshots, test output…); required before ready_for_merge
   createdBy: string;
   createdAt: string;
   updatedAt: string;
   history: TaskEvent[];
+}
+
+/** One add_evidence call: files copied from the agent's worktree to .muster/evidence/<task>/<id>/. */
+export interface Evidence {
+  id: string; // "E1", "E2"… within the task
+  station: string; // station the task was at
+  by: string; // agent id
+  at: string;
+  summary: string;
+  sha?: string; // HEAD of the agent's worktree when it was attached
+  files: EvidenceFile[];
+}
+
+export interface EvidenceFile {
+  name: string; // file name inside the evidence folder
+  kind: 'image' | 'video' | 'text' | 'other';
+  bytes: number;
 }
 
 /** Work a task branch has to contain: the branch of an earlier station, or a dependency's reviewed commit. */
@@ -188,6 +206,9 @@ export interface MusterConfig {
   vellumFile?: string; // id of the Vellum file holding the design framework; the design crew's prompt names it (else it finds it with list_files)
   defaultLine: string; // name of the line new tasks use; default "feature"
   lines: Record<string, { label: string; stations: string[] }>; // your edits and custom lines, merged over the built-ins (no "review")
+  crewNames: 'names' | 'numbers'; // new crew are called ada, bea, cleo… ('names') or crew-2, crew-3… ('numbers')
+  requireEvidence: boolean; // default true: the Captain can't flag a task ready for merge until it has evidence (add_evidence)
+  githubOffer: 'ask' | 'never'; // whether the dashboard offers a GitHub backup once work is merged and there is no remote
   userName?: string; // what agents call the person running Muster; stored per OS user (core/user.ts), not in config.json
 }
 
@@ -234,6 +255,9 @@ export const DEFAULT_CONFIG: MusterConfig = {
   baseBranch: 'main',
   permissionMode: 'auto',
   vellumEdit: 'ask',
+  githubOffer: 'ask',
+  crewNames: 'names',
+  requireEvidence: true,
   notify: true,
   allowedTools: [
     'Bash(npm *)', // no Bash(node *) / Bash(npx *): either runs arbitrary code without a prompt
@@ -271,6 +295,13 @@ export interface StationDef {
   role: Role; // which role works it
   builtin: boolean; // build, test, design, review
   guideline: string; // Markdown shown to the agent working the station; '' when none
+  skills: string[]; // skills of the Muster plugin (plugin/skills) the worker should use there, e.g. ["evidence-driven-testing"]
+}
+
+/** A skill in Muster's plugin (GET /api/skills). */
+export interface SkillInfo {
+  name: string;
+  description: string;
 }
 
 /** A line preset: a named station order (GET /api/lines). stations always ends with "review". */

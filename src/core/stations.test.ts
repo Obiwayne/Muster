@@ -35,7 +35,7 @@ describe('stations', () => {
 
   it('saves role and guideline, keeping omitted fields', () => {
     saveStation(p, 'Docs', { role: 'design', guideline: '# Docs\nWrite.' });
-    expect(getStation(p, 'docs')).toEqual({ name: 'docs', role: 'design', guideline: '# Docs\nWrite.', builtin: false });
+    expect(getStation(p, 'docs')).toEqual({ name: 'docs', role: 'design', guideline: '# Docs\nWrite.', skills: [], builtin: false });
     saveStation(p, 'docs', { guideline: 'Only text' });
     expect(getStation(p, 'docs')).toMatchObject({ role: 'design', guideline: 'Only text' });
     saveStation(p, 'docs', { role: 'crew' });

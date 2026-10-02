@@ -374,10 +374,13 @@ export function doneTask(state: MusterState, taskId: string, actor: string, summ
 const REVIEWABLE = new Set(['review', 'in_progress', 'ready_for_merge']);
 
 /** `reviewed` = the task branch and its head commit now; the human's merge merges exactly that commit. */
-export function requestReview(state: MusterState, taskId: string, actor: string, summary: string, reviewed?: StationBranch): { task: Task; note: Note } {
+export function requestReview(state: MusterState, taskId: string, actor: string, summary: string, reviewed?: StationBranch, opts: { requireEvidence?: boolean } = {}): { task: Task; note: Note } {
   if (!isCaptain(state, actor)) throw forbidden('Only the Captain can request review');
   const task = requireTask(state, taskId);
   if (!REVIEWABLE.has(task.status)) throw conflict(`${task.id} is ${task.status}; only work in review or in progress can be flagged ready for merge`);
+  if (opts.requireEvidence && !task.evidence?.length) {
+    throw conflict(`${task.id} has no evidence yet. Send it back so its last station attaches proof with add_evidence (screenshots, test output, numbers), or test it yourself and call add_evidence(task: "${task.id}", files, summary) before request_review.`);
+  }
   release(state, task);
   for (const n of state.notes) if (n.type === 'review' && n.taskId === task.id) closeNoteIfOpen(n);
   task.stationIndex = task.stations.length - 1;
