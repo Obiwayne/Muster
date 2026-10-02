@@ -26,6 +26,9 @@ export interface Timings {
   nudgeConfirmMs: number; // a nudge counts as delivered once a prompt hook follows it; without one, nudge again after this (doubling, max 5 min)
   humanHoldMs: number; // no automated typing into a terminal for this long after a human keystroke there
   stopConfirmMs: number; // how long stop() waits for the process to be gone before killing it again
+  watchdogIdleMs: number; // an agent holding work at an idle prompt this long gets a re-nudge
+  watchdogStartingMs: number; // ... as does one still 'starting' this long after spawn
+  watchdogEscalateMs: number; // still not active this long after the re-nudge: stuck note, Captain inbox item, toast
 }
 
 export const DEFAULT_TIMINGS: Timings = {
@@ -39,6 +42,9 @@ export const DEFAULT_TIMINGS: Timings = {
   nudgeConfirmMs: 20_000,
   humanHoldMs: 5000,
   stopConfirmMs: 5000,
+  watchdogIdleMs: 5 * 60_000,
+  watchdogStartingMs: 3 * 60_000,
+  watchdogEscalateMs: 5 * 60_000,
 };
 
 export interface AgentManagerOptions {
@@ -53,6 +59,8 @@ export interface AgentManagerOptions {
   /** Process liveness and kill, injectable for tests (defaults: process.kill(pid, 0) and taskkill /T /F). */
   isAlive?: (pid: number) => boolean;
   killPid?: (pid: number) => void;
+  /** The watchdog gave up on an agent (after the stuck note): a place for a desktop toast. */
+  onStuck?: (text: string) => void;
 }
 
 interface Runtime {
@@ -68,6 +76,8 @@ interface Runtime {
   firstPrompt?: string;
   firstPromptTimer?: NodeJS.Timeout;
   permissionNoteId?: string;
+  /** Watchdog progress for the work the agent holds; cleared by any sign of life (prompt hook, new status). */
+  wd?: { key: string; since: number; nudgedAt?: number; escalated: boolean; promptAt?: string };
   idleSince?: number;
   /** Inbox items typed in the last nudge; marked delivered only when a prompt hook follows. */
   pendingNudge?: { ids: string[]; at: number; attempt: number };
@@ -123,6 +133,7 @@ export class AgentManager {
   private closing = new Set<string>(); // agents being tidied away after an idle shutdown
   private zombies = new Map<string, number>(); // agent id → pid that survived stop()
   private starting = new Map<string, Promise<Agent>>();
+  private flaggedStopped = new Set<string>(); // 'agent:task' keys of stopped agents the watchdog already told the Captain about
   private timings: Timings;
   private nudgeTimer?: NodeJS.Timeout;
   private nudgeRetryTimer?: NodeJS.Timeout;
@@ -1086,14 +1097,100 @@ export class AgentManager {
       if (!rt.lastOutputAt || Date.now() - rt.lastOutputAt < this.timings.quietMs) continue;
       // The raw stream keeps the old dialog text after it is dismissed, so compare which came last.
       const screen = stripAnsi(lastLines(rt.buffer.text(), 40));
+      const dialog = lastMatch(screen, /Do you want to (proceed|make this edit|create)/gi);
       const interrupted = lastMatch(screen, /Interrupted|What should Claude do instead/gi);
-      if (interrupted < 0 || interrupted < lastMatch(screen, /Do you want to (proceed|make this edit|create)/gi)) continue;
-      this.log(`${agent.id}: turn was interrupted; marking it resting`);
+      // A permission wait whose dialog is gone from a quiet screen was answered or cleared without a hook.
+      const gone = !!rt.permissionNoteId && dialog < 0 && !/Esc to cancel|❯\s*1\.\s*Yes/i.test(screen);
+      if (!gone && (interrupted < 0 || interrupted < dialog)) continue;
+      this.log(`${agent.id}: ${gone ? 'permission prompt is gone' : 'turn was interrupted'}; marking it resting`);
       this.clearPermissionWait(agent, rt);
       this.setResting(agent, rt);
       changed = true;
     }
+    if (this.watchStuckAgents()) changed = true;
     if (changed) this.o.store.commit();
+  }
+
+  /** A stopped agent can't be nudged and its parked task counts toward maxCrew: tell the Captain once instead. */
+  private flagStopped(agent: Agent, now: number): boolean {
+    const task = agent.taskId ? this.state.tasks.find((t) => t.id === agent.taskId && t.assignee === agent.id && t.status !== 'merged' && t.status !== 'cancelled') : undefined;
+    if (!task || this.starting.has(agent.id) || now - Date.parse(agent.lastActivityAt) < this.timings.watchdogIdleMs) return false;
+    const key = `${agent.id}:${task.id}`;
+    if (this.flaggedStopped.has(key)) return false;
+    this.flaggedStopped.add(key);
+    const text = `${agent.id} is stopped holding ${task.id} (${task.title}); restart it to finish the task`;
+    postNote(this.state, { actor: SYSTEM, type: 'stuck', text, taskId: task.id });
+    this.log(text);
+    this.o.onStuck?.(text);
+    return true;
+  }
+
+  /** An agent that proved it is alive (it called the API with its own token) is no longer 'starting'. */
+  touch(id: string): void {
+    const agent = findAgent(this.state, id);
+    if (agent?.status !== 'starting') return;
+    this.log(`${id}: API call while 'starting' (no session-start hook seen); marking it resting`);
+    this.setResting(agent, this.runtimes.get(id));
+    this.o.store.commit();
+  }
+
+  /**
+   * Agents that hold a task or unread inbox but sit idle (or never got past 'starting'): re-nudge once, and if
+   * they still show no activity watchdogEscalateMs later, post one stuck note + Captain inbox item + toast.
+   * A prompt hook (status 'working') or a new task resets it. Returns true if state changed.
+   */
+  private watchStuckAgents(now = Date.now()): boolean {
+    let changed = false;
+    for (const agent of this.state.agents) {
+      const rt = this.runtimes.get(agent.id);
+      if (!rt && agent.status === 'stopped') {
+        if (this.flagStopped(agent, now)) changed = true;
+        continue;
+      }
+      this.flaggedStopped.delete(`${agent.id}:${agent.taskId}`);
+      if (!rt || rt.stopping) continue;
+      const unread = inboxFor(this.state, agent.id, true);
+      const task = agent.taskId ? this.state.tasks.find((t) => t.id === agent.taskId) : undefined;
+      const key = task ? task.id : unread.length ? `inbox:${unread[0].id}` : '';
+      const starting = agent.status === 'starting';
+      const idle = agent.status === 'idle' && !rt.permissionNoteId && now - (rt.lastOutputAt ?? rt.spawnedAt) >= this.timings.watchdogIdleMs;
+      const late = starting && now - rt.spawnedAt >= this.timings.watchdogStartingMs;
+      if (!key || agent.status === 'working' || (!starting && agent.status !== 'idle')) {
+        rt.wd = undefined;
+        continue;
+      }
+      if (rt.wd && rt.wd.promptAt !== agent.lastPromptAt) rt.wd = undefined; // a prompt hook came in between checks
+      if (rt.wd && rt.wd.key !== key && !(key.startsWith('inbox:') && rt.wd.key.startsWith('inbox:'))) rt.wd = undefined;
+      if (!rt.wd) {
+        if (!idle && !late) continue;
+        rt.wd = { key, since: starting ? rt.spawnedAt : (rt.lastOutputAt ?? rt.spawnedAt), escalated: false, promptAt: agent.lastPromptAt };
+      }
+      const wd = rt.wd;
+      if (wd.escalated) continue;
+      if (wd.nudgedAt === undefined) {
+        if (this.humanHoldLeft(agent.id) > 0) continue;
+        wd.nudgedAt = now;
+        this.log(`${agent.id}: idle holding ${key}; re-nudging`);
+        void this.type(agent.id, `[muster] You have work waiting: call read_inbox${task ? `, then continue ${task.id}` : ''}.`).catch(() => {});
+      } else if (now - wd.nudgedAt >= this.timings.watchdogEscalateMs) {
+        wd.escalated = true;
+        const mins = Math.max(1, Math.round((now - wd.since) / 60_000));
+        const held = task ? `${task.id} (${task.title})` : `${unread.length} unread inbox item(s)`;
+        const text = `${agent.id} has been ${starting ? "stuck at 'starting'" : 'idle'} ${mins} min holding ${held}; nudged twice`;
+        const note = postNote(this.state, { actor: SYSTEM, type: 'stuck', text, taskId: task?.id });
+        if (!isCaptain(this.state, agent.id)) {
+          const captain = captainOf(this.state);
+          // postNote already queues stuck notes for the Captain; make sure it is there even without one running.
+          if (captain && !this.state.inbox.some((i) => i.noteId === note.id && i.agentId === captain.id)) {
+            addInbox(this.state, { agentId: captain.id, from: SYSTEM, kind: 'note', text: `stuck ${note.id} from ${SYSTEM}: ${text}`, noteId: note.id, taskId: task?.id });
+          }
+        }
+        this.log(text);
+        this.o.onStuck?.(text);
+        changed = true;
+      }
+    }
+    return changed;
   }
 
   dispose(): void {

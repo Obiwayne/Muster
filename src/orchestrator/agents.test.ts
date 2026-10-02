@@ -157,6 +157,127 @@ describe('AgentManager', () => {
   });
 });
 
+describe('AgentManager watchdog', () => {
+  const T = { watchdogIdleMs: 40, watchdogStartingMs: 40, watchdogEscalateMs: 80, enterDelayMs: 1, humanHoldMs: 0 };
+  async function rig(timings = {}) {
+    const stucks: string[] = [];
+    const ptys = new Map<string, { written: string[]; show: (t: string) => void }>();
+    const launcher: PtyLauncher = (_f, _a, opts) => {
+      let emit: (d: string) => void = () => {};
+      const written: string[] = [];
+      ptys.set(opts.env.MUSTER_AGENT, { written, show: (d) => emit(d) });
+      return { pid: 1, onData: (cb) => (emit = cb), onExit() {}, write: (d) => written.push(d), resize() {}, kill() {} };
+    };
+    const r = setup(launcher, { ...T, ...timings }, { onStuck: (t) => stucks.push(t) });
+    const captain = await r.agents.create({ role: 'captain', actor: 'muster' });
+    const crew = await r.agents.create({ role: 'crew', actor: 'muster' });
+    r.agents.handleEvent(captain.id, 'stop');
+    r.agents.handleEvent(crew.id, 'stop');
+    const task = createTask(r.store.state, r.config, { title: 'Build it', assignee: crew.id, actor: 'you' });
+    return { ...r, captain, crew, task, stucks, ptys, nudges: () => ptys.get(crew.id)!.written.join('').match(/work waiting/g)?.length ?? 0 };
+  }
+  const stuckNotes = (store: Store) => store.state.notes.filter((n) => n.from === SYS && n.type === 'stuck' && n.text.startsWith('crew-'));
+
+  it('re-nudges an idle agent holding a task, then posts one stuck note, a Captain inbox item and a toast', async () => {
+    const { store, agents, captain, crew, task, stucks, ptys, nudges } = await rig();
+    ptys.get(crew.id)!.show('❯ ');
+    await sleep(60);
+    agents.watchQuietTerminals();
+    await sleep(20);
+    expect(nudges()).toBe(1);
+    expect(ptys.get(crew.id)!.written.join('')).toContain(`then continue ${task.id}`);
+    expect(stuckNotes(store)).toHaveLength(0);
+    await sleep(90);
+    agents.watchQuietTerminals();
+    const [note] = stuckNotes(store);
+    expect(note.text).toMatch(new RegExp(`^${crew.id} has been idle [0-9]+ min holding ${task.id} \\(Build it\\); nudged twice$`));
+    expect(store.state.inbox.filter((i) => i.agentId === captain.id && i.noteId === note.id)).toHaveLength(1);
+    expect(stucks).toEqual([note.text]);
+    // No repeats while nothing happens.
+    for (let i = 0; i < 3; i++) {
+      await sleep(100);
+      agents.watchQuietTerminals();
+    }
+    expect(stuckNotes(store)).toHaveLength(1);
+    expect(nudges()).toBe(1);
+  });
+
+  it('activity (a prompt hook) resets the watchdog', async () => {
+    const { store, agents, crew, ptys, nudges } = await rig();
+    ptys.get(crew.id)!.show('❯ ');
+    await sleep(60);
+    agents.watchQuietTerminals();
+    await sleep(20);
+    expect(nudges()).toBe(1);
+    agents.handleEvent(crew.id, 'prompt');
+    agents.handleEvent(crew.id, 'stop');
+    await sleep(60); // idle again, but a fresh cycle
+    agents.watchQuietTerminals();
+    await sleep(20);
+    expect(stuckNotes(store)).toHaveLength(0);
+    expect(nudges()).toBe(2);
+  });
+
+  it('does not nudge a working agent or one without work', async () => {
+    const { agents, store, crew, task, ptys, nudges } = await rig();
+    agents.handleEvent(crew.id, 'prompt');
+    await sleep(80);
+    agents.watchQuietTerminals();
+    expect(nudges()).toBe(0);
+    agents.handleEvent(crew.id, 'stop');
+    store.state.agents.find((a) => a.id === crew.id)!.taskId = undefined;
+    store.state.tasks.find((t) => t.id === task.id)!.assignee = undefined;
+    ptys.get(crew.id)!.show('❯ ');
+    await sleep(80);
+    agents.watchQuietTerminals();
+    expect(nudges()).toBe(0);
+  });
+
+  it("treats 'starting' past the threshold like idle", async () => {
+    const { store, agents, crew, nudges } = await rig();
+    store.state.agents.find((a) => a.id === crew.id)!.status = 'starting';
+    await sleep(60);
+    agents.watchQuietTerminals();
+    await sleep(20);
+    expect(nudges()).toBe(1);
+    await sleep(90);
+    agents.watchQuietTerminals();
+    expect(stuckNotes(store)[0].text).toContain("stuck at 'starting'");
+  });
+
+  it('does not nudge a stopped agent holding a task; flags it to the Captain once', async () => {
+    const { store, agents, crew, task, stucks, ptys, nudges } = await rig();
+    await agents.stop(crew.id);
+    await sleep(60);
+    for (let i = 0; i < 3; i++) agents.watchQuietTerminals();
+    expect(nudges()).toBe(0);
+    expect(ptys.get(crew.id)!.written.join('')).not.toContain('work waiting');
+    const notes = stuckNotes(store).filter((n) => n.text.includes('is stopped holding'));
+    expect(notes).toHaveLength(1);
+    expect(notes[0].text).toContain(task.id);
+    expect(stucks).toHaveLength(1);
+  });
+
+  it('an API call from a starting agent proves it is alive', async () => {
+    const { store, agents, crew } = await rig();
+    const a = store.state.agents.find((x) => x.id === crew.id)!;
+    a.status = 'starting';
+    agents.touch(crew.id);
+    expect(a.status).toBe('idle');
+  });
+
+  it("clears a permission 'stuck' once the dialog is gone from a quiet screen", async () => {
+    const { store, agents, captain, ptys } = await rig({ quietMs: 30 });
+    agents.handleEvent(captain.id, 'notification', 'needs permission', 'permission_prompt');
+    const a = store.state.agents.find((x) => x.id === captain.id)!;
+    expect(a.status).toBe('stuck');
+    ptys.get(captain.id)!.show('[2J❯ ');
+    await sleep(60);
+    agents.watchQuietTerminals();
+    expect(a.status).toBe('idle');
+  });
+});
+
 // A fake PTY per spawn, recorded by agent id.
 class CtlPty implements PtyProcess {
   static nextPid = 9000;

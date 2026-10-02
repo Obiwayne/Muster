@@ -621,6 +621,7 @@ ${pushed ? `Pushed ${base} to origin.` : `Push to origin failed: ${(r.stderr || 
       if (denied) throw forbidden(denied);
       const body = req.method === 'GET' || req.method === 'HEAD' ? {} : await readBody(req);
       if (req.method !== 'GET' && req.method !== 'HEAD') applyIdentity(caller, path, body);
+      if (!caller.human) agents.touch(caller.actor);
       const result = await r.handler({ params, query: url.searchParams, body });
       if (result instanceof FileReply) return sendFile(res, result);
       sendJson(res, 200, result ?? null);
