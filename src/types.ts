@@ -57,6 +57,7 @@ export interface Task {
   assignee?: string; // agent id
   branch?: string; // branch that currently carries the work
   reviewedSha?: string; // head commit of `branch` when the Captain requested review; merge merges exactly this commit
+  mergeApproval?: { at: string; sha?: string }; // you approved the reviewed commit; the Captain may merge it (merge_task)
   inputs?: TaskBranchInput[]; // commits the task branch must contain (earlier stations, dependencies); checked before done/review
   evidence?: Evidence[]; // proof the work does what it should (screenshots, test output…); required before ready_for_merge
   createdBy: string;

@@ -295,11 +295,16 @@ ${block}`;
       if (!task) throw conflict(`No task on ${wanted} is ready to merge`);
       if (task.status !== 'ready_for_merge') throw conflict(`${task.id} is ${task.status}, not ready for merge (the Captain has not flagged it)`);
     }
-    const branch = task?.branch ?? wanted;
+    return mergeTask(task, task?.branch ?? wanted, board.HUMAN, !!body.force);
+  });
+
+  /** Merges a task's reviewed commit into the base branch; `push` also pushes the base branch to origin (when there is one). */
+  const mergeTask = async (task: Task | undefined, branch: string, actor: string, force: boolean, push = false) => {
+    const s = state();
     const base = ctx.config().baseBranch;
     // Merge exactly the commit the Captain reviewed; a branch that moved since needs a new review.
     let ref = branch;
-    if (task?.reviewedSha && !body.force) {
+    if (task?.reviewedSha && !force) {
       const head = await gitOps.revParse(ctx.paths.root, branch);
       if (head && head !== task.reviewedSha) {
         const mover = mutate(() => tasks.reviewAgain(s, task, head));
@@ -307,9 +312,35 @@ ${block}`;
       }
       ref = task.reviewedSha;
     }
-    const output = await gitOps.mergeToBase(ctx.paths.root, base, ref, `Merge ${branch}${task ? ` (${task.id} ${task.title})` : ''}`);
-    mutate(() => (task ? tasks.markMerged(s, task, board.HUMAN) : board.feedEvent(s, board.HUMAN, `merged ${branch}`)));
-    return { ok: true, output };
+    let output = await gitOps.mergeToBase(ctx.paths.root, base, ref, `Merge ${branch}${task ? ` (${task.id} ${task.title})` : ''}`);
+    mutate(() => (task ? tasks.markMerged(s, task, actor) : board.feedEvent(s, actor, `merged ${branch}`)));
+    let pushed: boolean | undefined;
+    if (push && (await originUrl())) {
+      const r = await gitOps.git(ctx.paths.root, ['push', 'origin', base], true);
+      pushed = r.code === 0;
+      output += `
+${pushed ? `Pushed ${base} to origin.` : `Push to origin failed: ${(r.stderr || r.stdout).trim()}`}`;
+      mutate(() => board.feedEvent(s, actor, pushed ? `pushed ${base} to origin` : `could not push ${base} to origin`));
+    }
+    return { ok: true, output, ...(pushed !== undefined ? { pushed } : {}) };
+  };
+  // You're happy with the Captain's review: it may merge the task (merge_task) and push.
+  route('POST', '/api/tasks/:id/approve-merge', ({ params, body }) => {
+    if (body.actor !== board.HUMAN) throw forbidden('Only you can approve a merge');
+    const task = mutate(() => tasks.approveMerge(state(), params.id, board.HUMAN));
+    ctx.toast('info', `Approved ${task.id}: the Captain will merge it`);
+    return task;
+  });
+  // The Captain merges a task you approved (exactly the commit it reviewed, the one you approved), then pushes.
+  route('POST', '/api/tasks/:id/merge', async ({ params, body }) => {
+    const actor = str(body.actor, 'actor');
+    if (!board.isCaptain(state(), actor)) throw forbidden('Only the Captain merges through this route');
+    const task = tasks.requireTask(state(), params.id);
+    if (task.status !== 'ready_for_merge') throw conflict(`${task.id} is ${task.status}, not ready for merge`);
+    if (!task.mergeApproval) throw forbidden(`The user has not approved ${task.id} yet. Wait for their approval; never merge without it.`);
+    if (task.mergeApproval.sha !== task.reviewedSha) throw conflict(`${task.id} was reviewed again after the user approved it; it needs their approval again.`);
+    if (!task.branch) throw conflict(`${task.id} has no branch`);
+    return mergeTask(task, task.branch, actor, false, true);
   });
 
   // ------------------------------------------------------------------ project / GitHub

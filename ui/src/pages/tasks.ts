@@ -4,7 +4,7 @@ import { h, setChildren, showModal, toast } from '../dom';
 import type { Snapshot } from '../events';
 import type { Page } from '../page';
 import { api } from '../api';
-import { approveTask, getDiffStat, mergeTask, run, sendBackApproval, showDiffModal } from '../actions';
+import { approveMerge, approveTask, getDiffStat, mergeTask, run, sendBackApproval, showDiffModal } from '../actions';
 import { evidenceStrip } from '../evidence';
 import { branchOwnerId, ms, stationRole, statTotals, taskIsStuck } from '../util';
 
@@ -67,7 +67,10 @@ export function createTasks(): Page {
       return h('div.card.merge', { title: tip }, titleRow, stat, evidenceStrip(t),
         h('div.actions', null,
           h('button.btn.sm', { disabled: !owner, onclick: () => owner && showDiffModal(owner, t.branch) }, 'View diff'),
-          h('button.btn.sm.merge', { onclick: () => mergeTask(state, t) }, 'Merge')));
+          h('button.btn.sm', { onclick: () => mergeTask(state, t) }, 'Merge'),
+          t.mergeApproval
+            ? h('span.faint', { title: 'The Captain is merging and pushing it' }, 'Approved')
+            : h('button.btn.sm.merge', { title: 'Happy with it: the Captain merges and pushes', onclick: () => void approveMerge(t) }, 'Approve')));
     }
     if ((t.status as string) === 'awaiting_approval') {
       const owner = branchOwnerId(state, t);

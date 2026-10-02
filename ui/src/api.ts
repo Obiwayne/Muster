@@ -163,6 +163,8 @@ export const api = {
   lines: () => req<LinesResponse>('GET', '/api/lines'),
   saveLine: (name: string, body: { stations: string[]; label?: string }) => req<LineDef>('PUT', `/api/lines/${enc(name)}`, body),
   approve: (taskId: string, note?: string) => req<Task>('POST', `/api/tasks/${enc(taskId)}/approve`, { actor: YOU, ...(note ? { note } : {}) }),
+  /** You're happy with the Captain's review: the Captain merges it (merge_task) and pushes. */
+  approveMerge: (taskId: string) => req<Task>('POST', `/api/tasks/${enc(taskId)}/approve-merge`, { actor: YOU }),
   reject: (taskId: string, note: string) => req<Task>('POST', `/api/tasks/${enc(taskId)}/reject`, { actor: YOU, note }),
   stations: () => req<StationDef[]>('GET', '/api/stations'),
   skills: () => req<SkillInfo[]>('GET', '/api/skills'),

@@ -123,6 +123,23 @@ export async function mergeTask(state: MusterState, task: Task): Promise<boolean
   return !!r;
 }
 
+// ---- approve a reviewed task: the Captain merges and pushes it ----
+export async function approveMerge(task: Task): Promise<void> {
+  await run(api.approveMerge(task.id), `Approved ${task.id}: the Captain will merge it and push`);
+}
+
+export async function approveAllMerges(list: Task[]): Promise<void> {
+  if (!list.length) return;
+  const ok = await confirmDialog(
+    `Approve ${list.length} task${list.length === 1 ? '' : 's'}?`,
+    `${list.map((t) => t.id).join(', ')}. The Captain gets a message for each and merges the commit it reviewed into ${events.snapshot?.config.baseBranch ?? 'main'}, then pushes to GitHub.`,
+    'Approve all', 'merge');
+  if (!ok) return;
+  let done = 0;
+  for (const t of list) if (await run(api.approveMerge(t.id))) done++;
+  if (done) toast(`Approved ${done}: the Captain will merge and push`);
+}
+
 // ---- human approval ----
 export async function approveTask(task: Task): Promise<void> {
   const note = await promptDialog(`Approve ${task.id}?`, `${task.id} ${task.title}. The task moves on to the next station. Add a note for the next agent if you like.`, 'Approve', 'Optional note…', true);

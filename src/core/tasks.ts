@@ -403,6 +403,7 @@ export function requestReview(state: MusterState, taskId: string, actor: string,
     closeMergeConflicts(state, task);
   }
   task.reviewedSha = reviewed?.sha;
+  task.mergeApproval = undefined;
   event(task, actor, 'review_requested', summary);
   const note = postNote(state, {
     actor,
@@ -429,10 +430,30 @@ export function reviewAgain(state: MusterState, task: Task, head: string): strin
   for (const n of state.notes) if (n.type === 'review' && n.taskId === task.id) closeNoteIfOpen(n);
   const text = `${task.id} ${task.title}: ${mover} committed to ${task.branch} after your review (now ${head.slice(0, 8)}, you reviewed ${task.reviewedSha?.slice(0, 8) ?? '?'}). Review the branch again: get_diff, run_tests, then request_review or send_back.`;
   task.reviewedSha = undefined;
+  task.mergeApproval = undefined;
   toReview(state, task, SYSTEM, text);
   event(task, SYSTEM, 'note', `re-review: ${task.branch} moved to ${head.slice(0, 8)} after review`);
   addFeed(state, { kind: 'event', from: SYSTEM, taskId: task.id, text: `sent ${task.id} back to the Captain for re-review: ${mover} committed after the review` });
   return mover;
+}
+
+/**
+ * You looked at the Captain's review and are happy: the Captain may now merge exactly the reviewed
+ * commit with merge_task (and push it). A later review or send-back drops the approval.
+ */
+export function approveMerge(state: MusterState, taskId: string, actor: string): Task {
+  if (actor !== HUMAN) throw forbidden('Only you can approve a merge');
+  const task = requireTask(state, taskId);
+  if (task.status !== 'ready_for_merge') throw conflict(`${task.id} is ${task.status}, not ready for merge (the Captain has not flagged it)`);
+  if (task.mergeApproval) return task;
+  task.mergeApproval = { at: nowIso(), ...(task.reviewedSha ? { sha: task.reviewedSha } : {}) };
+  event(task, actor, 'note', 'approved for merge');
+  const captain = captainOf(state);
+  if (captain) {
+    addInbox(state, { agentId: captain.id, from: HUMAN, kind: 'review', taskId: task.id, text: `The user reviewed ${task.id} ${task.title} and is happy with it. Merge it now with merge_task(task: "${task.id}"); it merges the commit you reviewed and pushes it to GitHub. If it fails, fix the cause (send_back for a conflict) or tell the user what failed.` });
+  }
+  addFeed(state, { kind: 'event', from: actor, to: captain?.id, taskId: task.id, text: `approved ${task.id} ${task.title} for merge` });
+  return task;
 }
 
 /** The agent that first took the task at its build station. */
@@ -474,6 +495,7 @@ export function sendBack(state: MusterState, taskId: string, actor: string, note
   if (builder) assertCanTake(state, builder, task);
   release(state, task);
   task.reviewedSha = undefined;
+  task.mergeApproval = undefined;
   task.stationIndex = Math.max(0, task.stations.indexOf('build'));
   for (const n of state.notes) if ((n.type === 'review' || n.type === 'approval') && n.taskId === task.id) closeNoteIfOpen(n);
   event(task, actor, 'note', `sent back: ${text}`);
