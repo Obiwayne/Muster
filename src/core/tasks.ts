@@ -56,6 +56,7 @@ export function heldTask(state: MusterState, agent: Agent): Task | undefined {
 
 /** One task per agent: refuses when the agent holds a different task that isn't done or in review. */
 export function assertCanTake(state: MusterState, agent: Agent, task?: Task): void {
+  if (agent.role === 'research') throw conflict(`${agent.id} is the research agent; it never takes tasks`);
   const held = heldTask(state, agent);
   if (held && held.id !== task?.id) {
     throw conflict(`${agent.id} already holds ${held.id} ${held.title} (${held.status}); it has to hand it off or report it done before taking ${task?.id ?? 'another task'}`);

@@ -113,6 +113,34 @@ describe('captain rules', () => {
   });
 });
 
+describe('research (scout) rules', () => {
+  const scout: GuardEnv = { role: 'research', agentId: 'scout', repo: 'F:\\Proj', baseBranch: 'main', platform: 'win32' };
+  const at = (c: string) => decide(bash(c, 'F:\\Proj'), scout);
+  it('denies every edit tool with the scout message', () => {
+    for (const tool of ['Edit', 'Write', 'MultiEdit', 'NotebookEdit']) {
+      const d = decide(edit('F:\\Proj\\notes.md', 'F:\\Proj', tool), scout);
+      expect(d.allow).toBe(false);
+      expect(!d.allow && d.reason).toMatch(/scout researches and never changes code/);
+    }
+  });
+  it('denies git writes like the Captain, and more', () => {
+    for (const c of ['git commit -m x', 'git push', 'git merge x', 'git add .', 'git checkout -b x', 'git switch main', 'git stash', 'git restore a.ts', 'git branch new', 'git branch -D x', 'git tag v1', 'git reset --hard', 'git log && git commit -am x']) {
+      const d = at(c);
+      expect(d.allow, c).toBe(false);
+      expect(!d.allow && d.reason).toMatch(/^scout researches and never changes code: git /);
+    }
+  });
+  it('allows reading the code and git history', () => {
+    for (const c of ['git log --oneline -20', 'git diff main', 'git show HEAD', 'git status', 'git branch', 'git branch -a', 'git branch --show-current', 'git stash list', 'git tag -l', 'git config --get user.name', 'git worktree list', 'git grep TODO', 'ls src'])
+      expect(at(c).allow, c).toBe(true);
+    expect(decide({ tool_name: 'Read', tool_input: { file_path: 'F:\\Proj\\src\\a.ts' }, cwd: 'F:\\Proj' }, scout).allow).toBe(true);
+  });
+  it('keeps the rules shared by every role', () => {
+    expect(at('MUSTER_ROLE=captain node x.js').allow).toBe(false);
+    expect(decide({ tool_name: 'Read', tool_input: { file_path: 'F:\\Proj\\.muster\\agents\\captain\\mcp.json' }, cwd: 'F:\\Proj' }, scout).allow).toBe(false);
+  });
+});
+
 describe('non-muster sessions and helpers', () => {
   it('allows everything without a role', () => {
     expect(decide(bash('git push'), {}).allow).toBe(true);

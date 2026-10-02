@@ -52,6 +52,11 @@ const HUMAN_ONLY: [string, RegExp, string][] = [
   ['POST', /^\/api\/tasks\/[^/]+\/approve-merge$/, 'approve a merge'],
   ['POST', /^\/api\/roadmap\/approve$/, 'approve the roadmap'],
   ['POST', /^\/api\/roadmap\/reject$/, 'send the roadmap back'],
+  ['POST', /^\/api\/research\/runs$/, 'start research'],
+  ['POST', /^\/api\/research\/runs\/[^/]+\/cancel$/, 'cancel research'],
+  ['POST', /^\/api\/research\/ideas\/[^/]+\/(?:ask|approve|reject|reopen)$/, 'decide on research ideas'],
+  ['POST', /^\/api\/notes\/[^/]+\/dismiss$/, 'dismiss notes'],
+  ['POST', /^\/api\/usage\/weekly-alert$/, 'change the weekly usage alert'],
 ];
 
 const agentParam = (path: string, re: RegExp): string | undefined => {
@@ -79,6 +84,7 @@ export function forbiddenReason(caller: Caller, method: string, path: string): s
     if (!self(/^\/api\/inbox\/([^/]+)\/read$/)) return `${who} may only mark its own inbox read`;
     if (caller.role !== 'captain' && !self(/^\/api\/agents\/([^/]+)\/tests$/)) return `Only the Captain runs tests in other worktrees`;
   }
+  if (method === 'GET' && path === '/api/research/brief' && caller.role !== 'research') return `Only the research agent reads the research brief; ${who} is ${caller.role ?? 'an agent'}`;
   if (method === 'GET' && caller.role !== 'captain') {
     const id = agentParam(path, /^\/api\/agents\/([^/]+)\/output$/);
     if (id !== undefined && id !== who) return `Only the Captain reads other agents' terminals`;

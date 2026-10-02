@@ -102,12 +102,17 @@ class Tile {
   private menu(x: number, y: number, align: 'left' | 'right'): void {
     const a = this.agent;
     const roleItem = (role: Role, label: string): MenuItem => ({ label, role, current: a.role === role, onClick: () => setRole(a, role) });
+    const scout = a.role === 'research'; // the research agent has no worktree and keeps its role
     const items: (MenuItem | 'sep')[] = [
-      roleItem('captain', 'Set as Captain'),
-      roleItem('crew', 'Set as Crew'),
-      roleItem('design', 'Set as Vellum design crew'),
-      'sep',
-      { label: 'View diff', tone: 'muted', disabled: a.role === 'captain', onClick: () => showDiffModal(a.id, a.branch) },
+      ...(scout ? [] : [
+        roleItem('captain', 'Set as Captain'),
+        roleItem('crew', 'Set as Crew'),
+        roleItem('design', 'Set as Vellum design crew'),
+        'sep' as const,
+      ]),
+      scout
+        ? { label: 'Open research', tone: 'muted', onClick: () => { location.hash = '#/roadmap/research'; } }
+        : { label: 'View diff', tone: 'muted', disabled: a.role === 'captain', onClick: () => showDiffModal(a.id, a.branch) },
       a.status === 'stopped'
         ? { label: 'Restart', tone: 'muted', onClick: () => run(api.startAgent(a.id), `Restarting ${a.id}…`) }
         : { label: 'Stop', tone: 'muted', onClick: () => run(api.stopAgent(a.id), `Stopped ${a.id}`) },

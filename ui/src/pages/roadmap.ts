@@ -8,6 +8,8 @@ import type { Page } from '../page';
 import { ApiError, api, type RoadmapResponse } from '../api';
 import { approveRoadmap, askCaptain, run, sendBackRoadmap } from '../actions';
 import { ageShort, displayName, hhmm, idNum, roleOf, stationRole, taskIsStuck } from '../util';
+import { newCount, updatedLine } from '../research';
+import { createResearchModal } from './research';
 import {
   DAY, HEALTH, average, barSpan, currentStageId, frac, labelStep, launchText, localDay, mergedPerDay, nextStage, parseDay,
   recentlyLanded, shortDate, shortDay, spanStyle, stageById, stageFeed, stageGoals, stageOfTask, stageWeights, stationWord,
@@ -51,6 +53,7 @@ export function createRoadmap(): Page {
   try { if (localStorage.getItem(VIEW_KEY) === 'stages') view = 'stages'; } catch { /* ignore */ }
   const stageOpen = new Map<string, boolean>(); // timeline: stage expanded (overrides "current stage is open")
   const goalOpen = new Map<string, boolean>(); // detail: goal group expanded (overrides "current goal is open")
+  const researchModal = createResearchModal(); // opened straight from here while there is no research yet
 
   const subbar = h('div.rm-sub');
   const banner = h('div.rm-banner-host');
@@ -156,9 +159,13 @@ export function createRoadmap(): Page {
       class: view === v && 'on',
       onclick: () => { view = v; try { localStorage.setItem(VIEW_KEY, v); } catch { /* ignore */ } render(); },
     }, label);
-    const n = rm.stages.length;
+    const captains = new Set(['captain', ...state.agents.filter((a) => a.role === 'captain').map((a) => a.id)]);
+    const summary = [rm.title, rm.launchDate ? `launch ${shortDate(rm.launchDate)}` : '', updatedLine(state.feed, rm, captains)].filter(Boolean).join(' · ');
     setChildren(subbar,
-      h('div.rm-sub-text', { title: rm.summary }, [rm.title, `${n} ${n === 1 ? 'stage' : 'stages'}`, rm.launchDate ? `launch target ${shortDate(rm.launchDate)}` : ''].filter(Boolean).join(' · ')),
+      h('div.rm-sub-text', { title: rm.summary ? `${summary}
+
+${rm.summary}` : summary }, summary),
+      researchButton(state),
       h('div.rm-toggle', null, toggleBtn('timeline', 'Timeline'), toggleBtn('stages', 'Stages')),
       h('button.btn.sm', { onclick: () => void replan() }, 'Ask Captain to replan'),
       h('button.btn.sm.primary', { onclick: () => void newStage() }, 'New stage'));
@@ -169,6 +176,17 @@ export function createRoadmap(): Page {
       summaryStrip(rm, pg, cur),
       view === 'timeline' ? timeline(rm, pg, cur, today) : stageCards(rm, pg, cur),
       h('div.rm-panels', null, landedPanel(state, rm, cur), velocityPanel(state, today), upNextPanel(rm, pg, cur)));
+  }
+
+  /** Blue Research button with the count of new ideas: the research page, or the New research modal when there is none yet. */
+  function researchButton(state: MusterState): HTMLElement {
+    const r = state.research;
+    const n = newCount(r);
+    const none = !r || (!r.runs.length && !r.ideas.length);
+    return h('button.rs-btn', {
+      title: none ? 'Start research: scout reads similar apps, reviews and forums for ideas' : n ? `${n} new ${n === 1 ? 'idea' : 'ideas'} from scout` : 'Research ideas from scout',
+      onclick: () => { if (none) researchModal.open(r ?? null); else go('#/roadmap/research'); },
+    }, icon('search-plus', 14), h('span', null, 'Research'), n ? h('span.rs-btn-n', null, `${n} new`) : null);
   }
 
   function summaryStrip(rm: Roadmap, pg: RoadmapProgress, cur?: string): HTMLElement {

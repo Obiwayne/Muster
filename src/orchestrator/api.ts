@@ -10,13 +10,14 @@ import * as gitOps from '../core/git.js';
 import type { MusterPaths } from '../core/paths.js';
 import type { Store } from '../core/store.js';
 import * as lines from '../core/lines.js';
+import * as research from '../core/research.js';
 import * as roadmap from '../core/roadmap.js';
 import * as stations from '../core/stations.js';
 import * as tasks from '../core/tasks.js';
 import { readPartial } from '../core/config.js';
 import { ghStatus, realGh, validRepoName, type GhRunner } from '../core/github.js';
 import { createVellumChecker, type VellumCall } from '../core/vellum.js';
-import { applyUsage, refreshGuard, type RawUsage } from '../core/usage.js';
+import { applyUsage, refreshGuard, setWeeklyAlert, type RawUsage } from '../core/usage.js';
 import type { AgentManager } from './agents.js';
 import { applyIdentity, forbiddenReason, type Caller } from './auth.js';
 
@@ -62,7 +63,7 @@ const TEST_TIMEOUT_MS = 10 * 60_000;
 const MAX_BODY = 2 * 1024 * 1024;
 const CONFIG_KEYS = new Set<string>([
   'port', 'captainModel', 'crewModel', 'designModel', 'maxCrew', 'pauseAtFiveHourPct', 'warnAtWeeklyPct', 'shutdownIdleCrew',
-  'defaultStations', 'testCommand', 'baseBranch', 'permissionMode', 'claudePath', 'vellum', 'notify', 'allowedTools', 'projectName', 'userName', 'vellumFile', 'vellumEdit', 'defaultLine', 'lines', 'githubOffer', 'crewNames', 'requireEvidence',
+  'defaultStations', 'testCommand', 'baseBranch', 'permissionMode', 'claudePath', 'vellum', 'notify', 'allowedTools', 'projectName', 'userName', 'vellumFile', 'vellumEdit', 'defaultLine', 'lines', 'githubOffer', 'crewNames', 'requireEvidence', 'weeklyAlerts',
 ]);
 const MAX_EVIDENCE_TEXT = 200_000;
 
@@ -191,6 +192,9 @@ ${block}`;
     }
     if (patch.requireEvidence !== undefined && patch.requireEvidence !== null && typeof patch.requireEvidence !== 'boolean') {
       throw badRequest('requireEvidence must be true or false');
+    }
+    if (patch.weeklyAlerts !== undefined && patch.weeklyAlerts !== null && typeof patch.weeklyAlerts !== 'boolean') {
+      throw badRequest('weeklyAlerts must be true or false');
     }
     lineEdits(patch);
     const before = ctx.config().userName;
@@ -555,7 +559,9 @@ ${pushed ? `Pushed ${base} to origin.` : `Push to origin failed: ${(r.stderr || 
     return roadmapReply();
   });
   route('POST', '/api/roadmap/goals', ({ body }) => {
-    const c = mutate(() => roadmap.addGoal(state(), { stageId: body.stageId, title: body.title, description: body.description, start: body.start, due: body.due }, str(body.actor, 'actor')));
+    const c = mutate(() =>
+      roadmap.addGoal(state(), { stageId: body.stageId, title: body.title, description: body.description, start: body.start, due: body.due, ideaId: body.ideaId }, str(body.actor, 'actor')),
+    );
     announceRoadmap(c);
     return { ...roadmapReply(), goal: c.goal };
   });
@@ -565,6 +571,55 @@ ${pushed ? `Pushed ${base} to origin.` : `Push to origin failed: ${(r.stderr || 
     return { ...roadmapReply(), goal: r.goal, linked: r.linked };
   });
 
+  // ------------------------------------------------------------------ research (core/research.ts)
+  route('GET', '/api/research', () => research.getResearch(state()));
+  route('GET', '/api/research/brief', () => ({ text: research.researchBrief(state(), ctx.paths.root) }));
+  route('POST', '/api/research/runs', async ({ body }) => {
+    const run = mutate(() => research.startRun(state(), str(body.actor, 'actor'), { sources: body.sources, focus: body.focus, depth: body.depth }));
+    try {
+      await agents.startScout();
+    } catch (e) {
+      mutate(() => research.failRun(state(), `scout could not start: ${e instanceof Error ? e.message : e}`));
+      throw e;
+    }
+    return run;
+  });
+  route('POST', '/api/research/runs/:id/cancel', async ({ params, body }) => {
+    const run = mutate(() => research.cancelRun(state(), str(body.actor, 'actor'), params.id));
+    await agents.stopScout(`research ${run.id} cancelled`);
+    return run;
+  });
+  route('POST', '/api/research/runs/:id/finish', ({ params, body }) => {
+    const run = mutate(() => research.finishRun(state(), str(body.actor, 'actor'), params.id, { summary: body.summary, sourcesRead: body.sourcesRead }));
+    const found = research.foundText(run);
+    ctx.notify('Muster: research done', `${found}${run.summary ? `. ${run.summary}` : ''}`);
+    ctx.toast('info', `${found}. Review them on the Roadmap → Research page.`);
+    void agents.stopScout(`research ${run.id} finished`, agents.scoutStopDelayMs); // after scout has read the result
+    return run;
+  });
+  route('POST', '/api/research/ideas', ({ body }) =>
+    mutate(() =>
+      research.addIdea(state(), str(body.actor, 'actor'), {
+        title: body.title,
+        summary: body.summary,
+        impact: body.impact,
+        effort: body.effort,
+        stageId: body.stageId,
+        overlapsGoalId: body.overlapsGoalId,
+        evidence: body.evidence,
+      }),
+    ),
+  );
+  route('POST', '/api/research/ideas/:id/ask', ({ params, body }) => mutate(() => research.askIdea(state(), str(body.actor, 'actor'), params.id, body.text)));
+  route('POST', '/api/research/ideas/:id/advice', ({ params, body }) => {
+    const idea = mutate(() => research.adviseIdea(state(), str(body.actor, 'actor'), params.id, { text: body.text, plan: body.plan }));
+    ctx.toast('info', `The Captain advised on ${idea.id} ${idea.title}`);
+    return idea;
+  });
+  route('POST', '/api/research/ideas/:id/approve', ({ params, body }) => mutate(() => research.approveIdea(state(), str(body.actor, 'actor'), params.id)));
+  route('POST', '/api/research/ideas/:id/reject', ({ params, body }) => mutate(() => research.rejectIdea(state(), str(body.actor, 'actor'), params.id, body.note)));
+  route('POST', '/api/research/ideas/:id/reopen', ({ params, body }) => mutate(() => research.reopenIdea(state(), str(body.actor, 'actor'), params.id)));
+
   // ------------------------------------------------------------------ board, chat, inbox
   route('GET', '/api/notes', ({ query }) =>
     board.listNotes(state(), {
@@ -573,6 +628,7 @@ ${pushed ? `Pushed ${base} to origin.` : `Push to origin failed: ${(r.stderr || 
       from: query.get('from') ?? undefined,
       to: query.get('to') ?? undefined,
       needsYou: flag(query, 'needsYou'),
+      dismissed: flag(query, 'dismissed'),
     }),
   );
   route('POST', '/api/notes', ({ body }) =>
@@ -582,6 +638,7 @@ ${pushed ? `Pushed ${base} to origin.` : `Push to origin failed: ${(r.stderr || 
     mutate(() => board.replyNote(state(), params.id, str(body.actor, 'actor'), str(body.text, 'text'), Boolean(body.close))),
   );
   route('POST', '/api/notes/:id/close', ({ params, body }) => mutate(() => board.closeNote(state(), params.id, str(body.actor, 'actor'))));
+  route('POST', '/api/notes/:id/dismiss', ({ params, body }) => mutate(() => board.dismissNote(state(), params.id, str(body.actor, 'actor'))));
   route('POST', '/api/escalate', ({ body }) => {
     const note = mutate(() => board.escalate(state(), str(body.actor, 'actor'), str(body.text, 'text'), body.noteId || undefined));
     ctx.notify('Muster: the Captain needs you', note.text);
@@ -610,6 +667,12 @@ ${pushed ? `Pushed ${base} to origin.` : `Push to origin failed: ${(r.stderr || 
     return state().usage;
   });
   route('GET', '/api/usage', () => state().usage); // UsageState already carries `paused`
+  route('POST', '/api/usage/weekly-alert', ({ body }) => {
+    const { configPatch } = mutate(() => setWeeklyAlert(state(), str(body.actor, 'actor'), { action: body.action, percent: body.percent, noteId: body.noteId }));
+    const config = configPatch ? ctx.updateConfig(configPatch) : ctx.config();
+    mutate(() => refreshGuard(state(), config));
+    return { usage: state().usage, config };
+  });
 
   /** `caller` is resolved from the token by the server; it decides what may run and overwrites body.actor. */
   return async function handle(req: IncomingMessage, res: ServerResponse, url: URL, caller: Caller): Promise<void> {

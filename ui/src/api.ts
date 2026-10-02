@@ -1,6 +1,7 @@
 // Typed client for the orchestrator HTTP API (see docs/ARCHITECTURE.md).
 import type {
-  Agent, FeedItem, InboxItem, MusterConfig, MusterState, Note, NoteType, Role, Roadmap, RoadmapProgress, SkillInfo, Task, UsageState, VellumStatus,
+  Agent, FeedItem, InboxItem, MusterConfig, MusterState, Note, NoteType, ResearchIdea, ResearchRun, ResearchSources, ResearchState, Role, Roadmap,
+  RoadmapProgress, SkillInfo, Task, UsageState, VellumStatus,
 } from '../../src/types';
 
 // TODO: import StationDef from src/types.ts once T9 (crew-6) merges.
@@ -147,6 +148,11 @@ export const api = {
   },
   reply: (noteId: string, text: string, close = false) => req<Note>('POST', `/api/notes/${enc(noteId)}/reply`, { actor: YOU, text, close }),
   closeNote: (noteId: string) => req<Note>('POST', `/api/notes/${enc(noteId)}/close`, { actor: YOU }),
+  /** Closes the note and hides it from the board (kept in state for history). */
+  dismissNote: (noteId: string) => req<Note>('POST', `/api/notes/${enc(noteId)}/dismiss`, { actor: YOU }),
+  /** What happens after a weekly usage alert; `noteId` is dismissed in the same call. */
+  weeklyAlert: (body: { action: 'remind_at' | 'snooze_week' | 'never'; percent?: number; noteId?: string }) =>
+    req<{ usage: UsageState; config: MusterConfig }>('POST', '/api/usage/weekly-alert', { actor: YOU, ...body }),
   message: (to: string, text: string) => req<FeedItem>('POST', '/api/messages', { actor: YOU, to, text }),
   feed: (q: { limit?: number; before?: string; agent?: string } = {}) => {
     const p = new URLSearchParams();
@@ -186,4 +192,14 @@ export const api = {
     req<RoadmapResponse>('POST', `/api/roadmap/stages/${enc(stageId)}/criteria/${index}`, { actor: YOU, done }),
   completeStage: (stageId: string, force = false) =>
     req<RoadmapResponse>('POST', `/api/roadmap/stages/${enc(stageId)}/complete`, { actor: YOU, ...(force ? { force } : {}) }),
+
+  // research (scout finds ideas; you approve, reject or ask the Captain about them)
+  research: () => req<ResearchState>('GET', '/api/research'),
+  startResearch: (body: { sources: ResearchSources; focus?: string; depth: 'quick' | 'thorough' }) =>
+    req<ResearchRun>('POST', '/api/research/runs', { actor: YOU, ...body }),
+  cancelResearch: (runId: string) => req<ResearchRun>('POST', `/api/research/runs/${enc(runId)}/cancel`, { actor: YOU }),
+  askIdea: (ideaId: string, text: string) => req<ResearchIdea>('POST', `/api/research/ideas/${enc(ideaId)}/ask`, { actor: YOU, text }),
+  approveIdea: (ideaId: string) => req<ResearchIdea>('POST', `/api/research/ideas/${enc(ideaId)}/approve`, { actor: YOU }),
+  rejectIdea: (ideaId: string, note?: string) => req<ResearchIdea>('POST', `/api/research/ideas/${enc(ideaId)}/reject`, { actor: YOU, ...(note ? { note } : {}) }),
+  reopenIdea: (ideaId: string) => req<ResearchIdea>('POST', `/api/research/ideas/${enc(ideaId)}/reopen`, { actor: YOU }),
 };

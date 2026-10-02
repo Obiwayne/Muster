@@ -4,7 +4,7 @@ import type { MusterState } from '../types.js';
 import type { MusterPaths } from './paths.js';
 
 type IdKind = keyof MusterState['nextIds'];
-const PREFIX: Record<IdKind, string> = { agent: '', task: 'T', note: 'N', feed: 'F', inbox: 'I', stage: 'M', goal: 'G' };
+const PREFIX: Record<IdKind, string> = { agent: '', task: 'T', note: 'N', feed: 'F', inbox: 'I', stage: 'M', goal: 'G', idea: 'R', run: 'RR' };
 
 export function emptyState(repoRoot: string): MusterState {
   return {
@@ -16,7 +16,7 @@ export function emptyState(repoRoot: string): MusterState {
     feed: [],
     inbox: [],
     usage: { perAgentCostUsd: {}, paused: false, weeklyWarned: false },
-    nextIds: { agent: 2, task: 1, note: 1, feed: 1, inbox: 1, stage: 1, goal: 1 },
+    nextIds: { agent: 2, task: 1, note: 1, feed: 1, inbox: 1, stage: 1, goal: 1, idea: 1, run: 1 },
   };
 }
 
@@ -28,12 +28,17 @@ export function migrate(raw: Partial<MusterState>, repoRoot: string): MusterStat
   const above = (ids: string[] | undefined) => Math.max(0, ...(ids ?? []).map((id) => Number(id.replace(/\D/g, '')) || 0)) + 1;
   nextIds.stage = Math.max(nextIds.stage, above(raw.roadmap?.stages?.map((x) => x.id)));
   nextIds.goal = Math.max(nextIds.goal, above(raw.roadmap?.goals?.map((x) => x.id)));
+  // Research is absent in state files from before it existed; a partial one gets its lists back.
+  const research = raw.research && typeof raw.research === 'object' ? { runs: Array.isArray(raw.research.runs) ? raw.research.runs : [], ideas: Array.isArray(raw.research.ideas) ? raw.research.ideas : [] } : undefined;
+  nextIds.run = Math.max(nextIds.run, above(research?.runs.map((x) => x.id)));
+  nextIds.idea = Math.max(nextIds.idea, above(research?.ideas.map((x) => x.id)));
   return {
     ...base,
     ...raw,
     version: 1,
     repoRoot,
     usage: { ...base.usage, ...raw.usage },
+    ...(research ? { research } : {}),
     nextIds,
   };
 }

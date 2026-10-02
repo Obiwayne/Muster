@@ -1,7 +1,7 @@
 // Roadmap: stages ("M1"…) → goals ("G1"…) → tasks. The Captain drafts it, you approve it, and the
 // orchestrator counts progress from the tasks and tells the Captain when goals finish.
 // Pure state mutations; the caller commits the store (and toasts/notifies, see the API layer).
-import type { ExitCriterion, GoalStatus, MusterState, Note, Roadmap, RoadmapGoal, RoadmapHealth, RoadmapProgress, RoadmapStage, StageStatus } from '../types.js';
+import type { ExitCriterion, GoalStatus, MusterState, Note, Roadmap, RoadmapGoal, ResearchIdea, RoadmapHealth, RoadmapProgress, RoadmapStage, StageStatus } from '../types.js';
 import { addFeed, addInbox, captainOf, closeNoteIfOpen, HUMAN, isCaptain, nowIso, postNote, SYSTEM } from './board.js';
 import { badRequest, conflict, forbidden, notFound } from './errors.js';
 import { nextId } from './store.js';
@@ -165,7 +165,7 @@ function requestApproval(state: MusterState, actor: string): { note: Note; noteO
     return { note: open, noteOpened: false };
   }
   // Posted by the orchestrator with no taskId, so nothing treats it as a task's approval (Approve/Reject on the board).
-  const note = postNote(state, { actor: SYSTEM, type: 'approval', to: HUMAN, text });
+  const note = postNote(state, { actor: SYSTEM, type: 'approval', to: HUMAN, text, topic: 'roadmap' });
   r.noteId = note.id;
   return { note, noteOpened: true };
 }
@@ -469,8 +469,11 @@ export function completeStage(state: MusterState, stageId: string, actor: string
 
 // ------------------------------------------------------------------ goals
 
-/** POST /api/roadmap/goals: a new planned goal at the end of the stage. Counts as a replan. */
-export function addGoal(state: MusterState, input: GoalInput & { stageId: string }, actor: string): RoadmapChange & { goal: RoadmapGoal } {
+/**
+ * POST /api/roadmap/goals: a new planned goal at the end of the stage. Counts as a replan, except for the goal
+ * of an approved research idea (`ideaId`): approving the idea was the approval, so an approved roadmap stays approved.
+ */
+export function addGoal(state: MusterState, input: GoalInput & { stageId: string; ideaId?: string | null }, actor: string): RoadmapChange & { goal: RoadmapGoal } {
   requireCaptainOrYou(state, actor, 'change the roadmap');
   const r = requireRoadmap(state);
   if (!input || typeof input.stageId !== 'string') throw badRequest('Missing stageId');
@@ -481,12 +484,32 @@ export function addGoal(state: MusterState, input: GoalInput & { stageId: string
   const due = checkDate(input.due, 'due');
   checkRange(start, due, 'Goal');
   if (stage.goalIds.length >= MAX_GOALS_PER_STAGE) throw badRequest(`${stage.id} already has ${MAX_GOALS_PER_STAGE} goals`);
+  const idea = input.ideaId === undefined || input.ideaId === null || input.ideaId === '' ? undefined : ideaForGoal(state, input.ideaId);
   const before = planKey(r);
   const goal: RoadmapGoal = { id: nextId(state, 'goal'), stageId: stage.id, title, description, status: 'planned', ...(start ? { start } : {}), ...(due ? { due } : {}) };
   r.goals.push(goal);
   stage.goalIds.push(goal.id);
   addFeed(state, { kind: 'event', from: actor, text: `added goal ${goal.id} ${goal.title} to ${stage.id} ${stage.title}` });
+  if (idea) {
+    idea.goalId = goal.id;
+    addFeed(state, { kind: 'event', from: actor, text: `added ${goal.id} for idea ${idea.id}` });
+    if (r.status === 'approved') {
+      r.updatedAt = nowIso();
+      return { roadmap: r, goal };
+    }
+  }
   return { ...afterEdit(state, before, actor), goal };
+}
+
+/** The idea a new goal is for: 404 unknown, 409 unless approved and still without a goal. */
+function ideaForGoal(state: MusterState, ideaId: unknown): ResearchIdea {
+  if (typeof ideaId !== 'string' || !ideaId.trim()) throw badRequest('ideaId must be an idea id like "R7"');
+  const id = ideaId.trim().toUpperCase();
+  const idea = state.research?.ideas.find((i) => i.id === id);
+  if (!idea) throw notFound(`No idea "${ideaId}"`);
+  if (idea.status !== 'approved') throw conflict(`${idea.id} ${idea.title} is ${idea.status === 'new' ? 'not approved yet' : 'rejected'}; only an approved idea goes onto the roadmap`);
+  if (idea.goalId) throw conflict(`${idea.id} ${idea.title} is already on the roadmap as ${idea.goalId}`);
+  return idea;
 }
 
 /** PATCH /api/roadmap/goals/:id. Done/cancelled by hand moves the stage on the same way a finished goal does. */
