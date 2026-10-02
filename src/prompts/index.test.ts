@@ -20,7 +20,8 @@ describe('captainPrompt', () => {
     expect(p).toContain('read_board()');
     expect(p).toMatch(/first call of every turn/i);
     expect(p).toMatch(/Never write or edit code/);
-    expect(p).toMatch(/never merge/i);
+    expect(p).toMatch(/never run `git merge\/push` yourself/i);
+    expect(p).toMatch(/merge_task/);
     expect(p).toMatch(/Escalate only/i);
     expect(p).toMatch(/Crew-first answering/);
     expect(p).toContain('request_review');

@@ -5,6 +5,7 @@ import { join } from 'node:path';
 import type { Agent, AgentStatus, MusterConfig, Role, Task } from '../types.js';
 import { captainOf, closeNoteIfOpen, feedEvent, findAgent, HUMAN, inboxFor, isCaptain, nowIso, nudgeText, postNote, requireAgent, SYSTEM, addInbox } from '../core/board.js';
 import { launchArgs, modelFor, ptyEnv, rolePrompt, spawnCommand, trustPromptKeys, writeAgentFiles, type LaunchOptions } from '../core/claude.js';
+import { EVIDENCE_DIR } from '../core/evidence.js';
 import { badRequest, conflict, forbidden } from '../core/errors.js';
 import * as gitOps from '../core/git.js';
 import type { MusterPaths } from '../core/paths.js';
@@ -784,6 +785,11 @@ export class AgentManager {
       if (await gitOps.isAncestor(root, input.sha, sha)) continue;
       const what = input.kind === 'dependency' ? `dependency ${input.taskId}` : 'an earlier station';
       throw conflict(`${task.id}: ${branch} does not contain ${input.branch} (${what}, ${input.sha.slice(0, 8)}). Merge it first: git merge ${input.kind === 'dependency' ? input.sha : input.branch}`);
+    }
+    // Evidence is attached with add_evidence, never merged: git ignores the folder, so it only gets in with add -f.
+    const tracked = (await gitOps.git(root, ['ls-tree', '-r', '--name-only', sha, '--', `${EVIDENCE_DIR}/`], true)).stdout.trim();
+    if (tracked) {
+      throw conflict(`${task.id}: ${branch} commits ${EVIDENCE_DIR}/ files (${tracked.split('\n').length}). Evidence is attached with add_evidence, never committed: git rm -r --cached ${EVIDENCE_DIR} and commit, then try again.`);
     }
     return { branch, sha };
   }

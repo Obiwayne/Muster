@@ -4,7 +4,7 @@ import { join } from 'node:path';
 import { describe, expect, it } from 'vitest';
 import { DEFAULT_CONFIG } from '../types.js';
 import { stripAnsi } from '../orchestrator/terminal.js';
-import { launchArgs, ptyArgs, ptyEnv, resolveClaudePath, rolePrompt, settingsConfig, spawnCommand, trustPromptKeys, VELLUM_EDIT_TOOLS, writeAgentFiles } from './claude.js';
+import { launchArgs, ptyArgs, ptyEnv, researchEnv, resolveClaudePath, rolePrompt, settingsConfig, spawnCommand, trustPromptKeys, VELLUM_EDIT_TOOLS, writeAgentFiles } from './claude.js';
 import { musterPaths, PLUGIN_DIR } from './paths.js';
 import { deriveAgentToken } from './tokens.js';
 import { makeAgent } from './testutil.js';
@@ -46,7 +46,8 @@ describe('claude launch', () => {
     const agent = makeAgent('crew-2', 'crew');
     const ctx = { url: 'http://127.0.0.1:1', token: 't', repoRoot: '/repo', config: DEFAULT_CONFIG };
     const env = ptyEnv(agent, ctx, { PATH: '/bin', CLAUDECODE: '1', CLAUDE_CODE_CHILD_SESSION: '1', CLAUDE_CODE_USE_BEDROCK: '1', MUSTER_AGENT: 'captain' });
-    expect(env).toMatchObject({ PATH: '/bin', CLAUDE_CODE_USE_BEDROCK: '1', MUSTER_AGENT: 'crew-2', MUSTER_WORKTREE: '/tmp/crew-2' });
+    expect(env).toMatchObject({ CLAUDE_CODE_USE_BEDROCK: '1', MUSTER_AGENT: 'crew-2', MUSTER_WORKTREE: '/tmp/crew-2' });
+    expect(env.PATH.split(/[;:]/)[0]).toBe('/bin'); // the research tools, when installed, only ever go after it
     expect(env.CLAUDECODE).toBeUndefined();
     expect(env.CLAUDE_CODE_CHILD_SESSION).toBeUndefined();
   });
@@ -136,4 +137,19 @@ describe('Vellum edit permissions', () => {
     expect(deny('design', 'always')).toBeUndefined();
     expect(deny('crew', 'never')).toBeUndefined();
   });
+
+describe('research tools', () => {
+  it('appends the Agent Reach venv to PATH (never ahead of a project python) only when it is installed', () => {
+    const venv = mkdtempSync(join(tmpdir(), 'muster-venv-'));
+    expect(researchEnv({ Path: '/opt/python' }, venv)).toEqual({});
+    const bin = join(venv, process.platform === 'win32' ? 'Scripts' : 'bin');
+    const py = join(bin, process.platform === 'win32' ? 'python.exe' : 'python');
+    mkdirSync(bin, { recursive: true });
+    writeFileSync(py, '');
+    const sep = process.platform === 'win32' ? ';' : ':';
+    expect(researchEnv({ Path: '/opt/python' }, venv)).toEqual({ Path: `/opt/python${sep}${bin}`, AGENT_REACH_PYTHON: py });
+    expect(researchEnv({ Path: `/opt/python${sep}${bin}` }, venv)).toEqual({ AGENT_REACH_PYTHON: py }); // already there
+  });
+});
+
 });

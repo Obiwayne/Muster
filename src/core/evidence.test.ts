@@ -34,7 +34,7 @@ const task = (over: Partial<Task> = {}): Task => ({
 describe('station skills', () => {
   it('lists the skills shipped in plugin/skills with their descriptions', () => {
     const skills = listSkills(PLUGIN_DIR);
-    expect(skills.map((s) => s.name)).toEqual(['before-and-after', 'code-structure', 'evidence-driven-testing', 'unslop']);
+    expect(skills.map((s) => s.name)).toEqual(['before-and-after', 'code-structure', 'evidence-driven-testing', 'unslop', 'web-research']);
     expect(skills.find((s) => s.name === 'evidence-driven-testing')!.description).toMatch(/^Records visual proof/); // folded ">" block
     expect(skills.every((s) => s.description.length > 20)).toBe(true);
   });

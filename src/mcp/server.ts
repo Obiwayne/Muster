@@ -47,7 +47,7 @@ const sleep = (ms: number) => new Promise((r) => setTimeout(r, ms));
 
 export const CAPTAIN_TOOLS = [
   'spawn_crew', 'post_task', 'assign', 'list_agents', 'list_tasks', 'read_board', 'reply', 'message',
-  'read_inbox', 'read_output', 'get_diff', 'run_tests', 'request_review', 'send_back', 'cancel_task', 'close_crew', 'escalate',
+  'read_inbox', 'read_output', 'get_diff', 'run_tests', 'request_review', 'merge_task', 'send_back', 'cancel_task', 'close_crew', 'escalate',
   'add_evidence', 'get_evidence',
 ] as const;
 export const CREW_TOOLS = [
@@ -67,7 +67,7 @@ export function createMusterServer(opts: MusterServerOptions): McpServer {
     {
       instructions:
         role === 'captain'
-          ? `You are ${me}, the Muster Captain. Check read_board first every turn. Never write code or merge.`
+          ? `You are ${me}, the Muster Captain. Check read_board first every turn. Never write code; merge only tasks the user approved, with merge_task.`
           : `You are ${me}, Muster ${role === 'design' ? 'design crew' : 'crew'}. Work only in your worktree; ask crew before the Captain.`,
     },
   );
@@ -287,6 +287,19 @@ export function createMusterServer(opts: MusterServerOptions): McpServer {
         if (!task) throw new Error(`${agent} holds no task to review.`);
         const t = await api<Task>(`/api/tasks/${enc(task.id)}/review`, { method: 'POST', body: { actor: me, summary } });
         return `${t.id} is ready for merge (${t.branch ?? a.branch}). The user has been notified.`;
+      },
+    );
+
+    tool(
+      'merge_task',
+      'Merge a task the user approved (their Approve button sends you a message) into the base branch, then push it to GitHub. Merges exactly the commit you reviewed. Refused until the user approves.',
+      { task: z.string() },
+      async ({ task }) => {
+        const t = await findTask(task);
+        const r = await api<{ output: string; pushed?: boolean }>(`/api/tasks/${enc(t.id)}/merge`, { method: 'POST', body: { actor: me } });
+        const push = r.pushed === undefined ? ' No GitHub remote, so nothing was pushed.' : r.pushed ? ' Pushed to GitHub.' : ' The push to GitHub failed; tell the user.';
+        return `Merged ${t.id} (${t.branch}).${push}
+${r.output}`;
       },
     );
 

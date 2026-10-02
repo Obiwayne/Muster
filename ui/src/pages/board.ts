@@ -1,10 +1,10 @@
 // Bulletin board: filter chips, note list, selected thread with replies and a reply box.
-import type { MusterState, Note, NoteType } from '../../../src/types';
+import type { MusterState, Note, NoteType, Task } from '../../../src/types';
 import { h, icon, setChildren } from '../dom';
 import type { Snapshot } from '../events';
 import type { Page } from '../page';
 import { api } from '../api';
-import { approveTask, mergeTask, run, sendBackApproval, showDiffModal } from '../actions';
+import { approveAllMerges, approveMerge, approveTask, mergeTask, run, sendBackApproval, showDiffModal } from '../actions';
 import { evidenceStrip } from '../evidence';
 import { NOTE_BADGE, ageShort, ago, displayName, initial, isEscalated, isNeedsYou, branchOwnerId, ms, noteLabel, roleOf, taskById } from '../util';
 
@@ -29,6 +29,17 @@ function matches(n: Note, f: Filter): boolean {
     case 'needsYou': return isNeedsYou(n);
     case 'all': return true;
   }
+}
+
+/** Tasks the Captain flagged ready that you have not approved yet (one per open review note). */
+function awaitingApproval(state: MusterState): Task[] {
+  const out: Task[] = [];
+  for (const n of state.notes) {
+    if (n.type !== 'review' || !n.open) continue;
+    const t = taskById(state, n.taskId);
+    if (t && t.status === 'ready_for_merge' && !t.mergeApproval && !out.includes(t)) out.push(t);
+  }
+  return out;
 }
 
 /** Split a note into a title (first line / sentence pair) and the rest. */
@@ -75,6 +86,7 @@ export function createBoard(): Page {
     const open = state.notes.filter((n) => n.open);
     const count = (t: NoteType) => open.filter((n) => n.type === t).length;
     const needs = state.notes.filter(isNeedsYou).length;
+    const approvable = awaitingApproval(state);
     const chip = (f: Filter, label: string, n?: number, cls = '') => h('button.chip', {
       class: [filter === f && 'active', cls],
       onclick: () => { filter = f; selected = null; render(); },
@@ -91,6 +103,9 @@ export function createBoard(): Page {
         class: [filter === 'needsYou' && 'active', needs > 0 && 'hot'],
         onclick: () => { filter = 'needsYou'; selected = null; render(); },
       }, 'Needs you', h('span.cnt', null, String(needs))),
+      approvable.length > 1
+        ? h('button.btn.sm.merge', { style: 'margin-left:auto', title: 'Tell the Captain to merge and push every reviewed task', onclick: () => void approveAllMerges(approvable) }, `Approve all ${approvable.length}`)
+        : null,
     );
   }
 
@@ -111,10 +126,13 @@ export function createBoard(): Page {
     const selColor = t === 'stuck' ? 'var(--color-stuck)' : t === 'question' ? 'var(--color-captain)' : t === 'waiting' ? 'var(--color-design)' : t === 'review' ? 'var(--color-crew)' : (t as string) === 'approval' ? 'var(--color-warm)' : t === 'escalation' ? 'var(--color-warm)' : 'var(--color-muted)';
     const task = taskById(state, n.taskId);
     const side0 = n.type === 'review' && n.open && task?.status === 'ready_for_merge'
-      ? h('span.merge', {
-          role: 'button',
-          onclick: (e: MouseEvent) => { e.stopPropagation(); mergeTask(state, task); },
-        }, 'Merge')
+      ? task.mergeApproval
+        ? h('span.faint', { title: 'Approved: the Captain is merging and pushing it' }, 'Approved')
+        : h('span.merge', {
+            role: 'button',
+            title: 'Happy with it: the Captain merges and pushes',
+            onclick: (e: MouseEvent) => { e.stopPropagation(); void approveMerge(task); },
+          }, 'Approve')
       : (n.open || n.replies.length) && n.type !== 'progress' && n.type !== 'system'
         ? h('span.faint', null, `${n.replies.length} ${n.replies.length === 1 ? 'reply' : 'replies'}`) : null;
     const isApproval = (n.type as string) === 'approval' && n.open && (task?.status as string) === 'awaiting_approval';
@@ -131,7 +149,7 @@ export function createBoard(): Page {
   }
 
   function renderThread(state: MusterState, n: Note | undefined): void {
-    const key = n ? `${n.id}:${n.replies.length}:${n.open}:${state.notes.length}` : '';
+    const key = n ? `${n.id}:${n.replies.length}:${n.open}:${state.notes.length}:${taskById(state, n.taskId)?.status}:${!!taskById(state, n.taskId)?.mergeApproval}` : '';
     composer.hidden = !n;
     if (!n) {
       setChildren(head, h('div.thread-text', null, 'Nothing selected.'));
@@ -168,8 +186,10 @@ export function createBoard(): Page {
       const isApproval = (n.type as string) === 'approval' && (task?.status as string) === 'awaiting_approval';
       const msg = isApproval
         ? 'Waiting for your approval. Approve to move the task on, or send it back with what needs to change.'
+        : n.type === 'review' && task?.mergeApproval
+        ? 'You approved this. The Captain is merging it and pushing to GitHub.'
         : n.type === 'review'
-        ? 'Ready for review: the Captain has checked this branch. Merge it from Tasks or Branches, or reply to send it back.'
+        ? 'Ready for review: the Captain has checked this branch. Approve it and the Captain merges and pushes, merge it yourself, or reply to send it back.'
         : 'Needs you: the Captain escalated this. Reply below; the answer goes to the agents involved.';
       const hint = isApproval && task?.line === 'new-app'
         ? h('div.faint', { style: 'font-size:12px;margin-top:4px' }, 'Pick the product name in Settings → Project, then back it up to GitHub from Settings → GitHub.') : null;
@@ -179,7 +199,10 @@ export function createBoard(): Page {
             h('button.btn.sm', { onclick: () => void sendBackApproval(task!) }, 'Send back'),
             h('button.btn.sm.merge', { onclick: () => void approveTask(task!) }, 'Approve'))
         : n.type === 'review' && task?.status === 'ready_for_merge'
-        ? h('button.btn.sm.merge', { onclick: () => mergeTask(state, task) }, 'Merge') : null;
+        ? h('span.flex', { style: 'display:flex;gap:6px' },
+            h('button.btn.sm', { onclick: () => mergeTask(state, task) }, 'Merge myself'),
+            task.mergeApproval ? null : h('button.btn.sm.merge', { onclick: () => void approveMerge(task) }, 'Approve'))
+        : null;
       items.push(h('div.banner.warm', null, icon('alert', 16), h('div.flex1', null, msg, hint), act));
       if (n.type === 'review' && task) items.push(evidenceStrip(task));
     }

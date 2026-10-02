@@ -199,4 +199,33 @@ describe('task flows', () => {
     expect(existsSync(join(agent('crew-4').worktree, 'eps.ts'))).toBe(true);
     expect(task('T6').inputs).toEqual([{ branch: 'crew-3/epsilon', sha: t5.reviewedSha, kind: 'dependency', taskId: 'T5' }]);
   });
+
+  it('lets the Captain merge and push a task only after you approve it', async () => {
+    const t5 = task('T5');
+    expect(t5.status).toBe('ready_for_merge');
+    const early = await call('captain', 'POST', '/api/tasks/T5/merge');
+    expect(early.status).toBe(403);
+    expect(early.data.error).toMatch(/not approved T5 yet/);
+    expect((await call('crew-3', 'POST', '/api/tasks/T5/approve-merge')).status).toBe(403);
+
+    const approved = await ok<Task>('you', 'POST', '/api/tasks/T5/approve-merge');
+    expect(approved.mergeApproval?.sha).toBe(t5.reviewedSha);
+    expect(state().inbox.some((i) => i.agentId === 'captain' && i.taskId === 'T5' && /merge_task\(task: "T5"\)/.test(i.text))).toBe(true);
+    expect((await call('crew-3', 'POST', '/api/tasks/T5/merge')).status).toBe(403);
+
+    const remote = mkdtempSync(join(tmpdir(), 'muster-origin-'));
+    gitSync(remote, 'init', '-q', '--bare');
+    gitSync(repo, 'remote', 'add', 'origin', remote);
+    try {
+      const r = await ok<{ pushed: boolean; output: string }>('captain', 'POST', '/api/tasks/T5/merge');
+      expect(r.pushed).toBe(true);
+      expect(task('T5').status).toBe('merged');
+      expect(head('HEAD^2')).toBe(t5.reviewedSha);
+      const base = gitSync(repo, 'rev-parse', '--abbrev-ref', 'HEAD');
+      expect(gitSync(remote, 'rev-parse', base)).toBe(head('HEAD'));
+    } finally {
+      gitSync(repo, 'remote', 'remove', 'origin');
+      rmSync(remote, { recursive: true, force: true });
+    }
+  });
 });

@@ -5,6 +5,7 @@ import { dirname, join, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { musterFetch, serverInfo, type ServerInfo } from '../client.js';
 import { colors, type Colors } from './format.js';
+import { buildStamp, isStale } from '../core/build.js';
 
 export class CliError extends Error {}
 
@@ -94,6 +95,18 @@ export async function healthy(url: string, timeoutMs = 1500): Promise<boolean> {
     return res.ok;
   } catch {
     return false;
+  }
+}
+
+/** A warning line when the running server loaded an older build than the one on disk, else null. */
+export async function staleServer(url: string, local = buildStamp(musterHome()), timeoutMs = 1500): Promise<string | null> {
+  try {
+    const res = await fetch(url + '/api/health', { signal: AbortSignal.timeout(timeoutMs) });
+    const { build } = (await res.json()) as { build?: number };
+    if (typeof build !== 'number' || !isStale(build, local)) return null;
+    return `This Muster server is running an older build (${new Date(build).toLocaleString()}) than the one on disk (${new Date(local).toLocaleString()}). Run \`muster down\` then \`muster up\` to load it.`;
+  } catch {
+    return null;
   }
 }
 

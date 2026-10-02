@@ -112,7 +112,7 @@ export async function musterFetch<T>(path: string, opts?: { method?: string; bod
 ### State
 | Method | Path | Body | Returns |
 |---|---|---|---|
-| GET | /api/health | – | `{ ok: true, version }` (no token) |
+| GET | /api/health | – | `{ ok: true, version, build }` (no token). `build` is the newest mtime (ms) of the dist/ server .js files this process loaded (core/build.ts). Every 60 s the server compares it with dist/ and, after a rebuild, posts one open system note to "you" ("Needs you") plus a Windows notification; `muster up` (already running) and `muster status` print the same warning. |
 | GET | /api/state | – | `{ state: MusterState, config: MusterConfig, paused: boolean }` |
 | GET | /api/config | – | `MusterConfig` |
 | PATCH | /api/config | partial MusterConfig | `MusterConfig` (saved to config.json) |
@@ -291,7 +291,7 @@ Stdio MCP server named `muster`. Tools by role (`MUSTER_ROLE`):
 - Tool results are short plain text (not raw JSON dumps) — agents read them.
 
 ## Skills plugin (plugin/)
-Every agent launches with `--plugin-dir <MUSTER_HOME>/plugin`, a Claude Code plugin named `muster`, so its skills reach agents as `muster:<name>` without touching the user's `~/.claude/skills`: `evidence-driven-testing`, `before-and-after` (with `scripts/shot.mjs`, a headless Chrome/Edge screenshot), `code-structure`, `unslop` (sources and local edits in `plugin/README.md`). A station's `skills:` frontmatter line names the ones its worker loads (absent = `DEFAULT_SKILLS`: plan/build/fix → code-structure, reproduce/test → evidence-driven-testing, design-check → + before-and-after, review → unslop; an empty line = none). The station brief tells the worker to load them.
+Every agent launches with `--plugin-dir <MUSTER_HOME>/plugin`, a Claude Code plugin named `muster`, so its skills reach agents as `muster:<name>` without touching the user's `~/.claude/skills`: `evidence-driven-testing`, `before-and-after` (with `scripts/shot.mjs`, a headless Chrome/Edge screenshot), `code-structure`, `unslop`, `web-research` (public-web research through Agent Reach's no-login tools; setup in `plugin/README.md`, which also lists sources and local edits). `ptyEnv` appends `~/.agent-reach/venv/Scripts` to the end of PATH and sets `AGENT_REACH_PYTHON` when that venv exists. A station's `skills:` frontmatter line names the ones its worker loads (absent = `DEFAULT_SKILLS`: discover/concept → web-research, plan/build/fix → code-structure, reproduce/test → evidence-driven-testing, design-check → + before-and-after, review → unslop; an empty line = none). The station brief tells the worker to load them.
 
 ## Role prompts (src/prompts)
 
