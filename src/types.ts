@@ -285,13 +285,14 @@ export type RoadmapHealth = 'on_track' | 'at_risk' | 'late' | 'not_started' | 'd
 
 /** Counted by the orchestrator (never stored): GET /api/roadmap → { roadmap, progress }. */
 export interface RoadmapProgress {
-  overall: { done: number; total: number; percent: number }; // tasks: merged / not cancelled
+  overall: { done: number; total: number; percent: number; unlinked?: number }; // done/total = tasks on the roadmap (merged / not cancelled); percent = the stages' percents weighted by goal count; unlinked = live tasks with no goal
   health: RoadmapHealth;
   daysToLaunch?: number;
   currentStageId?: string; // first stage not done
   currentGoalId?: string; // first active goal of the current stage
-  stages: Record<string, { done: number; total: number; percent: number; health: RoadmapHealth; criteriaDone: number; criteriaTotal: number }>;
-  goals: Record<string, { done: number; total: number; percent: number; agents: string[] }>; // agents = holders of its open tasks
+  // percent: 100 when done; else from its tasks; with no tasks, from ticked exit criteria; else from its goals. basis says which
+  stages: Record<string, { done: number; total: number; percent: number; health: RoadmapHealth; criteriaDone: number; criteriaTotal: number; basis?: 'done' | 'tasks' | 'criteria' | 'goals' }>;
+  goals: Record<string, { done: number; total: number; percent: number; agents: string[] }>; // percent: from tasks; with none, 100 if the goal is done; agents = holders of its open tasks
 }
 
 // Events pushed over ws://127.0.0.1:<port>/ws/events

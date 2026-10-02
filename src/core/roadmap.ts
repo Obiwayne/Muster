@@ -365,6 +365,9 @@ export function approveRoadmap(state: MusterState, actor: string): Roadmap {
       ? `Roadmap approved. ${startText(stage, goal)}`
       : `Roadmap revision ${r.revision} approved. Carry on with ${stage.id} ${stage.title}${goal ? `, goal ${goal.id} ${goal.title} (post_task with goal: ${goal.id})` : ''}.`;
   tellCaptain(state, actor, text);
+  const loose = unlinkedTasks(state);
+  if (loose.length)
+    tellCaptain(state, actor, `${loose.length} task${loose.length === 1 ? ' is' : 's are'} not on the roadmap yet (${loose.slice(0, 12).join(', ')}${loose.length > 12 ? '…' : ''}). Link done and running work to the goals it delivers with link_tasks so progress is right, and tick any exit criteria it already meets.`);
   return r;
 }
 
@@ -528,6 +531,58 @@ export function goalForTask(state: MusterState, goalId: unknown): RoadmapGoal {
   return goal;
 }
 
+/**
+ * POST /api/roadmap/goals/:id/tasks: put existing tasks on a goal (or take them off with `unlink`), e.g. work that
+ * merged before the roadmap existed. Captain or you. A planned goal that gets an unmerged task becomes active;
+ * a goal whose linked tasks are all merged finishes on the next advance. Not a replan: no approval needed.
+ */
+export function linkTasks(state: MusterState, goalId: string, taskIds: unknown, actor: string, unlink = false): { goal: RoadmapGoal; linked: string[] } {
+  requireCaptainOrYou(state, actor, 'link tasks to roadmap goals');
+  const goal = requireGoal(state, goalId);
+  if (!unlink && goal.status === 'cancelled') throw conflict(`${goal.id} ${goal.title} is cancelled`);
+  if (!Array.isArray(taskIds) || !taskIds.length || taskIds.some((t) => typeof t !== 'string')) throw badRequest('taskIds must be a list of task ids like ["T3", "T4"]');
+  const tasks = taskIds.map((raw) => {
+    const id = String(raw).trim().toUpperCase();
+    const t = state.tasks.find((x) => x.id === id);
+    if (!t) throw notFound(`No task "${raw}"`);
+    return t;
+  });
+  for (const t of tasks) {
+    if (unlink) {
+      if (t.goalId === goal.id) delete t.goalId;
+    } else t.goalId = goal.id;
+  }
+  if (!unlink && goal.status === 'planned' && tasks.some((t) => t.status !== 'merged' && t.status !== 'cancelled')) activateGoal(goal);
+  const ids = tasks.map((t) => t.id);
+  addFeed(state, { kind: 'event', from: actor, text: `${unlink ? 'took' : 'put'} ${ids.join(', ')} ${unlink ? 'off' : 'on'} ${goal.id} ${goal.title}` });
+  state.roadmap!.updatedAt = nowIso();
+  finishLinkedGoals(state);
+  advanceRoadmap(state);
+  return { goal, linked: ids };
+}
+
+/** A goal (any status but cancelled/done) whose linked tasks are all merged is finished: linked old work counts. */
+function finishLinkedGoals(state: MusterState): void {
+  for (const g of state.roadmap?.goals ?? []) {
+    if (g.status !== 'planned') continue;
+    const tasks = state.tasks.filter((t) => t.goalId === g.id && t.status !== 'cancelled');
+    if (tasks.length && tasks.every((t) => t.status === 'merged')) activateGoal(g); // advanceRoadmap then marks it done
+  }
+}
+
+/** Live tasks with no goal while the roadmap is approved: the Captain should put them on it. */
+export function unlinkedTasks(state: MusterState): string[] {
+  if (state.roadmap?.status !== 'approved') return [];
+  return state.tasks.filter((t) => !t.goalId && t.status !== 'cancelled').map((t) => t.id);
+}
+
+/** Called when a task merges: if it has no goal on an approved roadmap, ask the Captain to place it. */
+export function remindUnlinked(state: MusterState, taskId: string): void {
+  const t = state.tasks.find((x) => x.id === taskId);
+  if (!t || t.goalId || state.roadmap?.status !== 'approved') return;
+  tellCaptain(state, SYSTEM, `${t.id} ${t.title} merged without a roadmap goal. Put it on the goal it delivers (link_tasks), and update the roadmap if it changes the plan.`);
+}
+
 /** Feed event, next planned goal of the stage → active, and the Captain hears what to do next. */
 function goalFinished(state: MusterState, goal: RoadmapGoal, from: string): void {
   const r = state.roadmap!;
@@ -592,31 +647,46 @@ export function computeProgress(state: MusterState, today: string): RoadmapProgr
     const tasks = state.tasks.filter((t) => t.goalId === g.id && t.status !== 'cancelled');
     const done = tasks.filter((t) => t.status === 'merged').length;
     const agents = [...new Set(tasks.filter((t) => t.status !== 'merged' && t.assignee).map((t) => t.assignee!))];
-    goals[g.id] = { done, total: tasks.length, percent: pct(done, tasks.length), agents };
+    const percent = tasks.length ? pct(done, tasks.length) : g.status === 'done' ? 100 : 0;
+    goals[g.id] = { done, total: tasks.length, percent, agents };
   }
   const stages: RoadmapProgress['stages'] = {};
   let allDone = 0;
   let allTotal = 0;
+  let weighted = 0;
+  let weights = 0;
   for (const s of r.stages) {
     let done = 0;
     let total = 0;
-    for (const g of goalsOf(r, s)) {
-      if (g.status === 'cancelled') continue;
+    const live = goalsOf(r, s).filter((g) => g.status !== 'cancelled');
+    for (const g of live) {
       done += goals[g.id].done;
       total += goals[g.id].total;
     }
     allDone += done;
     allTotal += total;
-    const percent = pct(done, total);
-    stages[s.id] = { done, total, percent, health: stageHealth(s, percent, now), criteriaDone: s.exitCriteria.filter((c) => c.done).length, criteriaTotal: s.exitCriteria.length };
+    const criteriaDone = s.exitCriteria.filter((c) => c.done).length;
+    const criteriaTotal = s.exitCriteria.length;
+    // Work done before the roadmap (or never linked to a goal) still shows: fall back to criteria, then goals.
+    let basis: 'done' | 'tasks' | 'criteria' | 'goals';
+    let percent: number;
+    if (s.status === 'done') [basis, percent] = ['done', 100];
+    else if (total) [basis, percent] = ['tasks', pct(done, total)];
+    else if (criteriaTotal) [basis, percent] = ['criteria', pct(criteriaDone, criteriaTotal)];
+    else [basis, percent] = ['goals', live.length ? Math.round(live.reduce((a, g) => a + goals[g.id].percent, 0) / live.length) : 0];
+    stages[s.id] = { done, total, percent, health: stageHealth(s, percent, now), criteriaDone, criteriaTotal, basis };
+    const w = Math.max(1, live.length);
+    weighted += percent * w;
+    weights += w;
   }
+  const unlinked = state.tasks.filter((t) => !t.goalId && t.status !== 'cancelled').length;
   const open = r.stages.filter((s) => s.status !== 'done').map((s) => stages[s.id].health);
   const health: RoadmapHealth = open.length ? open.reduce((a, b) => (HEALTH_RANK[b] > HEALTH_RANK[a] ? b : a)) : 'done';
   const current = r.stages.find((s) => s.status !== 'done');
   const currentGoal = current ? goalsOf(r, current).find((g) => g.status === 'active') : undefined;
   const launch = r.launchDate ? dayNumber(r.launchDate) : undefined;
   return {
-    overall: { done: allDone, total: allTotal, percent: pct(allDone, allTotal) },
+    overall: { done: allDone, total: allTotal, percent: weights ? Math.round(weighted / weights) : 0, unlinked },
     health,
     ...(launch !== undefined ? { daysToLaunch: launch - now } : {}),
     ...(current ? { currentStageId: current.id } : {}),

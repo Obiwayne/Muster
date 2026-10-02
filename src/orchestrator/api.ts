@@ -560,6 +560,10 @@ ${pushed ? `Pushed ${base} to origin.` : `Push to origin failed: ${(r.stderr || 
     return { ...roadmapReply(), goal: c.goal };
   });
   route('PATCH', '/api/roadmap/goals/:id', ({ params, body }) => roadmapWrite(() => roadmap.patchGoal(state(), params.id, body, str(body.actor, 'actor'))));
+  route('POST', '/api/roadmap/goals/:id/tasks', ({ params, body }) => {
+    const r = mutate(() => roadmap.linkTasks(state(), params.id, body.taskIds, str(body.actor, 'actor'), body.unlink === true));
+    return { ...roadmapReply(), goal: r.goal, linked: r.linked };
+  });
 
   // ------------------------------------------------------------------ board, chat, inbox
   route('GET', '/api/notes', ({ query }) =>

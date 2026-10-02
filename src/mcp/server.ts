@@ -59,7 +59,7 @@ export const CAPTAIN_TOOLS = [
   'spawn_crew', 'post_task', 'assign', 'list_agents', 'list_tasks', 'read_board', 'reply', 'message',
   'read_inbox', 'read_output', 'get_diff', 'run_tests', 'request_review', 'merge_task', 'send_back', 'cancel_task', 'close_crew', 'escalate',
   'add_evidence', 'get_evidence',
-  'roadmap', 'set_roadmap', 'update_stage', 'check_criterion', 'complete_stage', 'add_goal', 'update_goal',
+  'roadmap', 'set_roadmap', 'update_stage', 'check_criterion', 'complete_stage', 'add_goal', 'update_goal', 'link_tasks',
 ] as const;
 export const CREW_TOOLS = [
   'claim_task', 'list_agents', 'list_tasks', 'post_note', 'read_board', 'reply', 'ask_captain',
@@ -472,6 +472,20 @@ ${r.output}`;
         const v = await api<RoadmapView>(`/api/roadmap/goals/${enc(id)}`, { method: 'PATCH', body: { actor: me, ...patch } });
         const g = v?.roadmap?.goals.find((x) => x.id === id);
         return `Updated ${id}${g ? ` ${clip(g.title, 60)} [${g.status}]` : ''}.${draftNote(v?.roadmap)}`;
+      },
+    );
+
+    tool(
+      'link_tasks',
+      'Put existing tasks on the goal they deliver (or take them off with unlink: true), e.g. work merged before the roadmap existed or a task posted without a goal. Progress is counted from linked tasks; a goal whose linked tasks are all merged finishes. No approval needed.',
+      { goal: z.string().describe('Goal id, e.g. G3'), tasks: z.array(z.string()).min(1).describe('Task ids, e.g. ["T21", "T26"]'), unlink: z.boolean().optional() },
+      async ({ goal, tasks, unlink }) => {
+        const id = upId(goal);
+        const v = await api<RoadmapView & { linked?: string[] }>(`/api/roadmap/goals/${enc(id)}/tasks`, { method: 'POST', body: { actor: me, taskIds: tasks.map(upId), unlink: unlink === true } });
+        const g = v?.roadmap?.goals.find((x) => x.id === id);
+        const p = v?.progress?.goals[id];
+        const ids = (v?.linked ?? tasks.map(upId)).join(', ');
+        return `${unlink ? 'Took' : 'Put'} ${ids} ${unlink ? 'off' : 'on'} ${id}${g ? ` ${clip(g.title, 60)} [${g.status}]` : ''}${p ? ` · ${p.done}/${p.total} merged` : ''}.`;
       },
     );
   }

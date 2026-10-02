@@ -3,7 +3,7 @@
 import { STATION_ROLE, type Agent, type MusterConfig, type MusterState, type Note, type Role, type Task, type TaskBranchInput, type TaskEvent } from '../types.js';
 import { addFeed, addInbox, captainOf, closeNoteIfOpen, findAgent, HUMAN, idNum, isCaptain, nowIso, postNote, replyNote, requireActor, requireAgent, SYSTEM } from './board.js';
 import { badRequest, conflict, forbidden, notFound } from './errors.js';
-import { activateGoal, advanceRoadmap, goalForTask } from './roadmap.js';
+import { activateGoal, advanceRoadmap, remindUnlinked, goalForTask } from './roadmap.js';
 import { nextId } from './store.js';
 import { assertNotPaused } from './usage.js';
 
@@ -533,6 +533,7 @@ export function markMerged(state: MusterState, task: Task, actor: string): void 
   addFeed(state, { kind: 'event', from: actor, taskId: task.id, text: `merged ${task.id} ${task.title}${task.branch ? ` (${task.branch})` : ''}` });
   recomputeReadiness(state);
   advanceRoadmap(state);
+  remindUnlinked(state, task.id);
 }
 
 /** True when the agent's latest task action was finishing or handing on, and it holds nothing now. */

@@ -186,6 +186,7 @@ export function formatRoadmap(data: { roadmap: Roadmap | null; progress: Roadmap
   const status = r.status === 'draft' ? `DRAFT rev ${r.revision}, waiting for the user's approval${r.noteId ? ` (${r.noteId})` : ''}` : `approved rev ${r.revision}`;
   const overall = p ? `${p.overall.percent}% (${p.overall.done}/${p.overall.total} tasks) · ${HEALTH[p.health]}` : '';
   const lines = [[`Roadmap: ${clip(r.title, 80)}`, status, overall, launchLine(r, p?.daysToLaunch)].filter(Boolean).join(' · ')];
+  if (p?.overall.unlinked) lines.push(`${p.overall.unlinked} task${p.overall.unlinked === 1 ? '' : 's'} not on any goal: put them on the goal they deliver with link_tasks.`);
   const current = p?.currentStageId;
   const goalById = new Map(r.goals.map((g) => [g.id, g]));
   for (const s of r.stages) {

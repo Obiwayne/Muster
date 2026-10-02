@@ -11,7 +11,7 @@ import { ageShort, displayName, hhmm, idNum, roleOf, stationRole, taskIsStuck } 
 import {
   DAY, HEALTH, average, barSpan, currentStageId, frac, labelStep, launchText, localDay, mergedPerDay, nextStage, parseDay,
   recentlyLanded, shortDate, shortDay, spanStyle, stageById, stageFeed, stageGoals, stageOfTask, stageWeights, stationWord,
-  timelineScale, todayFrac, columnIndex, columnStarts, type Scale, type Span,
+  timelineScale, todayFrac, stageCount, stageBasis, goalCount, overallText, columnIndex, columnStarts, type Scale, type Span,
 } from '../roadmap';
 
 type View = 'timeline' | 'stages';
@@ -177,12 +177,12 @@ export function createRoadmap(): Page {
     return h('div.rm-summary', null,
       h('div.rm-overall', null,
         h('div.section-label', null, 'OVERALL'),
-        h('div.rm-overall-row', null, h('div.rm-big', null, `${pg.overall.percent}%`), h('div.rm-of', null, `${pg.overall.done} / ${pg.overall.total} tasks`))),
+        h('div.rm-overall-row', null, h('div.rm-big', null, `${pg.overall.percent}%`), h('div.rm-of', { title: pg.overall.unlinked ? 'Tasks with no goal are left out of the counts; the Captain links them with link_tasks' : undefined }, overallText(pg.overall)))),
       h('div.rm-segs', null,
         h('div.rm-segbar', null, rm.stages.map((s, i) => {
           const p = sp(s.id);
           const isCur = s.id === cur;
-          return h('div.rm-segbar-s', { class: [s.status === 'done' && 'done'], style: { flex: weights[i] }, title: `${s.id} ${s.title} · ${p.done}/${p.total}` },
+          return h('div.rm-segbar-s', { class: [s.status === 'done' && 'done'], style: { flex: weights[i] }, title: `${s.id} ${s.title} · ${p.percent}% · ${stageBasis(p)}` },
             s.status !== 'done' && p.percent > 0 ? h('div.fill', { class: !isCur && 'muted', style: { width: pct(p.percent) } }) : null);
         })),
         h('div.rm-seglabels', null, rm.stages.map((s, i) => {
@@ -266,7 +266,7 @@ export function createRoadmap(): Page {
         stageIcon(s, isCur, isLaunch),
         h('span.rm-id', { style: { color: isCur ? 'var(--color-crew)' : undefined } }, s.id),
         h('span.rm-title', null, s.title),
-        h('span.rm-count', null, `${p.done}/${p.total}`)),
+        h('span.rm-count', { title: stageBasis(p) }, stageCount(p))),
       h('div.rm-trk', null, track));
   }
 
@@ -295,7 +295,7 @@ export function createRoadmap(): Page {
     h('div.rm-lab.rm-goal-lab', null, dot,
       h('span.rm-title', { class: g.status === 'active' ? 'on' : g.status === 'cancelled' ? 'struck' : '' }, g.title),
       isCurGoal ? h('span.rm-tag', null, 'GOAL') : null,
-      h('span.rm-count', { class: g.status === 'active' && 'on' }, `${p.done}/${p.total}`)),
+      h('span.rm-count', { class: g.status === 'active' && 'on' }, goalCount(p, g.status))),
     h('div.rm-trk', null, track));
   }
 
@@ -311,13 +311,13 @@ export function createRoadmap(): Page {
         s.description ? h('div.rm-card-desc', null, s.description) : null,
         h('div.rm-prog', null, h('div.fill', { class: s.status === 'done' && 'done', style: { width: pct(s.status === 'done' ? 100 : p.percent) } })),
         h('div.rm-card-meta', null,
-          h('span', null, `${p.done}/${p.total} tasks`),
+          h('span', null, p.total ? `${p.done}/${p.total} tasks` : `${p.percent}%`),
           h('span', null, s.start || s.due ? `${shortDate(s.start) || '…'} – ${shortDate(s.due) || '…'}` : 'no dates'),
           p.criteriaTotal ? h('span', null, `${p.criteriaDone}/${p.criteriaTotal} criteria`) : null),
         h('div.rm-card-goals', null, stageGoals(rm, s.id).map((g) => {
           const gp = pg.goals[g.id] ?? NO_GOAL;
           return h('div.rm-li', null, h(g.status === 'done' ? 'span.rm-gdot.done' : g.status === 'active' ? 'span.rm-gdot.active' : 'span.rm-gdot'),
-            h('span.flex1.ellipsis', { class: g.status !== 'active' && 'muted' }, g.title), h('span.rm-mono-faint', null, `${gp.done}/${gp.total}`));
+            h('span.flex1.ellipsis', { class: g.status !== 'active' && 'muted' }, g.title), h('span.rm-mono-faint', null, goalCount(gp, g.status)));
         })));
     }));
   }
@@ -415,7 +415,7 @@ export function createRoadmap(): Page {
           h('div.rm-dtitle-row', null, h('h1.rm-dtitle', null, s.title), statusPill(s, isCur)),
           s.description ? h('div.rm-ddesc', null, s.description) : null),
         h('div.rm-stats', null,
-          stat('TASKS', `${p.done} / ${p.total}`),
+          stat(p.total ? 'TASKS' : 'PROGRESS', p.total ? `${p.done} / ${p.total}` : `${p.percent}%`),
           stat('WINDOW', s.start || s.due ? `${shortDate(s.start) || '…'} – ${shortDate(s.due) || '…'}` : '—'),
           stat('CREW ON IT', String(crew.size)))),
       goals.length ? null : h('div.rm-goal.rm-goal-empty', null, 'No goals in this stage yet. Use Add goal to ask the Captain for one.'),
@@ -430,7 +430,7 @@ export function createRoadmap(): Page {
     const p = pg.goals[g.id] ?? NO_GOAL;
     const toggle = () => { goalOpen.set(g.id, !open); render(); };
     const bar = h('div.rm-gprog', null, h('div.fill', { class: g.status === 'done' && 'done', style: { width: pct(p.percent) } }));
-    const count = h('div.rm-gcount', { class: open && 'on' }, `${p.done}/${p.total}`);
+    const count = h('div.rm-gcount', { class: open && 'on' }, goalCount(p, g.status));
     if (!open) {
       const active = goals.find((x) => x.status === 'active');
       const word = g.status === 'done' ? `done${g.completedAt ? ` ${shortDate(g.completedAt)}` : ''}`

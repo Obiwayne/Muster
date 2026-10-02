@@ -178,7 +178,7 @@ describe('muster-mcp roadmap tools', () => {
   it('are captain only', async () => {
     const { client } = await connect('crew', () => null);
     const names = (await client.listTools()).tools.map((t) => t.name);
-    for (const n of ['roadmap', 'set_roadmap', 'update_stage', 'check_criterion', 'complete_stage', 'add_goal', 'update_goal']) expect(names).not.toContain(n);
+    for (const n of ['roadmap', 'set_roadmap', 'update_stage', 'check_criterion', 'complete_stage', 'add_goal', 'update_goal', 'link_tasks']) expect(names).not.toContain(n);
   });
   it('roadmap reads GET /api/roadmap and handles no roadmap', async () => {
     let v: unknown = { roadmap: null, progress: null };
@@ -246,6 +246,13 @@ describe('muster-mcp roadmap tools', () => {
     const r = await call('add_goal', { stage: 'm2', title: 'Dark mode', description: 'd' });
     expect(calls[0]).toEqual({ path: '/api/roadmap/goals', method: 'POST', body: { actor: 'captain', stageId: 'M2', title: 'Dark mode', description: 'd', start: undefined, due: undefined } });
     expect(r.text).toBe("Added G5 Dark mode to M2. The roadmap is a draft (rev 2) waiting for the user's approval; keep working on approved goals meanwhile.");
+  });
+  it('link_tasks POSTs upper-cased task ids to the goal', async () => {
+    const { call, calls } = await connect('captain', () => ({ ...view(), linked: ['T21', 'T26'] }));
+    const r = await call('link_tasks', { goal: 'g3', tasks: ['t21', 'T26'] });
+    expect(calls[0]).toEqual({ path: '/api/roadmap/goals/G3/tasks', method: 'POST', body: { actor: 'captain', taskIds: ['T21', 'T26'], unlink: false } });
+    expect(r.text).toMatch(/^Put T21, T26 on G3 Reactions/);
+    expect((await call('link_tasks', { goal: 'G3', tasks: ['T21'], unlink: true })).text).toMatch(/^Took T21, T26 off G3/);
   });
   it('update_stage and update_goal PATCH only what was given', async () => {
     const { call, calls } = await connect('captain', () => view());
