@@ -1,4 +1,5 @@
 // The orchestrator process: HTTP API, WebSockets, static dashboard, and wiring of store + agents.
+import { relocateState, repairWorktrees } from './relocate.js';
 import { execFileSync } from 'node:child_process';
 import { existsSync, readFileSync, rmSync, statSync, writeFileSync } from 'node:fs';
 import { createServer, type IncomingMessage, type Server, type ServerResponse } from 'node:http';
@@ -325,6 +326,11 @@ export async function startOrchestrator(opts: OrchestratorOptions): Promise<Orch
     if (store.state.usage.paused !== before) store.commit();
   }, 60_000).unref();
   const buildTimer = setInterval(checkBuild, opts.buildCheckMs ?? 60_000).unref();
+
+  // A renamed/moved folder: fix stored paths and worktree links before anything starts (never recreates under the old root).
+  const moved = relocateState(store, paths, log);
+  await repairWorktrees(store, paths, log);
+  if (moved !== null) agents.rewriteAgentFiles();
 
   if (opts.autoStart !== false) await agents.resumeAll().catch((e) => log(`could not start agents: ${e instanceof Error ? e.message : e}`));
 

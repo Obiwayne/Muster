@@ -60,6 +60,8 @@ function sleepSync(ms: number): void {
  */
 export class Store extends EventEmitter {
   state: MusterState;
+  /** The repoRoot state.json was saved with, when it differs from this folder (renamed or moved project). */
+  movedFrom?: string;
   private rename: (from: string, to: string) => void;
   private log: (msg: string) => void;
   private retryDelays: number[];
@@ -78,7 +80,9 @@ export class Store extends EventEmitter {
   private load(): MusterState {
     if (!existsSync(this.paths.state)) return emptyState(this.paths.root);
     try {
-      return migrate(JSON.parse(readFileSync(this.paths.state, 'utf8')), this.paths.root);
+      const raw = JSON.parse(readFileSync(this.paths.state, 'utf8')) as Partial<MusterState>;
+      if (typeof raw.repoRoot === 'string' && raw.repoRoot && raw.repoRoot !== this.paths.root) this.movedFrom = raw.repoRoot;
+      return migrate(raw, this.paths.root);
     } catch {
       renameSync(this.paths.state, `${this.paths.state}.corrupt-${Date.now()}`);
       return emptyState(this.paths.root);
