@@ -27,12 +27,29 @@ const DIST = normalize(join(here, '..', '..', 'dist', 'ui'));
 const now = Date.now();
 const iso = (minAgo) => new Date(now - minAgo * 60_000).toISOString();
 
+const GUIDE = (title, lines) => [`# ${title}`, '', ...lines, ''].join(String.fromCharCode(10));
 const stationDefs = {
-  build: { role: 'crew', builtin: true, guideline: ['# Build', '', 'Implement the task in your worktree.', '', '- Keep changes small', '- Run `npm test` before handoff', ''].join('\n') },
-  test: { role: 'crew', builtin: true, guideline: '' },
-  design: { role: 'design', builtin: true, guideline: '' },
+  discover: { role: 'crew', builtin: true, guideline: GUIDE('Discover', ['Find out what the task really needs. Write findings, not code.', '', '- Cite the files you read', '- List unknowns as questions']) },
+  concept: { role: 'crew', builtin: true, guideline: GUIDE('Concept', ['Two or three options with a recommendation.']) },
+  plan: { role: 'crew', builtin: true, guideline: GUIDE('Plan', ['Turn the chosen concept into small tasks the Captain can post.', '', '- One item per task, with acceptance criteria', '- Suggest a line for each task (new-app, feature, ui or bugfix)', '- Commit the plan to docs/factory/']) },
+  approval: { role: 'human', builtin: true, guideline: GUIDE('Approval', ['The task pauses here until you approve it or send it back.']) },
+  design: { role: 'design', builtin: true, guideline: GUIDE('Design', ['Sketch the screen in Vellum before anyone builds it.']) },
+  build: { role: 'crew', builtin: true, guideline: GUIDE('Build', ['Implement the task in your worktree.', '', '- Keep changes small', '- Run `npm test` before handoff', '- Hand on to the test station with a two-line summary']) },
+  test: { role: 'crew', builtin: true, guideline: GUIDE('Test', ['Write and run tests for the change. Do not change the code under test.']) },
+  'design-check': { role: 'design', builtin: true, guideline: GUIDE('Design check', ['Compare the built UI with the Vellum framework.', '', 'Post PASS or DRIFT with the task and file:line.']) },
+  reproduce: { role: 'crew', builtin: true, guideline: GUIDE('Reproduce', ['Write a failing test that shows the bug.']) },
+  fix: { role: 'crew', builtin: true, guideline: GUIDE('Fix', ['Make the failing test pass with the smallest change.']) },
   review: { role: 'captain', builtin: true, guideline: '' },
 };
+const SKILLS = [
+  { name: 'evidence-driven-testing', description: 'Records visual proof while testing, then attaches it to the task.' },
+  { name: 'before-and-after', description: 'Captures before/after screenshots of a page or element.' },
+  { name: 'code-structure', description: 'Keeps shared mechanics in a service layer, domain rules in actions.' },
+  { name: 'unslop', description: 'Cuts AI tells from commit messages, docs and replies.' },
+];
+stationDefs.build.skills = ['code-structure'];
+stationDefs.test.skills = ['evidence-driven-testing'];
+stationDefs['design-check'].skills = ['before-and-after'];
 const config = {
   port: PORT,
   captainModel: 'opus',
@@ -42,66 +59,97 @@ const config = {
   pauseAtFiveHourPct: 80,
   warnAtWeeklyPct: 75,
   shutdownIdleCrew: true,
-  defaultStations: ['build', 'test', 'design', 'review'],
+  defaultStations: ['plan', 'build', 'test', 'review'],
+  defaultLine: 'feature',
+  vellumFile: 'muster',
+  vellumEdit: 'ask',
+  userName: 'Alex',
   testCommand: 'npm test',
   baseBranch: 'main',
   permissionMode: 'acceptEdits',
-  vellum: { command: 'node', args: ['F:/Vellum/mcp/dist/index.js'] },
+  vellum: { command: 'node', args: ['vellum-mcp/index.js'] },
   notify: true,
   allowedTools: ['Bash(npm *)', 'mcp__muster__*'],
-  projectName: 'wall-education',
+  projectName: 'acme-app',
+  crewNames: 'names',
+  requireEvidence: true,
+  githubOffer: 'ask',
 };
+
+const lineDefs = [
+  { name: 'new-app', label: 'New app / big feature', stations: ['discover', 'concept', 'design', 'plan', 'approval', 'review'], builtin: true },
+  { name: 'feature', label: 'Feature', stations: ['plan', 'build', 'test', 'review'], builtin: true },
+  { name: 'ui', label: 'UI change', stations: ['design', 'build', 'design-check', 'review'], builtin: true },
+  { name: 'bugfix', label: 'Bug fix', stations: ['reproduce', 'fix', 'test', 'review'], builtin: true },
+];
 
 const agent = (id, role, branch, status, taskId, minAgo, model) => ({
   id, role, model: model ?? (role === 'captain' ? 'opus' : 'sonnet'), branch,
-  worktree: role === 'captain' ? 'F:/wall-education' : `F:/wall-education/.muster/worktrees/${id}`,
+  worktree: role === 'captain' ? '/work/acme-app' : `/work/acme-app/.muster/worktrees/${id}`,
   status, taskId, sessionId: crypto.randomUUID(), pid: 4000 + Math.floor(Math.random() * 4000),
   startedAt: iso(minAgo), lastActivityAt: iso(status === 'stuck' ? 4 : 0.3), costUsd: +(Math.random() * 3).toFixed(2),
 });
 
 const task = (id, title, status, stations, stationIndex, extra = {}) => ({
   id, title, description: extra.description ?? `${title}.`, dependsOn: extra.dependsOn ?? [], stations, stationIndex, status,
-  assignee: extra.assignee, branch: extra.branch, createdBy: 'captain', createdAt: iso(extra.created ?? 40), updatedAt: iso(extra.updated ?? 5),
+  assignee: extra.assignee, branch: extra.branch, evidence: extra.evidence, createdBy: 'captain', createdAt: iso(extra.created ?? 40), updatedAt: iso(extra.updated ?? 5),
   history: extra.history ?? [{ at: iso(extra.created ?? 40), agentId: 'captain', kind: 'created' }],
 });
 
-const S4 = ['build', 'test', 'design', 'review'];
+
+// Evidence the last station attached (files are served from docs/ by the route in the HTTP handler).
+const EVIDENCE_FILES = {
+  '01-after-token-copy.png': join(here, '..', '..', 'docs', 'design', 'design-system.png'),
+  'tests.txt': Buffer.from(['> vitest run', '', ' ✓ src/core/tokens.test.ts (14 tests)', ' ✓ src/api/invites.test.ts (12 tests)', '', ' Test Files  2 passed (2)', '      Tests  26 passed (26)'].join(String.fromCharCode(10))),
+  'assertions.md': Buffer.from(['Tested commit: 4f2c1a9', '- token is 22 chars base62: passed', '- unique index rejects duplicates: passed', '- expiry defaults to 7 days: passed'].join(String.fromCharCode(10))),
+};
+const evidence = (id, station, by, summary, names, minAgo) => ({
+  id, station, by, at: iso(minAgo), summary, sha: '4f2c1a9d03b7e5a1c8d2f6b94e0a7c35d1b8f2e6',
+  files: names.map((name) => ({ name, kind: name.endsWith('.png') ? 'image' : 'text', bytes: 2048 })),
+});
+
+const S4 = ['plan', 'build', 'test', 'review'];
+const SUI = ['design', 'build', 'design-check', 'review'];
 const state = {
   version: 1,
-  repoRoot: 'F:/wall-education',
+  repoRoot: '/work/acme-app',
   agents: EMPTY ? [] : [
     agent('captain', 'captain', 'main', 'working', undefined, 45),
-    agent('crew-2', 'crew', 'crew-2/invite-api', 'working', undefined, 44),
-    agent('crew-3', 'crew', 'crew-3/share-dialog', 'stuck', 'T4', 40),
+    agent('ada', 'crew', 'ada/invite-api', 'working', undefined, 44),
+    agent('bea', 'crew', 'bea/share-dialog', 'stuck', 'T4', 40),
     agent('design', 'design', 'design/check', 'waiting', undefined, 38),
-    agent('crew-5', 'crew', 'crew-5/tests', 'working', 'T3', 20),
+    agent('cleo', 'crew', 'cleo/tests', 'working', 'T3', 20),
   ],
   tasks: EMPTY ? [] : [
-    task('T1', 'Invites table + migration', 'ready_for_merge', ['build', 'review'], 1, { branch: 'crew-2/invites-db', assignee: 'captain', created: 44, updated: 3,
+    task('T1', 'Invites table + migration', 'ready_for_merge', ['build', 'review'], 1, { branch: 'ada/invites-db', assignee: 'captain', created: 44, updated: 3,
+      evidence: [evidence('E1', 'build', 'ada', 'Migration applies and rolls back; 12 invite tests pass.', ['01-after-token-copy.png', 'tests.txt', 'assertions.md'], 6)],
       history: [{ at: iso(44), agentId: 'captain', kind: 'created' }, { at: iso(3), agentId: 'captain', kind: 'review_requested', text: 'Migration adds the invites table with a unique token index. Tests pass. Safe to merge.' }] }),
-    task('T2', 'Invite token generator', 'review', S4, 3, { branch: 'crew-2/tokens', assignee: 'captain', created: 43 }),
-    task('T3', 'Invite API endpoints', 'in_progress', S4, 1, { branch: 'crew-2/invite-api', assignee: 'crew-5', created: 42, dependsOn: ['T2'] }),
-    task('T4', 'Share dialog UI', 'in_progress', S4, 0, { branch: 'crew-3/share-dialog', assignee: 'crew-3', created: 41, dependsOn: ['T3'] }),
+    task('T2', 'Invite token generator', 'review', S4, 3, { branch: 'ada/tokens', assignee: 'captain', created: 43,
+      evidence: [evidence('E1', 'test', 'bea', '22-char base62 tokens, 14 tests pass.', ['tests.txt', 'assertions.md'], 8)] }),
+    task('T3', 'Invite API endpoints', 'in_progress', S4, 2, { branch: 'ada/invite-api', assignee: 'cleo', created: 42, dependsOn: ['T2'] }),
+    task('T4', 'Share dialog UI', 'in_progress', SUI, 1, { branch: 'bea/share-dialog', assignee: 'bea', created: 41, dependsOn: ['T3'] }),
     task('T5', 'Revoke invite link', 'ready', S4, 0, { created: 30 }),
-    task('T6', 'Invite email template', 'blocked', S4, 0, { dependsOn: ['T3', 'T4'], created: 30 }),
+    task('T6', 'Invite email template', 'blocked', SUI, 0, { dependsOn: ['T3', 'T4'], created: 30 }),
     task('T7', 'End-to-end invite test', 'blocked', ['build', 'test', 'review'], 0, { dependsOn: ['T6'], created: 29 }),
-    task('T8', 'Invite model', 'merged', ['build', 'review'], 1, { branch: 'crew-2/invite-model', created: 120, updated: 62 }),
+    task('T9', 'Concept: sharing beyond invite links', 'awaiting_approval', ['discover', 'concept', 'approval', 'review'], 2, { branch: 'ada/sharing-concept', assignee: 'you', created: 36, updated: 1 }),
+    task('T8', 'Invite model', 'merged', ['build', 'review'], 1, { branch: 'ada/invite-model', created: 120, updated: 62 }),
   ],
   notes: EMPTY ? [] : [
-    { id: 'N10', type: 'progress', from: 'crew-2', taskId: 'T3', branch: 'crew-2/invite-api', text: 'Endpoints and tests done, handing to the test station.', createdAt: iso(14), open: false, replies: [] },
-    { id: 'N11', type: 'done', from: 'crew-2', taskId: 'T1', branch: 'crew-2/invites-db', text: 'Invites table + migration done. 12 tests pass.', createdAt: iso(9), open: false, replies: [] },
-    { id: 'N12', type: 'question', from: 'crew-2', taskId: 'T3', branch: 'crew-2/invite-api', text: 'Should invite links expire after 7 days or 30?', createdAt: iso(11), open: true,
-      replies: [{ at: iso(8), from: 'crew-5', text: 'The fixtures assume 7 days, if that helps.' }, { at: iso(6), from: 'captain', text: 'Checking the spec; hold on 7 days for now.' }] },
-    { id: 'N13', type: 'review', from: 'captain', taskId: 'T1', branch: 'crew-2/invites-db', text: 'Invites table ready to merge. 3 files, 12 tests passing.', createdAt: iso(0.5), open: true, replies: [] },
-    { id: 'N14', type: 'stuck', from: 'crew-3', taskId: 'T4', branch: 'crew-3/share-dialog', text: 'Which token format does T2 use? The share fixture fails on length.\nTried: regenerating the fixture from the API (still 16 chars), reading src/api/tokens.ts (not on my branch yet).', createdAt: iso(4), open: true,
-      replies: [{ at: iso(2), from: 'captain', text: 'Use the 22-char base62 token from T2. crew-2 merged it into their branch; pull it with handoff and rerun the fixture.' },
-        { at: iso(1), from: 'crew-2', text: 'tokens.ts is on crew-2/invite-api now. The fixture helper is makeInviteToken() in test/fixtures.ts, use that instead of a hard-coded string.' }] },
-    { id: 'N15', type: 'waiting', from: 'design', to: 'crew-3', taskId: 'T4', branch: 'design/check', text: 'Design check on T4 once crew-3 hands off.', createdAt: iso(6), open: true, replies: [] },
+    { id: 'N10', type: 'progress', from: 'ada', taskId: 'T3', branch: 'ada/invite-api', text: 'Endpoints and tests done, handing to the test station.', createdAt: iso(14), open: false, replies: [] },
+    { id: 'N11', type: 'done', from: 'ada', taskId: 'T1', branch: 'ada/invites-db', text: 'Invites table + migration done. 12 tests pass.', createdAt: iso(9), open: false, replies: [] },
+    { id: 'N12', type: 'question', from: 'ada', taskId: 'T3', branch: 'ada/invite-api', text: 'Should invite links expire after 7 days or 30?', createdAt: iso(11), open: true,
+      replies: [{ at: iso(8), from: 'cleo', text: 'The fixtures assume 7 days, if that helps.' }, { at: iso(6), from: 'captain', text: 'Checking the spec; hold on 7 days for now.' }] },
+    { id: 'N13', type: 'review', from: 'captain', taskId: 'T1', branch: 'ada/invites-db', text: 'Invites table ready to merge. 3 files, 12 tests passing.', createdAt: iso(0.5), open: true, replies: [] },
+    { id: 'N14', type: 'stuck', from: 'bea', taskId: 'T4', branch: 'bea/share-dialog', text: 'Which token format does T2 use? The share fixture fails on length.\nTried: regenerating the fixture from the API (still 16 chars), reading src/api/tokens.ts (not on my branch yet).', createdAt: iso(4), open: true,
+      replies: [{ at: iso(2), from: 'captain', text: 'Use the 22-char base62 token from T2. ada merged it into their branch; pull it with handoff and rerun the fixture.' },
+        { at: iso(1), from: 'ada', text: 'tokens.ts is on ada/invite-api now. The fixture helper is makeInviteToken() in test/fixtures.ts, use that instead of a hard-coded string.' }] },
+    { id: 'N15', type: 'waiting', from: 'design', to: 'bea', taskId: 'T4', branch: 'design/check', text: 'Design check on T4 once bea hands off.', createdAt: iso(6), open: true, replies: [] },
     { id: 'N16', type: 'escalation', from: 'captain', text: 'Should a revoked invite link show a friendly "link expired" page or a plain 404? This is a product call (N12 is related).', createdAt: iso(2), open: true, replies: [] },
-    { id: 'N17', type: 'progress', from: 'design', to: 'crew-3', taskId: 'T4', branch: 'crew-3/share-dialog', text: 'DRIFT T4 ShareDialog primary button is #2563EB; framework uses var(--color-primary)\nsrc/ui/ShareDialog.tsx:42 — hard-coded #2563EB', createdAt: iso(3), open: false, replies: [] },
+    { id: 'N17', type: 'progress', from: 'design', to: 'bea', taskId: 'T4', branch: 'bea/share-dialog', text: 'DRIFT T4 ShareDialog primary button is #2563EB; framework uses var(--color-primary)\nsrc/ui/ShareDialog.tsx:42 — hard-coded #2563EB', createdAt: iso(3), open: false, replies: [] },
     { id: 'N18', type: 'question', from: 'design', taskId: 'T4', text: 'DRIFT T4 Share dialog has no matching board in Vellum. Ask the Captain before adding one?', createdAt: iso(3.5), open: false, replies: [{ at: iso(3), from: 'captain', text: 'Not yet, flag it in the review.' }] },
     { id: 'N19', type: 'done', from: 'design', taskId: 'T2', text: 'PASS T2 Token copy UI matches the framework tokens', createdAt: iso(16), open: false, replies: [] },
-    { id: 'N20', type: 'message', from: 'crew-2', to: 'crew-3', text: 'Heads up: the invite API now returns expiresAt as an ISO string, not a number.', createdAt: iso(33), open: false, replies: [] },
+    { id: 'N21', type: 'approval', from: 'ada', taskId: 'T9', branch: 'ada/sharing-concept', text: 'Concept for sharing beyond invite links is ready: three options (public link, per-team link, email-only) with a recommendation. Approve to start planning.', createdAt: iso(1), open: true, replies: [] },
+    { id: 'N20', type: 'message', from: 'ada', to: 'bea', text: 'Heads up: the invite API now returns expiresAt as an ISO string, not a number.', createdAt: iso(33), open: false, replies: [] },
   ],
   feed: [],
   inbox: [],
@@ -111,7 +159,7 @@ const state = {
     updatedAt: iso(0.2), perAgentCostUsd: {}, paused: false, weeklyWarned: false,
   },
   goal: EMPTY ? undefined : { text: 'Build the invite-link sharing flow', at: iso(42) },
-  nextIds: { agent: 6, task: 9, note: 22, feed: 1, inbox: 1, stage: 6, goal: 13 },
+  nextIds: { agent: 6, task: 10, note: 22, feed: 1, inbox: 1, stage: 6, goal: 13 },
 };
 
 // ---------------------------------------------------------------- roadmap (dates relative to today)
@@ -209,29 +257,29 @@ function nextMonday() {
 
 const feedSeed = [
   [44, 'message', 'you', 'captain', 'Build the invite-link sharing flow', {}],
-  [43, 'message', 'captain', 'everyone', 'Goal is the invite-link sharing flow. T2 tokens and T3 API go first; T4 share dialog waits on T3. crew-2 take T3, crew-3 take T4.', {}],
+  [43, 'message', 'captain', 'everyone', 'Goal is the invite-link sharing flow. T2 tokens and T3 API go first; T4 share dialog waits on T3. ada take T3, bea take T4.', {}],
   [42.8, 'event', 'muster', undefined, 'captain posted T1–T7', {}],
-  [42.5, 'event', 'crew-2', undefined, 'crew-2 claimed T3 Invite API endpoints', { taskId: 'T3' }],
-  [42.3, 'event', 'crew-3', undefined, 'crew-3 claimed T4 Share dialog UI', { taskId: 'T4' }],
+  [42.5, 'event', 'ada', undefined, 'ada claimed T3 Invite API endpoints', { taskId: 'T3' }],
+  [42.3, 'event', 'bea', undefined, 'bea claimed T4 Share dialog UI', { taskId: 'T4' }],
   [40, 'event', 'muster', undefined, 'design started (design crew)', {}],
-  [36, 'message', 'design', 'everyone', 'Reading the Wall Education framework in Vellum: 38 tokens, 16 pages. I will check every UI branch before review.', {}],
-  [33, 'message', 'crew-2', 'crew-3', 'Heads up: the invite API now returns expiresAt as an ISO string, not a number.', {}],
-  [30, 'message', 'crew-3', 'crew-2', 'Thanks, switching the dialog to parse it.', {}],
-  [22, 'event', 'muster', undefined, 'crew-5 started (crew)', {}],
+  [36, 'message', 'design', 'everyone', 'Reading the Muster framework in Vellum: 38 tokens, 9 pages. I will check every UI branch before review.', {}],
+  [33, 'message', 'ada', 'bea', 'Heads up: the invite API now returns expiresAt as an ISO string, not a number.', {}],
+  [30, 'message', 'bea', 'ada', 'Thanks, switching the dialog to parse it.', {}],
+  [22, 'event', 'muster', undefined, 'cleo started (crew)', {}],
   [16, 'note', 'design', undefined, 'Token copy UI matches the framework tokens: spacing, type and colour pass.', { noteId: 'N19', noteType: 'done' }],
-  [14, 'note', 'crew-2', undefined, 'Endpoints and tests done, handing to the test station.', { noteId: 'N10', noteType: 'progress' }],
-  [13.5, 'event', 'crew-2', undefined, 'crew-2 handed T3 to crew-5 (test station): "endpoints + tests done"', { taskId: 'T3' }],
-  [11, 'note', 'crew-2', undefined, 'Should invite links expire after 7 days or 30?', { noteId: 'N12', noteType: 'question' }],
-  [9, 'note', 'crew-2', undefined, 'Invites table + migration done. 12 tests pass.', { noteId: 'N11', noteType: 'done' }],
-  [8, 'reply', 'crew-5', undefined, 'The fixtures assume 7 days, if that helps.', { noteId: 'N12' }],
+  [14, 'note', 'ada', undefined, 'Endpoints and tests done, handing to the test station.', { noteId: 'N10', noteType: 'progress' }],
+  [13.5, 'event', 'ada', undefined, 'ada handed T3 to cleo (test station): "endpoints + tests done"', { taskId: 'T3' }],
+  [11, 'note', 'ada', undefined, 'Should invite links expire after 7 days or 30?', { noteId: 'N12', noteType: 'question' }],
+  [9, 'note', 'ada', undefined, 'Invites table + migration done. 12 tests pass.', { noteId: 'N11', noteType: 'done' }],
+  [8, 'reply', 'cleo', undefined, 'The fixtures assume 7 days, if that helps.', { noteId: 'N12' }],
   [6, 'reply', 'captain', undefined, 'Checking the spec; hold on 7 days for now.', { noteId: 'N12' }],
-  [6, 'note', 'design', undefined, 'Design check on T4 once crew-3 hands off.', { noteId: 'N15', noteType: 'waiting' }],
-  [4, 'note', 'crew-3', undefined, 'Which token format does T2 use?', { noteId: 'N14', noteType: 'stuck' }],
-  [3.5, 'message', 'design', 'crew-3', 'The ShareDialog button is hard-coded #2563EB. The framework in Vellum uses var(--color-primary) for primary buttons.', {}],
+  [6, 'note', 'design', undefined, 'Design check on T4 once bea hands off.', { noteId: 'N15', noteType: 'waiting' }],
+  [4, 'note', 'bea', undefined, 'Which token format does T2 use?', { noteId: 'N14', noteType: 'stuck' }],
+  [3.5, 'message', 'design', 'bea', 'The ShareDialog button is hard-coded #2563EB. The framework in Vellum uses var(--color-primary) for primary buttons.', {}],
   [3, 'event', 'captain', undefined, 'captain requested review of T1: "Safe to merge"', { taskId: 'T1' }],
-  [2, 'reply', 'captain', undefined, 'Use the 22-char base62 token from T2. crew-2 has it on their branch.', { noteId: 'N14' }],
+  [2, 'reply', 'captain', undefined, 'Use the 22-char base62 token from T2. ada has it on their branch.', { noteId: 'N14' }],
   [2, 'note', 'captain', undefined, 'Should a revoked invite link show a friendly page or a 404?', { noteId: 'N16', noteType: 'escalation' }],
-  [1, 'reply', 'crew-2', undefined, 'Fixture helper is makeInviteToken() in test/fixtures.ts, use that instead of a hard-coded string.', { noteId: 'N14' }],
+  [1, 'reply', 'ada', undefined, 'Fixture helper is makeInviteToken() in test/fixtures.ts, use that instead of a hard-coded string.', { noteId: 'N14' }],
   [0.5, 'note', 'captain', undefined, 'Invites table ready to merge. 3 files, 12 tests passing.', { noteId: 'N13', noteType: 'review' }],
 ];
 if (!EMPTY) {
@@ -249,25 +297,25 @@ const C = { dim: '\x1b[38;2;155;155;164m', text: '\x1b[38;2;244;244;245m', amber
 const dot = (c) => `${c}●${C.reset} `;
 const BACKLOG = {
   captain: [
-    `${C.faint}╭─ muster captain · opus · F:/wall-education ─────────────╮${C.reset}`,
+    `${C.faint}╭─ muster captain · opus · /work/acme-app ─────────────╮${C.reset}`,
     `${dot(C.dim)}${C.dim}read_board(open) → 1 stuck, 1 question${C.reset}`,
-    `${C.text}crew-3 is stuck on the invite token format. Answering first.${C.reset}`,
+    `${C.text}bea is stuck on the invite token format. Answering first.${C.reset}`,
     `${dot(C.dim)}${C.dim}reply(N14, "Use the 22-char base62 token from T2")${C.reset}`,
-    `${dot(C.dim)}${C.dim}get_diff(crew-2) → 6 files, ${C.green}+214${C.dim} ${C.red}−18${C.reset}`,
-    `${dot(C.dim)}${C.dim}run_tests(crew-2) → ${C.green}41 passed${C.reset}`,
+    `${dot(C.dim)}${C.dim}get_diff(ada) → 6 files, ${C.green}+214${C.dim} ${C.red}−18${C.reset}`,
+    `${dot(C.dim)}${C.dim}run_tests(ada) → ${C.green}41 passed${C.reset}`,
     `${C.text}The invite API looks right. One nit: expiresAt should be UTC.${C.reset}`,
-    `${dot(C.amber)}${C.amber}request_review(crew-2, "Invite API ready")${C.reset}`,
+    `${dot(C.amber)}${C.amber}request_review(ada, "Invite API ready")${C.reset}`,
   ],
-  'crew-2': [
+  'ada': [
     `${dot(C.dim)}${C.dim}claim_task() → T3 Invite API endpoints${C.reset}`,
-    `${C.text}  Working in .muster/worktrees/crew-2${C.reset}`,
+    `${C.text}  Working in .muster/worktrees/ada${C.reset}`,
     `${dot(C.dim)}${C.dim}Edit src/api/invites.ts${C.reset}`,
     `${dot(C.dim)}${C.dim}Bash npm test -- invites → ${C.green}41 passed${C.reset}`,
-    `${dot(C.dim)}${C.dim}message_crew(crew-3, "invite API now returns expiresAt")${C.reset}`,
+    `${dot(C.dim)}${C.dim}message_crew(bea, "invite API now returns expiresAt")${C.reset}`,
     `${dot(C.text)}${C.text}post_note(progress, "endpoints + tests done")${C.reset}`,
-    `${dot(C.teal)}${C.teal}handoff(crew-5, "ready for the test station")${C.reset}`,
+    `${dot(C.teal)}${C.teal}handoff(cleo, "ready for the test station")${C.reset}`,
   ],
-  'crew-3': [
+  'bea': [
     `${dot(C.dim)}${C.dim}claim_task() → T4 Share dialog UI${C.reset}`,
     `${C.text}  Building ShareDialog with copy-link button${C.reset}`,
     `${dot(C.dim)}${C.dim}Write src/ui/ShareDialog.tsx${C.reset}`,
@@ -277,13 +325,13 @@ const BACKLOG = {
     `${C.red}  Waiting for an answer on N14…${C.reset}`,
   ],
   design: [
-    `${dot(C.dim)}${C.dim}vellum.get_basic_info("Wall Education") → 16 pages${C.reset}`,
+    `${dot(C.dim)}${C.dim}vellum.get_basic_info("Muster") → 9 pages${C.reset}`,
     `${C.text}  Reading the design framework: tokens, type scale, buttons${C.reset}`,
     `${dot(C.dim)}${C.dim}vellum.get_tokens() → 38 tokens${C.reset}`,
     `${dot(C.dim)}${C.dim}read_board(waitingOn: design) → none${C.reset}`,
     `${C.dim}  The ShareDialog button uses #2563EB; framework is --color-primary.${C.reset}`,
-    `${dot(C.text)}${C.text}post_note(waiting, "design check on T4 once crew-3 hands off")${C.reset}`,
-    `${dot(C.lav)}${C.lav}message_crew(crew-3, "use var(--color-primary) on buttons")${C.reset}`,
+    `${dot(C.text)}${C.text}post_note(waiting, "design check on T4 once bea hands off")${C.reset}`,
+    `${dot(C.lav)}${C.lav}message_crew(bea, "use var(--color-primary) on buttons")${C.reset}`,
   ],
 };
 const TICKS = [
@@ -341,10 +389,10 @@ const paused = () => state.usage.fiveHour && state.usage.fiveHour.usedPercentage
 
 function fakeDiff(a) {
   const files = {
-    'crew-2/invites-db': [['db/migrations/014_invites.sql', 41, 0], ['src/db/invites.ts', 33, 0], ['test/db/invites.test.ts', 22, 0]],
-    'crew-2/invite-api': [['src/api/invites.ts', 120, 10], ['src/api/tokens.ts', 44, 4], ['test/api/invites.test.ts', 50, 4]],
-    'crew-2/tokens': [['src/api/tokens.ts', 40, 2], ['test/api/tokens.test.ts', 18, 2]],
-    'crew-3/share-dialog': [['src/ui/ShareDialog.tsx', 96, 0], ['src/ui/ShareDialog.css', 22, 0], ['test/ui/share.test.ts', 13, 2]],
+    'ada/invites-db': [['db/migrations/014_invites.sql', 41, 0], ['src/db/invites.ts', 33, 0], ['test/db/invites.test.ts', 22, 0]],
+    'ada/invite-api': [['src/api/invites.ts', 120, 10], ['src/api/tokens.ts', 44, 4], ['test/api/invites.test.ts', 50, 4]],
+    'ada/tokens': [['src/api/tokens.ts', 40, 2], ['test/api/tokens.test.ts', 18, 2]],
+    'bea/share-dialog': [['src/ui/ShareDialog.tsx', 96, 0], ['src/ui/ShareDialog.css', 22, 0], ['test/ui/share.test.ts', 13, 2]],
   }[a.branch] ?? [['README.md', 3, 1]];
   let diff = '';
   for (const [path, add, del] of files) {
@@ -385,10 +433,14 @@ async function api(req, url) {
     return config;
   }
   const sm = /^\/api\/stations\/([^/]+)$/.exec(p);
-  if (m === 'GET' && p === '/api/lines') return { defaultLine: 'standard', lines: [
-    { name: 'standard', label: 'Standard', stations: ['build', 'review'], builtin: true },
-    { name: 'tested', label: 'Build + test', stations: ['build', 'test', 'review'], builtin: true },
-    { name: 'designed', label: 'Design, build, approve', stations: ['design', 'build', 'approve', 'review'], builtin: true }] };
+  if (m === 'GET' && p === '/api/lines') return { defaultLine: config.defaultLine, lines: lineDefs };
+  let lm;
+  if ((lm = /^\/api\/lines\/([^/]+)$/.exec(p)) && m === 'PUT') {
+    const b = await body(req); const l = lineDefs.find((x) => x.name === lm[1]);
+    need(l, 404, 'No such line');
+    if (b.stations) l.stations = b.stations; if (b.label) l.label = b.label;
+    return l;
+  }
   const am = /^\/api\/tasks\/([^/]+)\/(approve|reject)$/.exec(p);
   if (am && m === 'POST') {
     const b = await body(req); const t = state.tasks.find((x) => x.id === am[1]);
@@ -398,6 +450,9 @@ async function api(req, url) {
     for (const n of state.notes) if (n.taskId === t.id && n.type === 'approval') n.open = false;
     broadcast(); return t;
   }
+  if (m === 'GET' && p === '/api/skills') return SKILLS;
+  if (m === 'GET' && p === '/api/project') return { name: config.projectName, root: state.repoRoot, gh: { installed: true, authed: true, user: 'alex' } };
+  if (m === 'POST' && p === '/api/project/github') return { url: 'https://github.com/alex/acme-app' };
   if (m === 'GET' && p === '/api/stations') {
     const names = [...config.defaultStations.filter((n) => n !== 'review'), ...Object.keys(stationDefs).filter((n) => !config.defaultStations.includes(n)), 'review'];
     return names.map((name) => ({ name, ...stationDefs[name] ?? { role: 'crew', guideline: '', builtin: false } }));
@@ -407,7 +462,7 @@ async function api(req, url) {
     need(/^[a-z0-9-]{1,32}$/.test(name), 400, 'Station names are lowercase letters, digits and dashes, up to 32');
     need(!(b.guideline && b.guideline.length > 20000), 400, 'Guideline is over 20000 characters');
     const cur = stationDefs[name] ?? { role: 'crew', guideline: '', builtin: false };
-    stationDefs[name] = { ...cur, ...(b.role ? { role: b.role } : {}), ...(typeof b.guideline === 'string' ? { guideline: b.guideline } : {}) };
+    stationDefs[name] = { ...cur, ...(b.role ? { role: b.role } : {}), ...(typeof b.guideline === 'string' ? { guideline: b.guideline } : {}), ...(Array.isArray(b.skills) ? { skills: b.skills } : {}) };
     return { name, ...stationDefs[name] };
   }
   if (sm && m === 'DELETE') {
@@ -419,7 +474,8 @@ async function api(req, url) {
     return [...config.defaultStations.filter((n) => n !== 'review'), 'review'].map((n) => ({ name: n, ...stationDefs[n] ?? { role: 'crew', guideline: '', builtin: false } }));
   }
   if (m === 'GET' && p === '/api/vellum') return { status: 'connected', checkedAt: new Date().toISOString(), files: [
-    { id: 'wall', name: 'Wall Education', pages: 16 }, { id: 'mayhem', name: 'MayhemDeck', pages: 5 }, { id: 'muster', name: 'Muster', pages: 7 }] };
+    { id: 'muster', name: 'Muster', pages: 9, updated: iso(120) }, { id: 'scratch', name: 'Scratchpad', pages: 3, updated: iso(60 * 30) },
+    { id: 'wall', name: 'Client Portal', pages: 16, updated: iso(60 * 50) }, { id: 'mayhem', name: 'MayhemDeck', pages: 5, updated: iso(60 * 24 * 6) }] };
   if (m === 'GET' && p === '/api/usage') return { ...state.usage, paused: !!paused() };
 
   if (m === 'POST' && p === '/api/agents') {
@@ -640,6 +696,15 @@ const MIME = { '.html': 'text/html; charset=utf-8', '.js': 'text/javascript', '.
 const server = http.createServer(async (req, res) => {
   const url = new URL(req.url, `http://${req.headers.host}`);
   try {
+    const evm = /^\/api\/tasks\/[^/]+\/evidence\/[^/]+\/([^/]+)$/.exec(url.pathname);
+    if (evm && req.headers['x-muster-token'] === TOKEN) {
+      const f = EVIDENCE_FILES[decodeURIComponent(evm[1])];
+      need(f, 404, 'No such evidence file');
+      const data = Buffer.isBuffer(f) ? f : await readFile(f);
+      res.writeHead(200, { 'content-type': Buffer.isBuffer(f) ? 'text/plain' : 'image/png' });
+      res.end(data);
+      return;
+    }
     if (url.pathname.startsWith('/api/')) {
       const out = await api(req, url);
       res.writeHead(200, { 'content-type': 'application/json' });
