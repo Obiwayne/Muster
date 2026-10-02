@@ -1,6 +1,6 @@
 // Pure formatting helpers for muster-mcp tool results. Agents read these, so keep them short.
 import { formatEvidence } from '../core/evidence.js';
-import type { Agent, InboxItem, Note, NoteType, Task } from '../types.js';
+import type { Agent, InboxItem, Note, NoteType, Roadmap, RoadmapHealth, RoadmapProgress, Task } from '../types.js';
 
 export function relTime(iso: string | undefined, now: number = Date.now()): string {
   if (!iso) return '?';
@@ -101,6 +101,7 @@ export function stationLabel(t: Task): string {
 
 export function formatTaskLine(t: Task): string {
   const parts = [`${t.id} [${t.status}] ${clip(t.title, 80)}`, `station ${stationLabel(t)}`];
+  if (t.goalId) parts.push(`goal ${t.goalId}`);
   if (t.assignee) parts.push(`@${t.assignee}`);
   if (t.dependsOn?.length) parts.push(`needs ${t.dependsOn.join(',')}`);
   if (t.branch) parts.push(t.branch);
@@ -156,4 +157,61 @@ export function formatTests(r: { command?: string; exitCode?: number | null; out
 /** Is `s` an existing task id like "T3"? */
 export function isTaskId(s: string): boolean {
   return /^T\d+$/i.test(s.trim());
+}
+
+// ---- roadmap -------------------------------------------------------------------
+
+const HEALTH: Record<RoadmapHealth, string> = { on_track: 'on track', at_risk: 'at risk', late: 'late', not_started: 'not started', done: 'done' };
+
+export const NO_ROADMAP = 'No roadmap yet — draft one with set_roadmap before posting build tasks.';
+
+function dateRange(start?: string, due?: string): string {
+  if (!start && !due) return 'no dates';
+  return `${start ?? '?'} → ${due ?? '?'}`;
+}
+
+function launchLine(r: Roadmap, days: number | undefined): string {
+  if (!r.launchDate) return 'no launch date';
+  if (days === undefined) return `launch ${r.launchDate}`;
+  if (days > 0) return `launch ${r.launchDate} (${days} day${days === 1 ? '' : 's'} to go)`;
+  if (days === 0) return `launch ${r.launchDate} (today)`;
+  return `launch ${r.launchDate} (${-days} day${days === -1 ? '' : 's'} past)`;
+}
+
+/** `{ roadmap, progress }` from GET /api/roadmap as a compact outline: header, one line per stage, the current stage's goals and open exit criteria. */
+export function formatRoadmap(data: { roadmap: Roadmap | null; progress: RoadmapProgress | null } | null | undefined): string {
+  const r = data?.roadmap;
+  if (!r) return NO_ROADMAP;
+  const p = data?.progress ?? null;
+  const status = r.status === 'draft' ? `DRAFT rev ${r.revision}, waiting for the user's approval${r.noteId ? ` (${r.noteId})` : ''}` : `approved rev ${r.revision}`;
+  const overall = p ? `${p.overall.percent}% (${p.overall.done}/${p.overall.total} tasks) · ${HEALTH[p.health]}` : '';
+  const lines = [[`Roadmap: ${clip(r.title, 80)}`, status, overall, launchLine(r, p?.daysToLaunch)].filter(Boolean).join(' · ')];
+  const current = p?.currentStageId;
+  const goalById = new Map(r.goals.map((g) => [g.id, g]));
+  for (const s of r.stages) {
+    const sp = p?.stages[s.id];
+    const crit = `criteria ${sp?.criteriaDone ?? s.exitCriteria.filter((c) => c.done).length}/${sp?.criteriaTotal ?? s.exitCriteria.length}`;
+    const prog = sp ? `${sp.percent}% ${HEALTH[sp.health]}` : '';
+    const mark = s.id === current ? '▶ ' : '  ';
+    lines.push(`${mark}${s.id} ${clip(s.title, 60)} · ${dateRange(s.start, s.due)} · ${s.status}${prog ? ` · ${prog}` : ''} · ${crit}`);
+    if (s.id !== current) continue;
+    for (const gid of s.goalIds) {
+      const g = goalById.get(gid);
+      if (!g) continue;
+      const gp = p?.goals[g.id];
+      const parts = [`${g.id} [${g.status}]${g.id === p?.currentGoalId ? ' ◀ current' : ''} ${clip(g.title, 70)}`];
+      if (gp) parts.push(`${gp.percent}% (${gp.done}/${gp.total} tasks)`);
+      if (g.start || g.due) parts.push(dateRange(g.start, g.due));
+      if (gp?.agents.length) parts.push(gp.agents.join(', '));
+      lines.push(`      ${parts.join(' · ')}`);
+    }
+    const open = s.exitCriteria.map((c, i) => ({ c, n: i + 1 })).filter(({ c }) => !c.done);
+    if (open.length) {
+      lines.push(`    Exit criteria left (check_criterion ${s.id} <n>):`);
+      for (const { c, n } of open) lines.push(`      ${n}. ${clip(c.text, 140)}`);
+    } else if (s.exitCriteria.length && s.status !== 'done') {
+      lines.push(`    All exit criteria ticked: complete_stage ${s.id}.`);
+    }
+  }
+  return lines.join('\n');
 }

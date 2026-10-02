@@ -58,6 +58,7 @@ export interface Task {
   branch?: string; // branch that currently carries the work
   reviewedSha?: string; // head commit of `branch` when the Captain requested review; merge merges exactly this commit
   mergeApproval?: { at: string; sha?: string }; // you approved the reviewed commit; the Captain may merge it (merge_task)
+  goalId?: string; // roadmap goal this task delivers ("G3"); progress on the roadmap is counted from these
   inputs?: TaskBranchInput[]; // commits the task branch must contain (earlier stations, dependencies); checked before done/review
   evidence?: Evidence[]; // proof the work does what it should (screenshots, test output…); required before ready_for_merge
   createdBy: string;
@@ -223,7 +224,74 @@ export interface MusterState {
   inbox: InboxItem[];
   usage: UsageState;
   goal?: { text: string; at: string }; // last goal given to the Captain (muster ask)
-  nextIds: { agent: number; task: number; note: number; feed: number; inbox: number };
+  roadmap?: Roadmap; // drafted by the Captain before work starts, approved by you
+  nextIds: { agent: number; task: number; note: number; feed: number; inbox: number; stage: number; goal: number };
+}
+
+// ---- Roadmap (src/core/roadmap.ts) ----
+// Stage ("M1"…) → goal ("G1"…) → task. The Captain drafts it, you approve it, the
+// orchestrator counts progress from tasks and tells the Captain when goals finish.
+
+export type RoadmapStatus = 'draft' | 'approved';
+export type StageStatus = 'planned' | 'active' | 'done';
+export type GoalStatus = 'planned' | 'active' | 'done' | 'cancelled';
+
+export interface ExitCriterion {
+  text: string;
+  done: boolean;
+  doneAt?: string;
+  by?: string; // who ticked it
+}
+
+export interface RoadmapStage {
+  id: string; // "M1", "M2"…
+  title: string;
+  description: string;
+  start?: string; // planned start, YYYY-MM-DD
+  due?: string; // planned end, YYYY-MM-DD
+  status: StageStatus;
+  exitCriteria: ExitCriterion[];
+  goalIds: string[]; // in order
+  completedAt?: string;
+}
+
+export interface RoadmapGoal {
+  id: string; // "G1", "G2"…
+  stageId: string;
+  title: string;
+  description: string;
+  status: GoalStatus;
+  start?: string; // YYYY-MM-DD
+  due?: string; // YYYY-MM-DD
+  activatedAt?: string;
+  completedAt?: string;
+}
+
+export interface Roadmap {
+  title: string; // e.g. "wall-education v1.0"
+  summary: string; // what the product is, one paragraph
+  launchDate?: string; // YYYY-MM-DD
+  status: RoadmapStatus;
+  revision: number; // bumps on every approval; edits to an approved roadmap that change stages/goals/dates make it a draft again
+  approvedAt?: string;
+  noteId?: string; // the open approval note while it is a draft waiting for you
+  stages: RoadmapStage[]; // in order
+  goals: RoadmapGoal[];
+  createdBy: string;
+  updatedAt: string;
+}
+
+export type RoadmapHealth = 'on_track' | 'at_risk' | 'late' | 'not_started' | 'done';
+
+/** Counted by the orchestrator (never stored): GET /api/roadmap → { roadmap, progress }. */
+export interface RoadmapProgress {
+  overall: { done: number; total: number; percent: number }; // tasks: merged / not cancelled
+  health: RoadmapHealth;
+  daysToLaunch?: number;
+  currentStageId?: string; // first stage not done
+  currentGoalId?: string; // first active goal of the current stage
+  stages: Record<string, { done: number; total: number; percent: number; health: RoadmapHealth; criteriaDone: number; criteriaTotal: number }>;
+  goals: Record<string, { done: number; total: number; percent: number; agents: string[] }>; // agents = holders of its open tasks
 }
 
 // Events pushed over ws://127.0.0.1:<port>/ws/events

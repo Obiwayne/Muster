@@ -1,6 +1,6 @@
 // Typed client for the orchestrator HTTP API (see docs/ARCHITECTURE.md).
 import type {
-  Agent, FeedItem, InboxItem, MusterConfig, MusterState, Note, NoteType, Role, SkillInfo, Task, UsageState, VellumStatus,
+  Agent, FeedItem, InboxItem, MusterConfig, MusterState, Note, NoteType, Role, Roadmap, RoadmapProgress, SkillInfo, Task, UsageState, VellumStatus,
 } from '../../src/types';
 
 // TODO: import StationDef from src/types.ts once T9 (crew-6) merges.
@@ -100,6 +100,8 @@ const YOU = 'you';
 export interface DiffResult { branch: string; base: string; stat: string; diff: string }
 export interface TestResult { command: string; exitCode: number; output: string }
 
+export interface RoadmapResponse { roadmap: Roadmap | null; progress: RoadmapProgress | null }
+
 export interface GhStatus { installed: boolean; authed: boolean; user?: string }
 export interface ProjectInfo { name: string; root: string; remoteUrl?: string; gh: GhStatus }
 
@@ -175,4 +177,13 @@ export const api = {
   project: () => req<ProjectInfo>('GET', '/api/project'),
   createGithub: (body: { name: string; private?: boolean; description?: string }) => req<{ url: string }>('POST', '/api/project/github', body),
   usage: () => req<UsageState & { paused: boolean }>('GET', '/api/usage'),
+
+  // roadmap (the Captain owns the plan; you approve it, send it back, tick criteria)
+  roadmap: () => req<RoadmapResponse>('GET', '/api/roadmap'),
+  approveRoadmap: () => req<RoadmapResponse>('POST', '/api/roadmap/approve', { actor: YOU }),
+  rejectRoadmap: (note: string) => req<RoadmapResponse>('POST', '/api/roadmap/reject', { actor: YOU, note }),
+  checkCriterion: (stageId: string, index: number, done: boolean) =>
+    req<RoadmapResponse>('POST', `/api/roadmap/stages/${enc(stageId)}/criteria/${index}`, { actor: YOU, done }),
+  completeStage: (stageId: string, force = false) =>
+    req<RoadmapResponse>('POST', `/api/roadmap/stages/${enc(stageId)}/complete`, { actor: YOU, ...(force ? { force } : {}) }),
 };

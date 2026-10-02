@@ -32,6 +32,19 @@ describe('captainPrompt', () => {
     expect(p).toContain('F:/Proj');
     expect(p).toContain('Proj');
   });
+  it('puts the roadmap first and ties every task to a goal', () => {
+    expect(p).toContain('## Roadmap');
+    expect(p).toContain('`read_board()` and `roadmap()`');
+    expect(p).toMatch(/draft one with `set_roadmap` before any build task/);
+    expect(p).toMatch(/wait for the user's approval/);
+    expect(p).toMatch(/Discovery and concept work may run first/);
+    expect(p).toContain('Post every task with its goal');
+    expect(p).toMatch(/when told a goal is done, break the next one into tasks/);
+    expect(p).toMatch(/Tick exit criteria only with evidence.*then `complete_stage`/);
+    expect(p).toMatch(/Propose replans with `set_roadmap` instead of silently changing scope/);
+    expect(p).toMatch(/`add_goal` to the right stage/);
+    for (const t of ['set_roadmap(', 'update_stage', 'check_criterion(stage, n)', 'update_goal', 'post_task(title, description, goal']) expect(p).toContain(t);
+  });
   it('lists the lines, marks the default and says humans approve', () => {
     const p = captainPrompt({ ...ctx, agentId: 'captain', worktree: ctx.repoRoot, branch: 'main', stations: [{ name: 'approval', role: 'human', guideline: 'You approve.' }], lines: [{ name: 'feature', label: 'Standard', stations: ['plan', 'build', 'review'] }, { name: 'new-app', label: 'Plan', stations: ['plan', 'approval', 'review'] }], defaultLine: 'feature' });
     expect(p).toContain('`feature` (Standard) — default: plan → build → review');
@@ -39,6 +52,8 @@ describe('captainPrompt', () => {
     expect(p).toContain('line: "<name>"');
     expect(p).toContain('`bugfix` for defects');
     expect(p).toContain('docs/factory/<T#>-plan.md');
+    expect(p).toContain('turn its task breakdown into the roadmap (`set_roadmap`)');
+    expect(p).toContain('That task runs before the roadmap');
     expect(p).toContain('line: "new-app"');
     expect(p).toContain('package.json');
     expect(p).toContain('Settings → Project');
@@ -74,6 +89,8 @@ describe('crewPrompt', () => {
     expect(p).toMatch(/ask the crew/i);
     expect(p).toContain('npm test');
     expect(p).not.toMatch(/Vellum/);
+    expect(p).toContain('Tasks belong to roadmap goals');
+    expect(p).not.toContain('set_roadmap');
   });
   it('is reasonably tight', () => expect(lines(p)).toBeLessThan(130));
 });

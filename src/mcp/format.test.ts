@@ -1,6 +1,7 @@
 import { describe, expect, it } from 'vitest';
 import type { Agent, InboxItem, Note, Task } from '../types.js';
-import { boardQuery, clip, formatAgentLine, formatBoard, formatDiff, formatInbox, formatNoteLine, formatTaskLine, formatTests, isTaskId, relTime } from './format.js';
+import { boardQuery, clip, formatAgentLine, formatBoard, formatDiff, formatInbox, formatNoteLine, formatRoadmap, formatTaskLine, formatTests, isTaskId, NO_ROADMAP, relTime } from './format.js';
+import { PROGRESS, ROADMAP } from './roadmap.fixture.js';
 
 const NOW = Date.parse('2026-09-30T12:00:00Z');
 const ago = (min: number) => new Date(NOW - min * 60000).toISOString();
@@ -59,6 +60,7 @@ describe('agents, tasks, inbox', () => {
     expect(formatAgentLine(a)).toBe('crew-2 (crew) · working · crew-2/share · task T3 · $1.23');
     const t = { id: 'T3', title: 'Share dialog', status: 'in_progress', stations: ['build', 'test', 'review'], stationIndex: 1, assignee: 'crew-2', dependsOn: ['T1'] } as unknown as Task;
     expect(formatTaskLine(t)).toBe('T3 [in_progress] Share dialog · station test 2/3 · @crew-2 · needs T1');
+    expect(formatTaskLine({ ...t, goalId: 'G3' })).toBe('T3 [in_progress] Share dialog · station test 2/3 · goal G3 · @crew-2 · needs T1');
   });
   it('formats the inbox', () => {
     const i = { id: 'I3', at: ago(1), agentId: 'crew-2', from: 'captain', kind: 'reply', text: 'Use radius-md', noteId: 'N14', read: false, delivered: true } as InboxItem;
@@ -84,5 +86,37 @@ describe('diff and tests', () => {
   it('recognises task ids', () => {
     expect(isTaskId('T12')).toBe(true);
     expect(isTaskId('Build the API')).toBe(false);
+  });
+});
+
+describe('roadmap', () => {
+  it('says clearly when there is no roadmap', () => {
+    expect(formatRoadmap({ roadmap: null, progress: null })).toBe(NO_ROADMAP);
+    expect(formatRoadmap(null)).toBe('No roadmap yet — draft one with set_roadmap before posting build tasks.');
+  });
+  it('renders a compact outline with the current stage expanded', () => {
+    expect(formatRoadmap({ roadmap: ROADMAP, progress: PROGRESS }).split('\n')).toEqual([
+      'Roadmap: wall-education v1.0 · approved rev 2 · 42% (5/12 tasks) · at risk · launch 2026-11-15 (44 days to go)',
+      '  M1 Foundations · 2026-09-01 → 2026-09-14 · done · 100% done · criteria 1/1',
+      '▶ M2 Core wall · 2026-09-15 → 2026-10-10 · active · 25% at risk · criteria 1/3',
+      '      G2 [active] ◀ current Posting · 40% (2/5 tasks) · crew-2, crew-3',
+      '      G3 [planned] Reactions · 0% (0/3 tasks) · ? → 2026-10-08',
+      '    Exit criteria left (check_criterion M2 <n>):',
+      '      2. Students can react',
+      '      3. Load test passes',
+      '  M3 Launch · no dates · planned · 0% not started · criteria 0/0',
+    ]);
+  });
+  it('flags drafts and works without progress', () => {
+    const draft = { ...ROADMAP, status: 'draft' as const, noteId: 'N40', launchDate: undefined };
+    const out = formatRoadmap({ roadmap: draft, progress: null });
+    expect(out.split('\n')[0]).toBe("Roadmap: wall-education v1.0 · DRAFT rev 2, waiting for the user's approval (N40) · no launch date");
+    expect(out).toContain('  M2 Core wall · 2026-09-15 → 2026-10-10 · active · criteria 1/3');
+  });
+  it('points at complete_stage once every criterion is ticked', () => {
+    const r = structuredClone(ROADMAP);
+    r.stages[1].exitCriteria.forEach((c) => (c.done = true));
+    expect(formatRoadmap({ roadmap: r, progress: { ...PROGRESS, daysToLaunch: -2 } })).toContain('    All exit criteria ticked: complete_stage M2.');
+    expect(formatRoadmap({ roadmap: r, progress: { ...PROGRESS, daysToLaunch: -2 } })).toContain('(2 days past)');
   });
 });

@@ -202,6 +202,34 @@ The route runs `gh repo create <name> --private|--public --source <root> --remot
 
 Task readiness: `blocked` while any `dependsOn` task is not `ready_for_merge`/`merged`; recomputed after every change.
 
+### Roadmap (src/core/roadmap.ts — added 2 Oct)
+
+Types: `Roadmap`, `RoadmapStage`, `RoadmapGoal`, `RoadmapProgress` in src/types.ts; stored as `state.roadmap`; ids from `nextIds.stage` ("M1"…) and `nextIds.goal` ("G1"…). Design: Vellum file "Muster", artboards "Roadmap" and "Roadmap — stage detail".
+
+**Process.** (1) Before any build work, the Captain drafts the roadmap (`set_roadmap`) — stages with dates and exit criteria, goals per stage. Saving a draft opens an `approval` note to you ("Roadmap ready for your approval", Needs you, toast + notification); re-saving a draft updates that note instead of opening another. (2) You approve (`POST /api/roadmap/approve`) or send it back with a note (`/reject`). Approve: status `approved`, revision+1, closes the note, first stage → `active`, its first goal → `active`, Captain inbox: "Roadmap approved. Start M1 <title>: break G1 <title> into tasks (post_task with goal: G1)." Reject: replies on/closes the note, stays draft, Captain inbox with your note. (3) While approved, every `post_task` should name a goal. After any task change the orchestrator recomputes: a goal whose tasks (≥1, not cancelled) are all `merged` → `done` + feed event + Captain inbox "G2 done. Next: G3 <title> — break it into tasks." (activates the next planned goal of the stage); when every goal of the active stage is done → Captain inbox "All goals of M3 are done. Check its exit criteria (check_criterion) and complete_stage." Completing a stage (all criteria done, or `force` by you) → `done`, next stage `active` with its first goal `active`, feed event, toast. (4) Replanning: any edit through `set_roadmap`/stage/goal routes that adds/removes stages or goals or changes dates on an approved roadmap turns it back into a `draft` (approval note again); status/criteria ticks don't. Work keeps running while a revision waits.
+
+Progress (`computeProgress(state, today)`, pure, exported): task counts per goal/stage/overall exclude cancelled; percent = round(done/total*100), 0 when total 0. Stage health: `done` if stage done; `not_started` if planned and start in the future or unset; else expected = fraction of [start, due] elapsed; `late` if today > due; `at_risk` if percent/100 < expected − 0.15; else `on_track`. Overall health = worst of the non-done stages (late > at_risk > on_track > not_started), `done` when all are done. `daysToLaunch` = whole days from today to launchDate.
+
+| Method | Path | Body | Returns |
+|---|---|---|---|
+| GET | /api/roadmap | – | `{ roadmap: Roadmap \| null, progress: RoadmapProgress \| null }` |
+| PUT | /api/roadmap | `{ actor, title, summary, launchDate?, stages: [{ id?, title, description, start?, due?, exitCriteria: string[] \| ExitCriterion[], goals: [{ id?, title, description, start?, due? }] }] }` | `{ roadmap, progress }` — Captain or you. Replaces the plan; entries with a known `id` keep id, status and timestamps; new ones get fresh ids; dropped goals with tasks are refused (409, name them). 1–12 stages, ≤12 goals each, titles ≤120 chars, dates YYYY-MM-DD with start ≤ due (400). Becomes/stays `draft` per rule (4) |
+| POST | /api/roadmap/approve | `{ actor: "you" }` | `{ roadmap, progress }` — human only (403), 409 unless draft |
+| POST | /api/roadmap/reject | `{ actor: "you", note }` | `{ roadmap, progress }` — human only, note required |
+| PATCH | /api/roadmap/stages/:id | `{ actor, title?, description?, start?, due?, status? }` | Captain or you |
+| POST | /api/roadmap/stages/:id/criteria/:index | `{ actor, done: boolean }` | Captain or you; ticks one exit criterion |
+| POST | /api/roadmap/stages/:id/complete | `{ actor, force? }` | Captain or you; 409 unless all criteria are done (force: you only) |
+| POST | /api/roadmap/goals | `{ actor, stageId, title, description, start?, due? }` | Captain or you; new goal at the end of the stage (counts as a plan change) |
+| PATCH | /api/roadmap/goals/:id | `{ actor, title?, description?, status?, start?, due? }` | Captain or you |
+
+`POST /api/tasks` and `post_task` take `goalId?` (404 for an unknown goal; a task posted to a `planned` goal activates it). `GET /api/state` carries `state.roadmap`; the dashboard computes nothing itself except via `GET /api/roadmap` (re-fetched on each state event).
+
+**MCP (Captain only):** `roadmap()` — plain-text outline with progress, health, the current stage/goal and unticked criteria; `set_roadmap(title, summary, launchDate?, stages)` (same shape as PUT); `update_stage(stage, …)`, `check_criterion(stage, index, done)` (index 1-based in the tool, 0-based in the API), `complete_stage(stage)`, `add_goal(stage, title, description, start?, due?)`, `update_goal(goal, …)`; `post_task` gains `goal?`. Crew/design: `list_tasks` shows each task's goal; no roadmap writes.
+
+**Captain prompt:** at the start of a project (no roadmap, or a goal from you that describes a whole product) draft the roadmap first and wait for approval before posting build tasks — the new-app line's discover/concept work may run first to inform it. Every turn, read the roadmap with the board; post every task with its goal; work the current goal; when told a goal is done, start the next; tick exit criteria only with evidence; propose replans with set_roadmap instead of silently changing scope. A goal you give that isn't on an approved roadmap: add it to the right stage with add_goal (that sends the change to you).
+
+**Dashboard:** nav item "Roadmap" (2nd, under Dashboard; trailing text = current stage id) on every page. `#/roadmap` = overview (summary strip, stage timeline by week with a today line, the current stage expanded to its goals, panels: recently landed, tasks merged per day, up next). `#/roadmap/M3` = stage detail (breadcrumb, stage stepper, header + stats, goal groups → task table, exit criteria, stage activity from the feed). Empty state: "No roadmap yet" + "Ask the Captain to draft one" (POST /api/ask). Draft state: banner "Roadmap draft · revision n — waiting for your approval" with Approve / Send back (note).
+
 ### Bulletin board, chat, inbox
 | Method | Path | Body | Returns |
 |---|---|---|---|

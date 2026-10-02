@@ -86,6 +86,11 @@ const ICONS: Record<string, string> = {
   x: '<path d="M18 6L6 18M6 6l12 12"/>',
   terminal: '<path d="M4 17l6-6-6-6M12 19h8"/>',
   down: '<path d="M12 5v14M19 12l-7 7-7-7"/>',
+  route: '<circle cx="6" cy="19" r="3"/><path d="M9 19h8.5a3.5 3.5 0 0 0 0-7h-11a3.5 3.5 0 0 1 0-7H15"/><circle cx="18" cy="5" r="3"/>',
+  'chevron-right': '<path d="M9 6l6 6-6 6"/>',
+  'chevron-left': '<path d="M15 6l-6 6 6 6"/>',
+  arrow: '<path d="M5 12h14M13 6l6 6-6 6"/>',
+  tick: '<path d="M5 12l5 5L20 7"/>',
 };
 
 export function icon(name: string, size = 16, strokeWidth = 2): SVGSVGElement {

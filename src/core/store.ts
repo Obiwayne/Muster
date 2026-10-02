@@ -4,7 +4,7 @@ import type { MusterState } from '../types.js';
 import type { MusterPaths } from './paths.js';
 
 type IdKind = keyof MusterState['nextIds'];
-const PREFIX: Record<IdKind, string> = { agent: '', task: 'T', note: 'N', feed: 'F', inbox: 'I' };
+const PREFIX: Record<IdKind, string> = { agent: '', task: 'T', note: 'N', feed: 'F', inbox: 'I', stage: 'M', goal: 'G' };
 
 export function emptyState(repoRoot: string): MusterState {
   return {
@@ -16,20 +16,25 @@ export function emptyState(repoRoot: string): MusterState {
     feed: [],
     inbox: [],
     usage: { perAgentCostUsd: {}, paused: false, weeklyWarned: false },
-    nextIds: { agent: 2, task: 1, note: 1, feed: 1, inbox: 1 },
+    nextIds: { agent: 2, task: 1, note: 1, feed: 1, inbox: 1, stage: 1, goal: 1 },
   };
 }
 
 /** Fills fields missing from older or hand-edited state files. */
 export function migrate(raw: Partial<MusterState>, repoRoot: string): MusterState {
   const base = emptyState(repoRoot);
+  const nextIds = { ...base.nextIds, ...raw.nextIds };
+  // Roadmap ids must never be handed out twice, even if nextIds was lost or hand-edited.
+  const above = (ids: string[] | undefined) => Math.max(0, ...(ids ?? []).map((id) => Number(id.replace(/\D/g, '')) || 0)) + 1;
+  nextIds.stage = Math.max(nextIds.stage, above(raw.roadmap?.stages?.map((x) => x.id)));
+  nextIds.goal = Math.max(nextIds.goal, above(raw.roadmap?.goals?.map((x) => x.id)));
   return {
     ...base,
     ...raw,
     version: 1,
     repoRoot,
     usage: { ...base.usage, ...raw.usage },
-    nextIds: { ...base.nextIds, ...raw.nextIds },
+    nextIds,
   };
 }
 
