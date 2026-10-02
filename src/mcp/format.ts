@@ -1,4 +1,5 @@
 // Pure formatting helpers for muster-mcp tool results. Agents read these, so keep them short.
+import { formatEvidence } from '../core/evidence.js';
 import type { Agent, InboxItem, Note, NoteType, Task } from '../types.js';
 
 export function relTime(iso: string | undefined, now: number = Date.now()): string {
@@ -115,6 +116,7 @@ export function formatTaskDetail(t: Task): string {
   const lines = [formatTaskLine(t)];
   if (t.stations?.length) lines.push(`Stations: ${t.stations.join(' → ')}`);
   if (t.description) lines.push('', t.description.trim());
+  if (t.evidence?.length) lines.push('', formatEvidence(t));
   return lines.join('\n');
 }
 

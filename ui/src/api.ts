@@ -1,13 +1,13 @@
 // Typed client for the orchestrator HTTP API (see docs/ARCHITECTURE.md).
 import type {
-  Agent, FeedItem, InboxItem, MusterConfig, MusterState, Note, NoteType, Role, Task, UsageState, VellumStatus,
+  Agent, FeedItem, InboxItem, MusterConfig, MusterState, Note, NoteType, Role, SkillInfo, Task, UsageState, VellumStatus,
 } from '../../src/types';
 
 // TODO: import StationDef from src/types.ts once T9 (crew-6) merges.
 // Contract with T12/T14 (crew-8): GET /api/lines.
 export interface LineDef { name: string; label: string; stations: string[]; builtin: boolean }
 export interface LinesResponse { lines: LineDef[]; defaultLine: string }
-export interface StationDef { name: string; role: 'crew' | 'design' | 'captain' | 'human'; guideline: string; builtin: boolean }
+export interface StationDef { name: string; role: 'crew' | 'design' | 'captain' | 'human'; guideline: string; builtin: boolean; skills?: string[] }
 
 /** Token: injected <meta name="muster-token">, else ?token= in the URL, else VITE_MUSTER_TOKEN (dev). */
 export function getToken(): string {
@@ -77,11 +77,31 @@ async function req<T>(method: string, path: string, body?: unknown, retried = fa
   return data as T;
 }
 
+/** A file from the API (evidence), as a Blob. Same token handling as req(). */
+async function reqBlob(path: string, retried = false): Promise<Blob> {
+  let res: Response;
+  try {
+    res = await fetch(path, { headers: { 'x-muster-token': getToken() } });
+  } catch {
+    throw new ApiError('Cannot reach the Muster orchestrator', 0);
+  }
+  if (res.status === 401 && !retried && (await refreshToken())) return reqBlob(path, true);
+  if (!res.ok) {
+    let msg = `${res.status} ${res.statusText}`;
+    try { msg = (await res.json()).error ?? msg; } catch { /* not JSON */ }
+    throw new ApiError(msg, res.status);
+  }
+  return res.blob();
+}
+
 const enc = encodeURIComponent;
 const YOU = 'you';
 
 export interface DiffResult { branch: string; base: string; stat: string; diff: string }
 export interface TestResult { command: string; exitCode: number; output: string }
+
+export interface GhStatus { installed: boolean; authed: boolean; user?: string }
+export interface ProjectInfo { name: string; root: string; remoteUrl?: string; gh: GhStatus }
 
 export const api = {
   health: () => req<{ ok: boolean; version: string }>('GET', '/api/health'),
@@ -145,8 +165,12 @@ export const api = {
   approve: (taskId: string, note?: string) => req<Task>('POST', `/api/tasks/${enc(taskId)}/approve`, { actor: YOU, ...(note ? { note } : {}) }),
   reject: (taskId: string, note: string) => req<Task>('POST', `/api/tasks/${enc(taskId)}/reject`, { actor: YOU, note }),
   stations: () => req<StationDef[]>('GET', '/api/stations'),
-  saveStation: (name: string, body: { role?: StationDef['role']; guideline?: string }) =>
+  skills: () => req<SkillInfo[]>('GET', '/api/skills'),
+  evidenceFile: (taskId: string, entry: string, file: string) => reqBlob(`/api/tasks/${enc(taskId)}/evidence/${enc(entry)}/${enc(file)}`),
+  saveStation: (name: string, body: { role?: StationDef['role']; guideline?: string; skills?: string[] }) =>
     req<StationDef>('PUT', `/api/stations/${enc(name)}`, body),
   deleteStation: (name: string) => req<StationDef[]>('DELETE', `/api/stations/${enc(name)}`),
+  project: () => req<ProjectInfo>('GET', '/api/project'),
+  createGithub: (body: { name: string; private?: boolean; description?: string }) => req<{ url: string }>('POST', '/api/project/github', body),
   usage: () => req<UsageState & { paused: boolean }>('GET', '/api/usage'),
 };

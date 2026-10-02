@@ -5,6 +5,7 @@ import type { Snapshot } from '../events';
 import type { Page } from '../page';
 import { api } from '../api';
 import { approveTask, getDiffStat, mergeTask, run, sendBackApproval, showDiffModal } from '../actions';
+import { evidenceStrip } from '../evidence';
 import { branchOwnerId, ms, stationRole, statTotals, taskIsStuck } from '../util';
 
 const COLUMNS: { status: TaskStatus | 'awaiting_approval'; label: string }[] = [
@@ -63,7 +64,7 @@ export function createTasks(): Page {
           if (tot) { statCache.set(t.id, `+${tot.add} −${tot.del}`); stat.textContent = `${t.branch ?? d.branch} · +${tot.add} −${tot.del}`; }
         }).catch(() => {});
       }
-      return h('div.card.merge', { title: tip }, titleRow, stat,
+      return h('div.card.merge', { title: tip }, titleRow, stat, evidenceStrip(t),
         h('div.actions', null,
           h('button.btn.sm', { disabled: !owner, onclick: () => owner && showDiffModal(owner, t.branch) }, 'View diff'),
           h('button.btn.sm.merge', { onclick: () => mergeTask(state, t) }, 'Merge')));

@@ -3,7 +3,8 @@ import './styles.css';
 import type { Agent } from '../../src/types';
 import { h, icon, logo, setChildren, showMenu, showModal, toast, type MenuItem } from './dom';
 import { events, type Snapshot } from './events';
-import { openAddAgent } from './actions';
+import { openAddAgent, openGithubBackup, run } from './actions';
+import { api } from './api';
 import { agentStatusWord, agoLong, resetsIn, setUserName, sortedAgents } from './util';
 import type { Page } from './page';
 import { createDashboard } from './pages/dashboard';
@@ -116,7 +117,32 @@ addTop.onclick = () => openAddAgent(addTop, 'right');
 const topbar = h('header.topbar', null, h('div.goal', null, goalTitle, goalSub), five, week, addTop);
 const connBanner = h('div.conn-banner', { hidden: true }, 'Reconnecting to the Muster orchestrator…');
 const pagesHost = h('div', { style: 'flex:1;min-height:0;display:flex;flex-direction:column' });
-const main = h('main.main', null, topbar, connBanner, pagesHost);
+
+// ---------- GitHub backup offer: shown once some work is merged and the project has no remote yet ----------
+const SNOOZE_KEY = 'muster.githubSnoozed';
+const ghText = h('span.flex1');
+const ghBanner = h('div.banner.gh-offer', { hidden: true }, icon('cloud', 16), ghText,
+  h('button.btn.sm.primary', { onclick: async () => { if (await openGithubBackup()) { ghRemote = true; ghBanner.hidden = true; } } }, 'Back up to GitHub'),
+  h('button.btn.sm.secondary', { onclick: () => { ghSnoozed = true; try { sessionStorage.setItem(SNOOZE_KEY, '1'); } catch { /* ignore */ } ghBanner.hidden = true; } }, 'Not now'),
+  h('button.btn.sm', { onclick: () => { ghBanner.hidden = true; void run(api.patchConfig({ githubOffer: 'never' }), 'Turned off. You can still back up from Settings'); } }, "Don't ask again"));
+let ghRemote: boolean | null = null; // null: not checked yet
+let ghChecking = false;
+let ghSnoozed = false;
+try { ghSnoozed = sessionStorage.getItem(SNOOZE_KEY) === '1'; } catch { /* ignore */ }
+
+function renderGithubOffer(s: Snapshot, project: string): void {
+  const want = s.config.githubOffer !== 'never' && !ghSnoozed && s.state.tasks.some((t) => t.status === 'merged');
+  if (want && ghRemote === null && !ghChecking) {
+    ghChecking = true;
+    api.project()
+      .then((p) => { ghRemote = !!p.remoteUrl; }, () => { ghRemote = true; }) // older orchestrator without /api/project: never offer
+      .finally(() => { ghChecking = false; if (events.snapshot) renderShell(events.snapshot); });
+  }
+  ghText.textContent = `${project || 'This project'} only lives on this computer so far. Back it up to a private GitHub repo?`;
+  ghBanner.hidden = !(want && ghRemote === false);
+}
+
+const main = h('main.main', null, topbar, connBanner, ghBanner, pagesHost);
 app.appendChild(h('div.app', null, sidebar, main));
 
 // ---------- pages ----------
@@ -159,6 +185,7 @@ function renderShell(s: Snapshot): void {
   const project = config.projectName || state.repoRoot.split(/[\\/]/).filter(Boolean).pop() || '';
   projectEl.textContent = project;
   document.title = project ? `Muster · ${project}` : 'Muster';
+  renderGithubOffer(s, project);
 
   // nav counts
   const openNotes = state.notes.filter((n) => n.open).length;
