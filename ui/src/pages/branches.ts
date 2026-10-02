@@ -5,6 +5,7 @@ import type { Snapshot } from '../events';
 import type { Page } from '../page';
 import { api } from '../api';
 import { getDiff, getDiffStat, lastTests, mergeTask, run, runTests, showDiffModal, testsRunning } from '../actions';
+import { evidenceStrip } from '../evidence';
 import { ago, branchOwnerId, ms, parseDiffFiles, statTotals, taskIsStuck, type FileStat } from '../util';
 
 interface Row { key: string; branch: string; task?: Task; agentId?: string; holder?: string }
@@ -160,6 +161,7 @@ export function createBranches(): Page {
     setChildren(panel,
       h('div.mp-head', null, h('div.b', null, r.branch), h('div.note', null, noteText)),
       checks,
+      t && (t.status === 'ready_for_merge' || t.status === 'review' || t.evidence?.length) ? h('div.mp-evidence', null, evidenceStrip(t)) : null,
       fileList,
       h('div.mp-foot', null,
         h('button.btn.lg', {

@@ -1,6 +1,6 @@
 // Actions shared by several pages: add agent, diff modal, merge, role changes, caches.
 import type { Agent, MusterState, Role, Task } from '../../src/types';
-import { api, type DiffResult } from './api';
+import { api, type DiffResult, type ProjectInfo } from './api';
 import { confirmDialog, promptDialog, h, icon, showModal, showPopover, toast, select } from './dom';
 import { events } from './events';
 import { branchOwnerId, summarizeTests } from './util';
@@ -115,7 +115,7 @@ export async function mergeTask(state: MusterState, task: Task): Promise<boolean
   if (!owner) { toast(`No agent found for ${task.branch ?? task.id}`, 'error'); return false; }
   const ok = await confirmDialog(
     `Merge ${task.branch ?? task.id} into ${events.snapshot?.config.baseBranch ?? 'main'}?`,
-    `${task.id} ${task.title}. The Captain has reviewed it. Muster runs git merge --no-ff in the repo root; on a conflict the merge is aborted and nothing changes.`,
+    `${task.id} ${task.title}. The Captain has reviewed it${task.evidence?.length ? ` and it has ${task.evidence.reduce((n, e) => n + e.files.length, 0)} evidence file(s)` : ', but no evidence is attached'}. Muster runs git merge --no-ff in the repo root; on a conflict the merge is aborted and nothing changes.`,
     'Merge into main', 'merge');
   if (!ok) return false;
   const r = await run(api.merge(owner, task.id));
@@ -156,7 +156,7 @@ export async function closeAgent(a: Agent): Promise<void> {
 export function openAddAgent(anchor: HTMLElement, align: 'left' | 'right' = 'right'): void {
   const snap = events.snapshot;
   let role: Role = 'crew';
-  const name = h('input.input-sm', { placeholder: 'crew-4 (optional)', maxlength: 40 }) as HTMLInputElement;
+  const name = h('input.input-sm', { placeholder: 'Name (optional)', maxlength: 40 }) as HTMLInputElement;
   const readyTasks = snap?.state.tasks.filter((t) => t.status === 'ready' || t.status === 'blocked') ?? [];
   let taskId = '';
   const taskSel = select([{ value: '', label: 'No task: claims the next one' }, ...readyTasks.map((t) => ({ value: t.id, label: `${t.id} ${t.title}` }))], '', (v) => { taskId = v; });
@@ -195,4 +195,58 @@ export function openAddAgent(anchor: HTMLElement, align: 'left' | 'right' = 'rig
   updateHint();
   close = showPopover(anchor, content, align);
   setTimeout(() => name.focus(), 0);
+}
+
+// ---- GitHub backup: a private repo made with the `gh` CLI (POST /api/project/github) ----
+const repoSlug = (name: string) => name.trim().replace(/\s+/g, '-').replace(/[^A-Za-z0-9._-]/g, '').replace(/^\.+/, '') || 'my-app';
+
+/** Offer to put the project on GitHub. Resolves to the repo URL once it is there, else undefined. */
+export async function openGithubBackup(): Promise<string | undefined> {
+  let info: ProjectInfo;
+  try { info = await api.project(); } catch (e) { errToast(e); return undefined; }
+  if (info.remoteUrl) { toast(`Already on GitHub: ${info.remoteUrl}`); return info.remoteUrl; }
+  const p = (text: string) => h('p', { style: 'margin:0;color:var(--color-muted);font-size:13px;line-height:20px' }, text);
+  const code = (text: string) => h('code', { style: 'font-family:var(--font-mono);font-size:12px;background:var(--color-surface-2);border:1px solid var(--color-line);border-radius:6px;padding:2px 6px;color:var(--color-text)' }, text);
+
+  if (!info.gh.installed || !info.gh.authed) {
+    return new Promise((resolve) => {
+      let again = false;
+      showModal({
+        title: 'Connect GitHub first',
+        body: h('div', { style: 'display:flex;flex-direction:column;gap:12px' },
+          p('Muster uses the GitHub CLI to make the repo, so it needs to be installed and signed in once on this PC.'),
+          !info.gh.installed
+            ? h('p', { style: 'margin:0;font-size:13px;line-height:20px' }, '1. Install it from ', h('a', { href: 'https://cli.github.com', target: '_blank' }, 'cli.github.com'), '.')
+            : null,
+          h('p', { style: 'margin:0;font-size:13px;line-height:20px' }, `${info.gh.installed ? '' : '2. '}Open a terminal and run `, code('gh auth login'), ', then choose GitHub.com and sign in with your browser.'),
+          p('Then come back here and press Check again.')),
+        actions: [{ label: 'Check again', kind: 'primary', onClick: async (close) => { again = true; close(); resolve(await openGithubBackup()); } }],
+        onClose: () => { if (!again) resolve(undefined); },
+      });
+    });
+  }
+
+  const input = h('input.input-sm', { value: repoSlug(info.name || info.root.split(/[\/]/).filter(Boolean).pop() || ''), spellcheck: false, style: 'width:100%' }) as HTMLInputElement;
+  return new Promise((resolve) => {
+    let url: string | undefined;
+    showModal({
+      title: 'Back up to GitHub',
+      body: h('div', { style: 'display:flex;flex-direction:column;gap:12px' },
+        p(`Muster makes a private repository on ${info.gh.user ? `${info.gh.user}'s` : 'your'} GitHub account and uploads the project's history. Only you can see it. From then on you can push the crew's merged work there.`),
+        h('label', { style: 'display:flex;flex-direction:column;gap:6px;font-size:12px;color:var(--color-muted)' }, 'Repository name', input)),
+      actions: [{
+        label: 'Create private repo',
+        kind: 'primary',
+        onClick: async (close) => {
+          const r = await run(api.createGithub({ name: input.value.trim(), private: true }));
+          if (!r) return;
+          url = r.url;
+          toast(`On GitHub: ${r.url}`);
+          close();
+        },
+      }],
+      onClose: () => resolve(url),
+    });
+    setTimeout(() => { input.focus(); input.select(); });
+  });
 }

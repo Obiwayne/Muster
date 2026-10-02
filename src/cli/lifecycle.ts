@@ -20,9 +20,9 @@ function pidAlive(pid: number | undefined): boolean {
   }
 }
 
-export async function up(ctx: Ctx, opts: { port?: number; ui?: boolean; waitMs?: number; entry?: string }): Promise<void> {
+export async function up(ctx: Ctx, opts: { port?: number; ui?: boolean; create?: boolean; waitMs?: number; entry?: string }): Promise<void> {
   const { c } = ctx;
-  const init = initMuster(ctx.repoRoot ?? ctx.cwd);
+  const init = initMuster(ctx.repoRoot ?? ctx.cwd, false, opts.create);
   const root = init.root;
   if (init.created.length) ctx.out(c.dim(`Set up ${init.created.join(', ')}`));
 

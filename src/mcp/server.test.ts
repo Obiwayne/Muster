@@ -50,17 +50,34 @@ describe('muster-mcp calls', () => {
   });
   it('claim_task appends the station guideline', async () => {
     const task = { id: 'T3', title: 'Share dialog', description: 'Build it', status: 'in_progress', stations: ['build', 'review'], stationIndex: 0, dependsOn: [] };
-    const { call, calls } = await connect('crew', (c) => (c.path === '/api/tasks/claim' ? task : { name: 'build', role: 'crew', builtin: true, guideline: 'Keep it small.' }));
+    const { call, calls } = await connect('crew', (c) => (c.path === '/api/tasks/claim' ? task : { text: '## Station: build guidelines\nKeep it small.' }));
     const r = await call('claim_task');
-    expect(calls[1].path).toBe('/api/stations/build');
+    expect(calls[1].path).toBe('/api/tasks/T3/brief');
     expect(r.text).toContain('## Station: build guidelines');
     expect(r.text).toContain('Keep it small.');
   });
+  it('claim_task falls back to the station file on an orchestrator without /brief, skills included', async () => {
+    const task = { id: 'T3', title: 'Share dialog', description: 'Build it', status: 'in_progress', stations: ['build', 'review'], stationIndex: 0, dependsOn: [] };
+    const { call, calls } = await connect('crew', (c) => {
+      if (c.path === '/api/tasks/claim') return task;
+      if (c.path.endsWith('/brief')) throw new Error('No route');
+      return { name: 'build', role: 'crew', builtin: true, guideline: 'Keep it small.', skills: ['code-structure'] };
+    });
+    const r = await call('claim_task');
+    expect(calls[2].path).toBe('/api/stations/build');
+    expect(r.text).toContain('Keep it small.');
+    expect(r.text).toContain('`muster:code-structure`');
+  });
   it('claim_task adds no block for an empty guideline and cuts long ones', async () => {
     const task = { id: 'T3', title: 'X', description: 'd', status: 'in_progress', stations: ['build', 'review'], stationIndex: 0, dependsOn: [] };
-    const empty = await connect('crew', (c) => (c.path === '/api/tasks/claim' ? task : { name: 'build', role: 'crew', builtin: true, guideline: '  ' }));
+    const noBrief = (guideline: string) => (c: { path: string }) => {
+      if (c.path === '/api/tasks/claim') return task;
+      if (c.path.endsWith('/brief')) throw new Error('No route');
+      return { name: 'build', role: 'crew', builtin: true, guideline };
+    };
+    const empty = await connect('crew', noBrief('  '));
     expect((await empty.call('claim_task')).text).not.toContain('guidelines');
-    const long = await connect('crew', (c) => (c.path === '/api/tasks/claim' ? task : { name: 'build', role: 'crew', builtin: true, guideline: 'x'.repeat(9000) }));
+    const long = await connect('crew', noBrief('x'.repeat(9000)));
     expect((await long.call('claim_task')).text).toContain('(guideline cut, 1000 more characters in .muster/stations/build.md)');
   });
   it('turns API errors into isError results', async () => {
