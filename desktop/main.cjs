@@ -345,6 +345,86 @@ ipcMain.handle('app:stopCurrent', async (event) => {
   await stopProject(root);
   showPicker();
 });
+// ---------------------------------------------------------------- start a new app / rename the project folder
+
+const slugify = (s) => String(s ?? '').toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/^-+|-+$/g, '').slice(0, 48);
+
+// Parent folder for new apps: asked once, then remembered as newAppDir.
+ipcMain.handle('muster:newAppDir', () => {
+  const dir = loadSettings().newAppDir;
+  return dir && fs.existsSync(dir) ? dir : null;
+});
+ipcMain.handle('muster:pickNewAppDir', async () => {
+  const s = loadSettings();
+  const r = await dialog.showOpenDialog(win, {
+    title: 'Where should new apps be created?',
+    defaultPath: s.newAppDir && fs.existsSync(s.newAppDir) ? s.newAppDir : undefined,
+    properties: ['openDirectory', 'createDirectory'],
+  });
+  if (r.canceled || !r.filePaths[0]) return null;
+  saveSettings({ ...s, newAppDir: r.filePaths[0] });
+  return r.filePaths[0];
+});
+ipcMain.handle('muster:newApp', async (_e, { idea, title, dir } = {}) => {
+  const text = String(idea ?? '').trim();
+  const parent = String(dir ?? '').trim();
+  if (!text) return { ok: false, error: 'Describe what you want to build.' };
+  if (!parent || !fs.existsSync(parent)) return { ok: false, error: 'Choose a parent folder that exists.' };
+  const name = String(title ?? '').trim();
+  const before = new Set(fs.readdirSync(parent));
+  const r = await cli(['new', text, '--dir', parent, ...(name ? ['--title', name] : []), '--no-open'], parent);
+  if (!r.ok) return { ok: false, error: r.out || 'muster new failed.' };
+  // `muster new` prints the project folder; fall back to the one folder it added.
+  const printed = r.out.split(/\r?\n/).map((l) => l.trim().replace(/^["']|["']$/g, '')).reverse().find((l) => path.isAbsolute(l) && fs.existsSync(l));
+  const added = fs.readdirSync(parent).filter((n) => !before.has(n));
+  const root = printed || (added.length === 1 ? path.join(parent, added[0]) : null);
+  if (!root) return { ok: false, error: `The app was created but its folder was not found in ${parent}. Open it with "Open a project folder".` };
+  return openProject(root);
+});
+
+ipcMain.handle('app:renameProject', async (event, newName) => {
+  if (!fromWindow(event) || !current) return { ok: false, error: 'not allowed' };
+  const slug = slugify(newName);
+  if (!slug) return { ok: false, error: 'Enter a name with letters or digits.' };
+  const oldRoot = current.root;
+  const newRoot = path.join(path.dirname(oldRoot), slug);
+  if (newRoot.toLowerCase() === oldRoot.toLowerCase()) return { ok: true };
+  if (fs.existsSync(newRoot)) return { ok: false, error: `${newRoot} already exists.` };
+  const c = await dialog.showMessageBox(win, {
+    type: 'question', buttons: ['Rename folder', 'Cancel'], defaultId: 0, cancelId: 1, title: 'Rename project folder',
+    message: `Rename the folder to "${slug}"?`,
+    detail: `${oldRoot}\n→ ${newRoot}\n\nThe crew stops, the folder is renamed, git worktrees are repaired and the project reopens.`,
+  });
+  if (c.response !== 0) return { ok: false, canceled: true };
+  await stopProject(oldRoot);
+  try {
+    fs.renameSync(oldRoot, newRoot);
+  } catch (err) {
+    const r = await openProject(oldRoot);
+    return { ok: false, error: `Could not rename the folder (is something else using it?): ${err.message}${r.ok ? '' : `\n${r.error}`}` };
+  }
+  try {
+    // Worktrees record absolute paths in both directions; repair needs the moved worktrees listed.
+    const wts = path.join(newRoot, '.muster', 'worktrees');
+    const dirs = fs.existsSync(wts) ? fs.readdirSync(wts).map((d) => path.join(wts, d)).filter((d) => fs.existsSync(path.join(d, '.git'))) : [];
+    execFileSync('git', ['worktree', 'repair', ...dirs], { cwd: newRoot, windowsHide: true });
+  } catch (err) {
+    // Repair is best effort; the rename itself is done, so carry on and say so.
+    console.error('git worktree repair failed:', err.message);
+  }
+  const s = loadSettings();
+  s.recent = s.recent.filter((r) => r.toLowerCase() !== oldRoot.toLowerCase());
+  saveSettings(s);
+  const r = await openProject(newRoot);
+  if (!r.ok) {
+    await dialog.showMessageBox(win, { type: 'error', title: 'Renamed, but could not reopen', message: r.error });
+    showPicker();
+  }
+  return r;
+});
+ipcMain.handle('app:openProjectFolder', (event) => {
+  if (fromWindow(event) && current) void shell.openPath(current.root);
+});
 ipcMain.handle('muster:setName', (_e, name) => writeUserName(name));
 
 ipcMain.handle('muster:recent', async () => {
