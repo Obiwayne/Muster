@@ -398,7 +398,16 @@ ipcMain.handle('app:renameProject', async (event, newName) => {
   if (c.response !== 0) return { ok: false, canceled: true };
   await stopProject(oldRoot);
   try {
-    fs.renameSync(oldRoot, newRoot);
+    // Windows holds the folder briefly after the orchestrator stops: retry EPERM/EBUSY for ~3 s.
+    for (let attempt = 0; ; attempt++) {
+      try {
+        fs.renameSync(oldRoot, newRoot);
+        break;
+      } catch (err) {
+        if (!['EPERM', 'EBUSY'].includes(err.code) || attempt >= 6) throw err;
+        await new Promise((r) => setTimeout(r, 500));
+      }
+    }
   } catch (err) {
     const r = await openProject(oldRoot);
     return { ok: false, error: `Could not rename the folder (is something else using it?): ${err.message}${r.ok ? '' : `\n${r.error}`}` };

@@ -201,16 +201,17 @@ export function createSettings(): Page {
       },
     }, 'Rename folder to match name'));
     rows.push(row('Folder', p.root, folderBtns.length ? h('div.ctl', { style: 'width:auto;gap:8px' }, folderBtns) : null, true));
-    let sub: string | HTMLElement = 'Not on GitHub yet';
-    let act: HTMLElement | null = null;
-    if (p.remoteUrl) sub = h('div.s.mono', null, h('a', { href: p.remoteUrl, target: '_blank', rel: 'noreferrer' }, p.remoteUrl));
-    else if (!p.gh.installed) sub = 'Install GitHub CLI (cli.github.com), then run `gh auth login`';
-    else if (!p.gh.authed) sub = 'Run `gh auth login` in a terminal, then reload';
-    else act = h('button.btn.sm', { onclick: async () => { if (await openGithubBackup()) void loadProject(); } }, 'Create GitHub repo');
-    rows.push(row('GitHub', sub, act));
-    if (!p.remoteUrl) rows.push(row('Offer a backup', 'Ask once the first piece of work is merged',
-      toggle(c.githubOffer !== 'never', (v) => save({ githubOffer: v ? 'ask' : 'never' }))));
     return panel('Project', ...rows);
+  }
+
+  function githubPanel(c: MusterConfig): HTMLElement | null {
+    const remoteUrl = project ? project.remoteUrl ?? null : undefined; // undefined: not loaded yet; null: no GitHub remote
+    if (remoteUrl === undefined) return null;
+    const backUp = h('button.btn.sm', { onclick: async () => { if (await openGithubBackup()) void loadProject(); } }, 'Back up…');
+    return panel('GitHub',
+      row('Backup', remoteUrl ?? 'Only on this computer so far', remoteUrl ? null : backUp, !!remoteUrl),
+      remoteUrl ? null : row('Offer a backup', 'Ask once the first piece of work is merged',
+        toggle(c.githubOffer !== 'never', (v) => save({ githubOffer: v ? 'ask' : 'never' }))));
   }
 
   function render(c: MusterConfig): void {
@@ -250,6 +251,7 @@ export function createSettings(): Page {
               ctl(pctInput(c.pauseAtFiveHourPct, (v) => save({ pauseAtFiveHourPct: v })), 120)),
             row('Warn me at', 'Weekly window',
               ctl(pctInput(c.warnAtWeeklyPct, (v) => save({ warnAtWeeklyPct: v })), 120))),
+          githubPanel(c),
           h('div.panel', null,
             h('div.panel-head', null, h('div.section-label', null, 'Factory line and review'),
               h('button.btn.sm', { onclick: editLine, title: 'Reorder stations and edit the role and guideline of each station' }, 'Edit line')),
