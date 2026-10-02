@@ -388,7 +388,7 @@ async function api(req, url) {
   }
   if (m === 'GET' && p === '/api/vellum') return { status: 'connected', checkedAt: new Date().toISOString(), files: [
     { id: 'muster', name: 'Muster', pages: 9, updated: iso(120) }, { id: 'scratch', name: 'Scratchpad', pages: 3, updated: iso(60 * 30) },
-    { id: 'wall', name: 'Wall Education', pages: 16, updated: iso(60 * 50) }, { id: 'mayhem', name: 'MayhemDeck', pages: 5, updated: iso(60 * 24 * 6) }] };
+    { id: 'wall', name: 'Client Portal', pages: 16, updated: iso(60 * 50) }, { id: 'mayhem', name: 'MayhemDeck', pages: 5, updated: iso(60 * 24 * 6) }] };
   if (m === 'GET' && p === '/api/usage') return { ...state.usage, paused: !!paused() };
 
   if (m === 'POST' && p === '/api/agents') {

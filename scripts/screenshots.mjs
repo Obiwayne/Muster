@@ -63,7 +63,7 @@ async function main() {
   await shot('vellum', 'vellum', `(() => {
     for (const c of document.querySelectorAll('.agent-card')) {
       const t = c.querySelector('.t')?.textContent ?? '';
-      if (['Scratchpad', 'Wall Education', 'MayhemDeck'].includes(t)) c.style.filter = 'blur(6px)';
+      if (['Scratchpad', 'Client Portal', 'MayhemDeck'].includes(t)) c.style.filter = 'blur(6px)';
     }
   })()`);
   await shot('settings', 'settings');
