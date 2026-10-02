@@ -4,7 +4,7 @@ import { homedir } from 'node:os';
 import { delimiter, dirname, join } from 'node:path';
 import { defaultLineName, listLines } from './lines.js';
 import { listStations } from './stations.js';
-import { captainPrompt, crewPrompt, designPrompt, type PromptContext } from '../prompts/index.js';
+import { captainPrompt, crewPrompt, designPrompt, researchPrompt, type PromptContext } from '../prompts/index.js';
 import type { Agent, MusterConfig, Role } from '../types.js';
 import { MUSTER_HOME, musterPaths, PLUGIN_DIR, posix, type MusterPaths } from './paths.js';
 import { deriveAgentToken } from './tokens.js';
@@ -85,6 +85,7 @@ export function ptyArgs(file: string, args: string[]): string[] | string {
   return args;
 }
 
+/** The Captain and the design crew have their own model settings; crew and the research agent use crewModel. */
 export function modelFor(role: Role, config: MusterConfig): string {
   return role === 'captain' ? config.captainModel : role === 'design' ? config.designModel : config.crewModel;
 }
@@ -151,7 +152,16 @@ export function rolePrompt(agent: Agent, ctx: LaunchContext): string {
     lines: agent.role === 'captain' ? listLines(ctx.config) : undefined,
     defaultLine: defaultLineName(ctx.config),
   };
-  return agent.role === 'captain' ? captainPrompt(p) : agent.role === 'design' ? designPrompt(p) : crewPrompt(p);
+  switch (agent.role) {
+    case 'captain':
+      return captainPrompt(p);
+    case 'design':
+      return designPrompt(p);
+    case 'research':
+      return researchPrompt(p);
+    default:
+      return crewPrompt(p);
+  }
 }
 
 export function vellumServer(config: MusterConfig, defaultEntry = DEFAULT_VELLUM_ENTRY): MusterConfig['vellum'] {

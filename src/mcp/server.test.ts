@@ -3,7 +3,7 @@ import { InMemoryTransport } from '@modelcontextprotocol/sdk/inMemory.js';
 import { describe, expect, it } from 'vitest';
 import type { Role } from '../types.js';
 import { PROGRESS, ROADMAP } from './roadmap.fixture.js';
-import { CAPTAIN_TOOLS, CREW_TOOLS, createMusterServer, type Api } from './server.js';
+import { CAPTAIN_TOOLS, CREW_TOOLS, createMusterServer, RESEARCH_TOOLS, type Api } from './server.js';
 
 type Call = { path: string; method?: string; body?: unknown };
 
@@ -14,7 +14,7 @@ async function connect(role: Role, handler: (c: Call) => unknown, extra: { pollM
     calls.push(c);
     return (await handler(c)) as T;
   };
-  const server = createMusterServer({ role, agentId: role === 'captain' ? 'captain' : 'crew-2', api, ...extra });
+  const server = createMusterServer({ role, agentId: role === 'captain' ? 'captain' : role === 'research' ? 'scout' : 'crew-2', api, ...extra });
   const [a, b] = InMemoryTransport.createLinkedPair();
   await server.connect(a);
   const client = new Client({ name: 't', version: '1' });
@@ -178,7 +178,7 @@ describe('muster-mcp roadmap tools', () => {
   it('are captain only', async () => {
     const { client } = await connect('crew', () => null);
     const names = (await client.listTools()).tools.map((t) => t.name);
-    for (const n of ['roadmap', 'set_roadmap', 'update_stage', 'check_criterion', 'complete_stage', 'add_goal', 'update_goal']) expect(names).not.toContain(n);
+    for (const n of ['roadmap', 'set_roadmap', 'update_stage', 'check_criterion', 'complete_stage', 'add_goal', 'update_goal', 'link_tasks']) expect(names).not.toContain(n);
   });
   it('roadmap reads GET /api/roadmap and handles no roadmap', async () => {
     let v: unknown = { roadmap: null, progress: null };
@@ -247,6 +247,13 @@ describe('muster-mcp roadmap tools', () => {
     expect(calls[0]).toEqual({ path: '/api/roadmap/goals', method: 'POST', body: { actor: 'captain', stageId: 'M2', title: 'Dark mode', description: 'd', start: undefined, due: undefined } });
     expect(r.text).toBe("Added G5 Dark mode to M2. The roadmap is a draft (rev 2) waiting for the user's approval; keep working on approved goals meanwhile.");
   });
+  it('link_tasks POSTs upper-cased task ids to the goal', async () => {
+    const { call, calls } = await connect('captain', () => ({ ...view(), linked: ['T21', 'T26'] }));
+    const r = await call('link_tasks', { goal: 'g3', tasks: ['t21', 'T26'] });
+    expect(calls[0]).toEqual({ path: '/api/roadmap/goals/G3/tasks', method: 'POST', body: { actor: 'captain', taskIds: ['T21', 'T26'], unlink: false } });
+    expect(r.text).toMatch(/^Put T21, T26 on G3 Reactions/);
+    expect((await call('link_tasks', { goal: 'G3', tasks: ['T21'], unlink: true })).text).toMatch(/^Took T21, T26 off G3/);
+  });
   it('update_stage and update_goal PATCH only what was given', async () => {
     const { call, calls } = await connect('captain', () => view());
     expect((await call('update_stage', { stage: 'm2', due: '2026-10-12' })).text).toBe('Updated M2 Core wall [active].');
@@ -265,5 +272,98 @@ describe('muster-mcp roadmap tools', () => {
   it('crew list_tasks shows each task\'s goal', async () => {
     const { call } = await connect('crew', () => [{ id: 'T7', title: 'Post form', status: 'ready', stations: ['build', 'review'], stationIndex: 0, goalId: 'G2' }]);
     expect((await call('list_tasks')).text).toBe('T7 [ready] Post form · station build 1/2 · goal G2');
+  });
+});
+
+describe('muster-mcp research tools', () => {
+  const idea = (patch: Record<string, unknown> = {}) => ({
+    id: 'R7', runId: 'RR1', title: 'Moderation queue', summary: 'Teachers want to hold posts for review.', impact: 'high', effort: 'M', stageId: 'M3',
+    evidence: [{ kind: 'forum', source: 'r/Teachers · 412 upvotes', text: 'I need to approve posts first', url: 'https://reddit.com/r/Teachers/x', count: 37 }],
+    status: 'new', thread: [], createdAt: '2026-10-02T09:00:00Z', ...patch,
+  });
+  const research = (ideas: unknown[] = [idea()], runs: unknown[] = []) => ({ runs, ideas });
+
+  it('research gets only its tools; crew, design and captain see none of them', async () => {
+    const r = await connect('research', () => null);
+    expect((await r.client.listTools()).tools.map((t) => t.name).sort()).toEqual([...RESEARCH_TOOLS].sort());
+    for (const role of ['crew', 'design', 'captain'] as Role[]) {
+      const { client } = await connect(role, () => null);
+      const names = (await client.listTools()).tools.map((t) => t.name);
+      for (const n of ['research_brief', 'add_idea', 'finish_research']) expect(names).not.toContain(n);
+      if (role !== 'captain') for (const n of ['list_ideas', 'get_idea', 'advise_idea']) expect(names).not.toContain(n);
+    }
+  });
+  it('research_brief returns the brief text', async () => {
+    const { call, calls } = await connect('research', () => ({ text: 'Sources: Padlet\n' }));
+    expect((await call('research_brief')).text).toBe('Sources: Padlet');
+    expect(calls[0].path).toBe('/api/research/brief');
+  });
+  it('add_idea posts upper-cased stage/goal ids and the evidence', async () => {
+    const { call, calls } = await connect('research', () => idea({ overlapsGoalId: 'G9' }));
+    const evidence = [{ kind: 'review', source: 'App Store · Padlet · 2★', text: 'No way to moderate', url: 'https://x', count: 12 }];
+    const r = await call('add_idea', { title: 'Moderation queue', summary: 's', impact: 'high', effort: 'M', evidence, stage: 'm3', overlaps: 'g9' });
+    expect(calls[0]).toEqual({
+      path: '/api/research/ideas', method: 'POST',
+      body: { actor: 'scout', title: 'Moderation queue', summary: 's', impact: 'high', effort: 'M', evidence, stageId: 'M3', overlapsGoalId: 'G9' },
+    });
+    expect(r.text).toBe('Added R7 [new] Moderation queue · impact high · effort M · fits M3 · overlaps G9 · 1 evidence');
+  });
+  it('add_idea validates impact, effort and evidence before calling the API', async () => {
+    const { call, calls } = await connect('research', () => idea());
+    const ok = { kind: 'web', source: 's' };
+    expect((await call('add_idea', { title: 't', summary: 's', impact: 'huge', effort: 'M', evidence: [ok] })).isError).toBe(true);
+    expect((await call('add_idea', { title: 't', summary: 's', impact: 'low', effort: 'XL', evidence: [ok] })).isError).toBe(true);
+    expect((await call('add_idea', { title: 't', summary: 's', impact: 'low', effort: 'S', evidence: [] })).isError).toBe(true);
+    expect((await call('add_idea', { title: 't', summary: 's', impact: 'low', effort: 'S', evidence: [{ ...ok, text: 'x'.repeat(301) }] })).isError).toBe(true);
+    expect((await call('add_idea', { title: 't', summary: 's', impact: 'low', effort: 'S', evidence: Array(9).fill(ok) })).isError).toBe(true);
+    expect(calls).toHaveLength(0);
+    await call('add_idea', { title: 't', summary: 's', impact: 'business', effort: 'S', evidence: [ok] });
+    expect((calls[0].body as Record<string, unknown>).stageId).toBeUndefined();
+  });
+  it('finish_research finishes the running run', async () => {
+    const runs = [{ id: 'RR1', status: 'done', agentId: 'scout', ideaIds: [] }, { id: 'RR2', status: 'running', agentId: 'scout', ideaIds: ['R1'] }];
+    const { call, calls } = await connect('research', (c) =>
+      c.path === '/api/research' ? research([], runs) : { id: 'RR2', status: 'done', agentId: 'scout', ideaIds: ['R1', 'R2'] },
+    );
+    const r = await call('finish_research', { summary: 'Read 20 pages.', sourcesRead: 20 });
+    expect(calls[1]).toEqual({ path: '/api/research/runs/RR2/finish', method: 'POST', body: { actor: 'scout', summary: 'Read 20 pages.', sourcesRead: 20 } });
+    expect(r.text).toBe('Finished RR2: 2 ideas. The user has been told. You are done; stop here.');
+    const none = await connect('research', () => research([], [runs[0]]));
+    expect(await none.call('finish_research', { summary: 'x' })).toEqual({ text: 'Error: No research run is running.', isError: true });
+  });
+  it('list_ideas filters by status and flags questions waiting for advice', async () => {
+    const asked = idea({ id: 'R8', title: 'Offline mode', thread: [{ at: '', from: 'you', text: 'Worth it?' }] });
+    const done = idea({ id: 'R9', title: 'Export', status: 'approved', goalId: 'G14' });
+    const { call } = await connect('captain', () => research([idea(), asked, done]));
+    const all = (await call('list_ideas')).text.split('\n');
+    expect(all).toHaveLength(3);
+    expect(all[1]).toContain('question waiting for your advice');
+    expect(all[2]).toMatch(/^R9 \[approved → G14\] Export/);
+    expect((await call('list_ideas', { status: 'approved' })).text.split('\n')).toHaveLength(1);
+    expect((await call('list_ideas', { status: 'rejected' })).text).toBe('No research ideas match.');
+  });
+  it('get_idea shows evidence, thread and plan; advise_idea posts the advice', async () => {
+    const full = idea({ thread: [{ at: '2026-10-02T09:00:00Z', from: 'you', text: 'Cost?' }], plan: ['+ Add goal Moderation queue to M3'] });
+    const { call, calls } = await connect('captain', (c) => (c.path === '/api/research' ? research([full]) : full));
+    const r = (await call('get_idea', { idea: 'r7' })).text;
+    expect(r).toContain('r/Teachers · 412 upvotes (+37 similar): "I need to approve posts first" <https://reddit.com/r/Teachers/x>');
+    expect(r).toContain('- you · ');
+    expect(r).toContain('Plan on approval:\n- + Add goal Moderation queue to M3');
+    expect((await call('get_idea', { idea: 'R99' })).isError).toBe(true);
+    const a = await call('advise_idea', { idea: 'r7', text: 'About 3 days.', plan: ['+ Add goal X to M3', '~ Move M3 due'] });
+    expect(calls.at(-1)).toEqual({ path: '/api/research/ideas/R7/advice', method: 'POST', body: { actor: 'captain', text: 'About 3 days.', plan: ['+ Add goal X to M3', '~ Move M3 due'] } });
+    expect(a.text).toBe('Advised on R7 Moderation queue with a 2-step plan. The user sees it on the Research page.');
+    await call('advise_idea', { idea: 'R7', text: 'No plan yet.' });
+    expect(calls.at(-1)?.body).toEqual({ actor: 'captain', text: 'No plan yet.' });
+  });
+  it('add_goal sends ideaId for an approved idea', async () => {
+    const { call, calls } = await connect('captain', () => {
+      const r = structuredClone(ROADMAP);
+      r.goals.push({ id: 'G14', stageId: 'M3', title: 'Moderation queue', description: 'd', status: 'planned' });
+      return { roadmap: r, progress: PROGRESS };
+    });
+    const r = await call('add_goal', { stage: 'm3', title: 'Moderation queue', description: 'd', idea: 'r7' });
+    expect((calls[0].body as Record<string, unknown>).ideaId).toBe('R7');
+    expect(r.text).toBe('Added G14 Moderation queue to M3 for idea R7.');
   });
 });

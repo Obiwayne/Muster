@@ -55,7 +55,7 @@ export function addInbox(state: MusterState, item: Omit<InboxItem, 'id' | 'at' |
 }
 
 export function isNeedsYou(n: Note): boolean {
-  return n.open && (n.type === 'escalation' || n.type === 'review' || n.type === 'approval' || n.to === HUMAN);
+  return n.open && !n.dismissed && (n.type === 'escalation' || n.type === 'review' || n.type === 'approval' || n.to === HUMAN);
 }
 
 export interface NoteInput {
@@ -64,6 +64,7 @@ export interface NoteInput {
   text: string;
   taskId?: string;
   to?: string;
+  topic?: Note['topic'];
 }
 
 export function postNote(state: MusterState, input: NoteInput): Note {
@@ -82,6 +83,7 @@ export function postNote(state: MusterState, input: NoteInput): Note {
     text: input.text.trim(),
     createdAt: nowIso(),
     open: OPEN_BY_DEFAULT.includes(input.type),
+    ...(input.topic ? { topic: input.topic } : {}),
     replies: [],
   };
   state.notes.push(note);
@@ -130,6 +132,15 @@ export function closeNote(state: MusterState, noteId: string, actor: string): No
   return note;
 }
 
+/** POST /api/notes/:id/dismiss: you take a note off the board. It stays in state (closed, dismissed) for history. */
+export function dismissNote(state: MusterState, noteId: string, actor: string): Note {
+  if (actor !== HUMAN) throw forbidden('Only you can dismiss notes');
+  const note = requireNote(state, noteId);
+  closeNoteIfOpen(note);
+  note.dismissed = true;
+  return note;
+}
+
 export function escalate(state: MusterState, actor: string, text: string, noteId?: string): Note {
   if (!isCaptain(state, actor)) throw forbidden('Only the Captain can escalate');
   const original = noteId ? requireNote(state, noteId) : undefined;
@@ -156,6 +167,7 @@ export interface NoteFilter {
   from?: string;
   to?: string;
   needsYou?: boolean;
+  dismissed?: boolean; // include dismissed notes (left out by default)
 }
 
 const TYPE_RANK: Partial<Record<NoteType, number>> = { stuck: 0, question: 1 };
@@ -169,7 +181,8 @@ export function listNotes(state: MusterState, f: NoteFilter = {}): Note[] {
         (!f.type || n.type === f.type) &&
         (!f.from || n.from === f.from) &&
         (!f.to || n.to === f.to) &&
-        (!f.needsYou || isNeedsYou(n)),
+        (!f.needsYou || isNeedsYou(n)) &&
+        (f.dismissed || !n.dismissed),
     )
     .sort((a, b) => (TYPE_RANK[a.type] ?? 2) - (TYPE_RANK[b.type] ?? 2) || idNum(b.id) - idNum(a.id));
 }

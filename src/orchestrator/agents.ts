@@ -11,6 +11,7 @@ import * as gitOps from '../core/git.js';
 import type { MusterPaths } from '../core/paths.js';
 import { sanitizeTyped } from '../core/sanitize.js';
 import type { Store } from '../core/store.js';
+import { failRun, runningRun, SCOUT_ID } from '../core/research.js';
 import { addInput, assignTask, hasReportedDone, MERGE_CONFLICT, requireTask, untake, type StationBranch } from '../core/tasks.js';
 import { assertNotPaused } from '../core/usage.js';
 import { lastLines, RingBuffer, stripAnsi, type PtyLauncher, type PtyProcess } from './terminal.js';
@@ -29,6 +30,7 @@ export interface Timings {
   watchdogIdleMs: number; // an agent holding work at an idle prompt this long gets a re-nudge
   watchdogStartingMs: number; // ... as does one still 'starting' this long after spawn
   watchdogEscalateMs: number; // still not active this long after the re-nudge: stuck note, Captain inbox item, toast
+  scoutStopDelayMs: number; // after finish_research, let scout read the tool result before it is stopped
 }
 
 export const DEFAULT_TIMINGS: Timings = {
@@ -45,6 +47,7 @@ export const DEFAULT_TIMINGS: Timings = {
   watchdogIdleMs: 5 * 60_000,
   watchdogStartingMs: 3 * 60_000,
   watchdogEscalateMs: 5 * 60_000,
+  scoutStopDelayMs: 3000,
 };
 
 export interface AgentManagerOptions {
@@ -95,6 +98,9 @@ export const CREW_NAMES = [
 ];
 const START_OUTPUT_MAX = 64 * 1024;
 const ID_PATTERN = /^[a-z0-9][a-z0-9_-]{0,39}$/i;
+const ROLES: Role[] = ['captain', 'crew', 'design', 'research'];
+/** The Captain and the research agent work in the repo root on the base branch; everyone else gets a worktree. */
+const atRoot = (role: Role) => role === 'captain' || role === 'research';
 const sleep = (ms: number) => new Promise((r) => setTimeout(r, ms));
 const MAX_NUDGE_BACKOFF_MS = 5 * 60_000;
 
@@ -169,7 +175,8 @@ export class AgentManager {
     const config = this.o.config();
     const role = input.role ?? 'crew';
     const internal = input.actor === SYSTEM;
-    if (!['captain', 'crew', 'design'].includes(role)) throw badRequest(`Unknown role "${role}"`);
+    if (!ROLES.includes(role)) throw badRequest(`Unknown role "${role}"`);
+    if (role === 'research' && !internal) throw badRequest('The research agent is started by a research run (Roadmap → Research), not added by hand');
     if (!internal && input.actor !== HUMAN && !isCaptain(state, input.actor)) throw forbidden('Only the Captain or you can add agents');
     if (!internal) assertNotPaused(state);
     if (role === 'captain' && captainOf(state)) throw conflict(`${captainOf(state)!.id} is already the Captain; change roles instead`);
@@ -188,14 +195,14 @@ export class AgentManager {
     const id = this.newId(role, input.name);
 
     // Reserve the record before the first await, so parallel spawns see it (maxCrew, one design agent, ids).
-    const captain = role === 'captain';
+    const root = atRoot(role);
     const at = nowIso();
     const agent: Agent = {
       id,
       role,
       model: modelFor(role, config),
-      branch: captain ? config.baseBranch : `${id}/work`,
-      worktree: captain ? this.o.paths.root : this.o.paths.worktree(id),
+      branch: root ? config.baseBranch : `${id}/work`,
+      worktree: root ? this.o.paths.root : this.o.paths.worktree(id),
       status: 'starting',
       sessionId: randomUUID(),
       startedAt: at,
@@ -204,7 +211,7 @@ export class AgentManager {
     };
     state.agents.push(agent);
     try {
-      if (!captain) agent.branch = await gitOps.addWorktree(this.o.paths.root, agent.worktree, agent.branch, config.baseBranch);
+      if (!root) agent.branch = await gitOps.addWorktree(this.o.paths.root, agent.worktree, agent.branch, config.baseBranch);
       if (input.taskId) {
         const task = assignTask(state, input.taskId, id, internal ? HUMAN : input.actor);
         await this.syncTaskBranch(agent, task);
@@ -295,6 +302,7 @@ export class AgentManager {
 
   /** After a --resume the conversation is back, but the agent doesn't know it was restarted. */
   private resumePromptFor(agent: Agent): string | undefined {
+    if (agent.role === 'research') return runningRun(this.state) ? this.firstPromptFor(agent) : undefined;
     const task = agent.taskId ? this.state.tasks.find((t) => t.id === agent.taskId) : undefined;
     if (!task || task.assignee !== agent.id || task.status !== 'in_progress') return undefined;
     return `[muster] You were restarted. Continue ${task.id} ${task.title}; call read_inbox first.`;
@@ -305,6 +313,7 @@ export class AgentManager {
   }
 
   private firstPromptFor(agent: Agent): string | undefined {
+    if (agent.role === 'research') return `[muster] You are ${agent.id} (research). Call research_brief and start.`;
     if (agent.taskId) {
       const task = this.state.tasks.find((t) => t.id === agent.taskId);
       return `[muster] You are ${agent.id} (${agent.role}). Your task: ${agent.taskId} ${task?.title ?? ''}. Call read_inbox and claim/confirm it, then start.`;
@@ -426,6 +435,7 @@ export class AgentManager {
     agent.status = 'stopped';
     agent.pid = undefined;
     feedEvent(this.state, SYSTEM, `${id} exited (code ${exitCode})`);
+    if (agent.role === 'research') failRun(this.state, `${id} exited (code ${exitCode}) before finish_research`);
     this.o.store.commit();
   }
 
@@ -520,7 +530,7 @@ export class AgentManager {
     const { state } = this;
     const config = this.o.config();
     const active = new Set(['blocked', 'ready', 'in_progress', 'review']);
-    const registered = new Map(state.agents.filter((a) => a.role !== 'captain').map((a) => [gitOps.normalise(a.worktree), a]));
+    const registered = new Map(state.agents.filter((a) => !atRoot(a.role)).map((a) => [gitOps.normalise(a.worktree), a]));
     const removable = (a: Agent) =>
       // stopAll() keeps each agent's last status for resume, so "not running" is the test, not status.
       !this.runtimes.has(a.id) && !a.taskId && !state.tasks.some((t) => t.assignee === a.id && active.has(t.status));
@@ -569,6 +579,7 @@ export class AgentManager {
   /** Why a crew agent can't be closed yet, or null when it's finished: no open task, nothing uncommitted, nothing unmerged. */
   async unfinishedReason(agent: Agent): Promise<string | null> {
     if (agent.role === 'captain') return "the Captain can't be closed";
+    if (agent.role === 'research') return runningRun(this.state) ? 'its research run is still going (cancel it first)' : null;
     const config = this.o.config();
     const open = new Set(['blocked', 'ready', 'in_progress', 'review', 'ready_for_merge']);
     const task = agent.taskId ? this.state.tasks.find((t) => t.id === agent.taskId) : undefined;
@@ -593,8 +604,10 @@ export class AgentManager {
     const why = await this.unfinishedReason(agent);
     if (why) throw conflict(`${id} isn't finished: ${why}`);
     if (this.runtimes.has(id)) await this.stop(id, 'closed');
-    if (existsSync(agent.worktree)) await gitOps.removeWorktree(this.o.paths.root, agent.worktree);
-    await gitOps.git(this.o.paths.root, ['branch', '-d', agent.branch], true); // only succeeds when merged or empty
+    if (!atRoot(agent.role)) {
+      if (existsSync(agent.worktree)) await gitOps.removeWorktree(this.o.paths.root, agent.worktree);
+      await gitOps.git(this.o.paths.root, ['branch', '-d', agent.branch], true); // only succeeds when merged or empty
+    }
     state.agents = state.agents.filter((a) => a.id !== id);
     this.buffers.delete(id);
     this.humanInputAt.delete(id);
@@ -637,8 +650,9 @@ export class AgentManager {
   async setRole(id: string, role: Role, actor: string): Promise<Agent> {
     const { state } = this;
     const agent = requireAgent(state, id);
-    if (!['captain', 'crew', 'design'].includes(role)) throw badRequest(`Unknown role "${role}"`);
+    if (!ROLES.includes(role)) throw badRequest(`Unknown role "${role}"`);
     if (agent.role === role) return agent;
+    if (role === 'research' || agent.role === 'research') throw conflict('The research agent keeps its role; it is started by a research run');
     if (role === 'design' && state.agents.some((a) => a.role === 'design' && a.id !== id)) throw conflict('There is already a design crew agent');
     const config = this.o.config();
 
@@ -665,11 +679,47 @@ export class AgentManager {
     if (wasRunning) await this.start(agent.id);
   }
 
+  // ---------------------------------------------------------------- research agent
+
+  /**
+   * A research run started: start scout (the one research agent) at the repo root. A stopped scout is restarted
+   * with its session and told to read the new brief; a running one is told directly.
+   */
+  async startScout(): Promise<Agent> {
+    const existing = findAgent(this.state, SCOUT_ID) ?? this.state.agents.find((a) => a.role === 'research');
+    if (!existing) return this.create({ name: SCOUT_ID, role: 'research', actor: SYSTEM });
+    if (existing.role !== 'research') throw conflict(`An agent called "${SCOUT_ID}" already exists and isn't the research agent; rename or remove it first`);
+    existing.model = modelFor('research', this.o.config());
+    if (this.runtimes.has(existing.id)) {
+      const prompt = this.firstPromptFor(existing);
+      if (prompt) void this.type(existing.id, prompt).catch(() => {});
+      return existing;
+    }
+    return this.start(existing.id);
+  }
+
+  /** The run finished or was cancelled: stop scout, after `delayMs` (unless a new run started meanwhile). */
+  async stopScout(reason: string, delayMs = 0): Promise<void> {
+    const scout = this.state.agents.find((a) => a.role === 'research');
+    if (!scout || !this.runtimes.has(scout.id)) return;
+    if (delayMs > 0) {
+      setTimeout(() => {
+        if (!runningRun(this.state)) void this.stop(scout.id, reason).catch((e) => this.log(`${scout.id}: not stopped: ${errText(e)}`));
+      }, delayMs).unref();
+      return;
+    }
+    await this.stop(scout.id, reason);
+  }
+
+  get scoutStopDelayMs(): number {
+    return this.timings.scoutStopDelayMs;
+  }
+
   // ---------------------------------------------------------------- tasks and branches
 
   /** A crew worktree folder that vanished (deleted by hand, lost in a clean) is recreated on the agent's branch. */
   private async ensureWorktree(agent: Agent): Promise<void> {
-    if (agent.role === 'captain' || existsSync(agent.worktree)) return;
+    if (atRoot(agent.role) || existsSync(agent.worktree)) return;
     this.log(`${agent.id}: worktree ${agent.worktree} is missing; recreating it on ${agent.branch}`);
     agent.branch = await gitOps.addWorktree(this.o.paths.root, agent.worktree, agent.branch, this.o.config().baseBranch);
     feedEvent(this.state, SYSTEM, `recreated ${agent.id}'s worktree on ${agent.branch}`);
@@ -697,7 +747,7 @@ export class AgentManager {
    */
   async assertCanTakeBranch(agentId: string | undefined, task?: Task): Promise<void> {
     const agent = agentId ? findAgent(this.state, agentId) : undefined;
-    if (!agent || agent.role === 'captain' || !existsSync(agent.worktree)) return;
+    if (!agent || atRoot(agent.role) || !existsSync(agent.worktree)) return;
     if (await this.needsFreshBranch(agent, task)) await this.assertClean(agent);
   }
 

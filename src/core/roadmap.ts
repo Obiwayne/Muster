@@ -1,7 +1,7 @@
 // Roadmap: stages ("M1"…) → goals ("G1"…) → tasks. The Captain drafts it, you approve it, and the
 // orchestrator counts progress from the tasks and tells the Captain when goals finish.
 // Pure state mutations; the caller commits the store (and toasts/notifies, see the API layer).
-import type { ExitCriterion, GoalStatus, MusterState, Note, Roadmap, RoadmapGoal, RoadmapHealth, RoadmapProgress, RoadmapStage, StageStatus } from '../types.js';
+import type { ExitCriterion, GoalStatus, MusterState, Note, Roadmap, RoadmapGoal, ResearchIdea, RoadmapHealth, RoadmapProgress, RoadmapStage, StageStatus } from '../types.js';
 import { addFeed, addInbox, captainOf, closeNoteIfOpen, HUMAN, isCaptain, nowIso, postNote, SYSTEM } from './board.js';
 import { badRequest, conflict, forbidden, notFound } from './errors.js';
 import { nextId } from './store.js';
@@ -51,6 +51,7 @@ export interface GoalPatch {
   start?: string | null;
   due?: string | null;
   status?: GoalStatus;
+  ideaId?: string | null; // an approved research idea this edit delivers (e.g. widening an overlapping goal): no second approval
 }
 
 /** What a write did to the approval note, so the API can toast (and notify when a note was opened). */
@@ -165,7 +166,7 @@ function requestApproval(state: MusterState, actor: string): { note: Note; noteO
     return { note: open, noteOpened: false };
   }
   // Posted by the orchestrator with no taskId, so nothing treats it as a task's approval (Approve/Reject on the board).
-  const note = postNote(state, { actor: SYSTEM, type: 'approval', to: HUMAN, text });
+  const note = postNote(state, { actor: SYSTEM, type: 'approval', to: HUMAN, text, topic: 'roadmap' });
   r.noteId = note.id;
   return { note, noteOpened: true };
 }
@@ -365,6 +366,9 @@ export function approveRoadmap(state: MusterState, actor: string): Roadmap {
       ? `Roadmap approved. ${startText(stage, goal)}`
       : `Roadmap revision ${r.revision} approved. Carry on with ${stage.id} ${stage.title}${goal ? `, goal ${goal.id} ${goal.title} (post_task with goal: ${goal.id})` : ''}.`;
   tellCaptain(state, actor, text);
+  const loose = unlinkedTasks(state);
+  if (loose.length)
+    tellCaptain(state, actor, `${loose.length} task${loose.length === 1 ? ' is' : 's are'} not on the roadmap yet (${loose.slice(0, 12).join(', ')}${loose.length > 12 ? '…' : ''}). Link done and running work to the goals it delivers with link_tasks so progress is right, and tick any exit criteria it already meets.`);
   return r;
 }
 
@@ -466,8 +470,11 @@ export function completeStage(state: MusterState, stageId: string, actor: string
 
 // ------------------------------------------------------------------ goals
 
-/** POST /api/roadmap/goals: a new planned goal at the end of the stage. Counts as a replan. */
-export function addGoal(state: MusterState, input: GoalInput & { stageId: string }, actor: string): RoadmapChange & { goal: RoadmapGoal } {
+/**
+ * POST /api/roadmap/goals: a new planned goal at the end of the stage. Counts as a replan, except for the goal
+ * of an approved research idea (`ideaId`): approving the idea was the approval, so an approved roadmap stays approved.
+ */
+export function addGoal(state: MusterState, input: GoalInput & { stageId: string; ideaId?: string | null }, actor: string): RoadmapChange & { goal: RoadmapGoal } {
   requireCaptainOrYou(state, actor, 'change the roadmap');
   const r = requireRoadmap(state);
   if (!input || typeof input.stageId !== 'string') throw badRequest('Missing stageId');
@@ -478,12 +485,32 @@ export function addGoal(state: MusterState, input: GoalInput & { stageId: string
   const due = checkDate(input.due, 'due');
   checkRange(start, due, 'Goal');
   if (stage.goalIds.length >= MAX_GOALS_PER_STAGE) throw badRequest(`${stage.id} already has ${MAX_GOALS_PER_STAGE} goals`);
+  const idea = input.ideaId === undefined || input.ideaId === null || input.ideaId === '' ? undefined : ideaForGoal(state, input.ideaId);
   const before = planKey(r);
   const goal: RoadmapGoal = { id: nextId(state, 'goal'), stageId: stage.id, title, description, status: 'planned', ...(start ? { start } : {}), ...(due ? { due } : {}) };
   r.goals.push(goal);
   stage.goalIds.push(goal.id);
   addFeed(state, { kind: 'event', from: actor, text: `added goal ${goal.id} ${goal.title} to ${stage.id} ${stage.title}` });
+  if (idea) {
+    idea.goalId = goal.id;
+    addFeed(state, { kind: 'event', from: actor, text: `added ${goal.id} for idea ${idea.id}` });
+    if (r.status === 'approved') {
+      r.updatedAt = nowIso();
+      return { roadmap: r, goal };
+    }
+  }
   return { ...afterEdit(state, before, actor), goal };
+}
+
+/** The idea a new goal is for: 404 unknown, 409 unless approved and still without a goal. */
+function ideaForGoal(state: MusterState, ideaId: unknown): ResearchIdea {
+  if (typeof ideaId !== 'string' || !ideaId.trim()) throw badRequest('ideaId must be an idea id like "R7"');
+  const id = ideaId.trim().toUpperCase();
+  const idea = state.research?.ideas.find((i) => i.id === id);
+  if (!idea) throw notFound(`No idea "${ideaId}"`);
+  if (idea.status !== 'approved') throw conflict(`${idea.id} ${idea.title} is ${idea.status === 'new' ? 'not approved yet' : 'rejected'}; only an approved idea goes onto the roadmap`);
+  if (idea.goalId) throw conflict(`${idea.id} ${idea.title} is already on the roadmap as ${idea.goalId}`);
+  return idea;
 }
 
 /** PATCH /api/roadmap/goals/:id. Done/cancelled by hand moves the stage on the same way a finished goal does. */
@@ -498,6 +525,7 @@ export function patchGoal(state: MusterState, id: string, patch: GoalPatch, acto
   const due = 'due' in p ? checkDate(p.due, `${goal.id} due`) : goal.due;
   checkRange(start, due, goal.id);
   if (p.status !== undefined && !GOAL_STATUSES.includes(p.status)) throw badRequest(`status must be one of ${GOAL_STATUSES.join(', ')}`);
+  const idea = p.ideaId === undefined || p.ideaId === null || p.ideaId === '' ? undefined : ideaForGoal(state, p.ideaId);
   const before = planKey(r);
   goal.title = title;
   goal.description = description;
@@ -517,6 +545,14 @@ export function patchGoal(state: MusterState, id: string, patch: GoalPatch, acto
     }
     if (p.status === 'active' || p.status === 'planned') addFeed(state, { kind: 'event', from: actor, text: `set ${goal.id} ${goal.title} to ${p.status}` });
   }
+  if (idea) {
+    idea.goalId = goal.id;
+    addFeed(state, { kind: 'event', from: actor, text: `updated ${goal.id} for idea ${idea.id}` });
+    if (r.status === 'approved') {
+      r.updatedAt = nowIso();
+      return { roadmap: r, goal };
+    }
+  }
   return { ...afterEdit(state, before, actor), goal };
 }
 
@@ -526,6 +562,58 @@ export function goalForTask(state: MusterState, goalId: unknown): RoadmapGoal {
   const goal = requireGoal(state, goalId);
   if (goal.status === 'cancelled') throw conflict(`${goal.id} ${goal.title} is cancelled; post the task to another goal`);
   return goal;
+}
+
+/**
+ * POST /api/roadmap/goals/:id/tasks: put existing tasks on a goal (or take them off with `unlink`), e.g. work that
+ * merged before the roadmap existed. Captain or you. A planned goal that gets an unmerged task becomes active;
+ * a goal whose linked tasks are all merged finishes on the next advance. Not a replan: no approval needed.
+ */
+export function linkTasks(state: MusterState, goalId: string, taskIds: unknown, actor: string, unlink = false): { goal: RoadmapGoal; linked: string[] } {
+  requireCaptainOrYou(state, actor, 'link tasks to roadmap goals');
+  const goal = requireGoal(state, goalId);
+  if (!unlink && goal.status === 'cancelled') throw conflict(`${goal.id} ${goal.title} is cancelled`);
+  if (!Array.isArray(taskIds) || !taskIds.length || taskIds.some((t) => typeof t !== 'string')) throw badRequest('taskIds must be a list of task ids like ["T3", "T4"]');
+  const tasks = taskIds.map((raw) => {
+    const id = String(raw).trim().toUpperCase();
+    const t = state.tasks.find((x) => x.id === id);
+    if (!t) throw notFound(`No task "${raw}"`);
+    return t;
+  });
+  for (const t of tasks) {
+    if (unlink) {
+      if (t.goalId === goal.id) delete t.goalId;
+    } else t.goalId = goal.id;
+  }
+  if (!unlink && goal.status === 'planned' && tasks.some((t) => t.status !== 'merged' && t.status !== 'cancelled')) activateGoal(goal);
+  const ids = tasks.map((t) => t.id);
+  addFeed(state, { kind: 'event', from: actor, text: `${unlink ? 'took' : 'put'} ${ids.join(', ')} ${unlink ? 'off' : 'on'} ${goal.id} ${goal.title}` });
+  state.roadmap!.updatedAt = nowIso();
+  finishLinkedGoals(state);
+  advanceRoadmap(state);
+  return { goal, linked: ids };
+}
+
+/** A goal (any status but cancelled/done) whose linked tasks are all merged is finished: linked old work counts. */
+function finishLinkedGoals(state: MusterState): void {
+  for (const g of state.roadmap?.goals ?? []) {
+    if (g.status !== 'planned') continue;
+    const tasks = state.tasks.filter((t) => t.goalId === g.id && t.status !== 'cancelled');
+    if (tasks.length && tasks.every((t) => t.status === 'merged')) activateGoal(g); // advanceRoadmap then marks it done
+  }
+}
+
+/** Live tasks with no goal while the roadmap is approved: the Captain should put them on it. */
+export function unlinkedTasks(state: MusterState): string[] {
+  if (state.roadmap?.status !== 'approved') return [];
+  return state.tasks.filter((t) => !t.goalId && t.status !== 'cancelled').map((t) => t.id);
+}
+
+/** Called when a task merges: if it has no goal on an approved roadmap, ask the Captain to place it. */
+export function remindUnlinked(state: MusterState, taskId: string): void {
+  const t = state.tasks.find((x) => x.id === taskId);
+  if (!t || t.goalId || state.roadmap?.status !== 'approved') return;
+  tellCaptain(state, SYSTEM, `${t.id} ${t.title} merged without a roadmap goal. Put it on the goal it delivers (link_tasks), and update the roadmap if it changes the plan.`);
 }
 
 /** Feed event, next planned goal of the stage → active, and the Captain hears what to do next. */
@@ -592,31 +680,46 @@ export function computeProgress(state: MusterState, today: string): RoadmapProgr
     const tasks = state.tasks.filter((t) => t.goalId === g.id && t.status !== 'cancelled');
     const done = tasks.filter((t) => t.status === 'merged').length;
     const agents = [...new Set(tasks.filter((t) => t.status !== 'merged' && t.assignee).map((t) => t.assignee!))];
-    goals[g.id] = { done, total: tasks.length, percent: pct(done, tasks.length), agents };
+    const percent = tasks.length ? pct(done, tasks.length) : g.status === 'done' ? 100 : 0;
+    goals[g.id] = { done, total: tasks.length, percent, agents };
   }
   const stages: RoadmapProgress['stages'] = {};
   let allDone = 0;
   let allTotal = 0;
+  let weighted = 0;
+  let weights = 0;
   for (const s of r.stages) {
     let done = 0;
     let total = 0;
-    for (const g of goalsOf(r, s)) {
-      if (g.status === 'cancelled') continue;
+    const live = goalsOf(r, s).filter((g) => g.status !== 'cancelled');
+    for (const g of live) {
       done += goals[g.id].done;
       total += goals[g.id].total;
     }
     allDone += done;
     allTotal += total;
-    const percent = pct(done, total);
-    stages[s.id] = { done, total, percent, health: stageHealth(s, percent, now), criteriaDone: s.exitCriteria.filter((c) => c.done).length, criteriaTotal: s.exitCriteria.length };
+    const criteriaDone = s.exitCriteria.filter((c) => c.done).length;
+    const criteriaTotal = s.exitCriteria.length;
+    // Work done before the roadmap (or never linked to a goal) still shows: fall back to criteria, then goals.
+    let basis: 'done' | 'tasks' | 'criteria' | 'goals';
+    let percent: number;
+    if (s.status === 'done') [basis, percent] = ['done', 100];
+    else if (total) [basis, percent] = ['tasks', pct(done, total)];
+    else if (criteriaTotal) [basis, percent] = ['criteria', pct(criteriaDone, criteriaTotal)];
+    else [basis, percent] = ['goals', live.length ? Math.round(live.reduce((a, g) => a + goals[g.id].percent, 0) / live.length) : 0];
+    stages[s.id] = { done, total, percent, health: stageHealth(s, percent, now), criteriaDone, criteriaTotal, basis };
+    const w = Math.max(1, live.length);
+    weighted += percent * w;
+    weights += w;
   }
+  const unlinked = state.tasks.filter((t) => !t.goalId && t.status !== 'cancelled').length;
   const open = r.stages.filter((s) => s.status !== 'done').map((s) => stages[s.id].health);
   const health: RoadmapHealth = open.length ? open.reduce((a, b) => (HEALTH_RANK[b] > HEALTH_RANK[a] ? b : a)) : 'done';
   const current = r.stages.find((s) => s.status !== 'done');
   const currentGoal = current ? goalsOf(r, current).find((g) => g.status === 'active') : undefined;
   const launch = r.launchDate ? dayNumber(r.launchDate) : undefined;
   return {
-    overall: { done: allDone, total: allTotal, percent: pct(allDone, allTotal) },
+    overall: { done: allDone, total: allTotal, percent: weights ? Math.round(weighted / weights) : 0, unlinked },
     health,
     ...(launch !== undefined ? { daysToLaunch: launch - now } : {}),
     ...(current ? { currentStageId: current.id } : {}),

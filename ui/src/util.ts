@@ -20,6 +20,7 @@ export function roleOf(state: MusterState, who: string): Role | 'you' | 'muster'
   if (a) return a.role;
   if (who === 'captain') return 'captain';
   if (who === 'muster') return 'muster';
+  if (who === 'scout') return 'research';
   return who.startsWith('design') ? 'design' : 'crew';
 }
 

@@ -8,10 +8,12 @@ import type { Page } from '../page';
 import { ApiError, api, type RoadmapResponse } from '../api';
 import { approveRoadmap, askCaptain, run, sendBackRoadmap } from '../actions';
 import { ageShort, displayName, hhmm, idNum, roleOf, stationRole, taskIsStuck } from '../util';
+import { newCount, updatedLine } from '../research';
+import { createResearchModal } from './research';
 import {
   DAY, HEALTH, average, barSpan, currentStageId, frac, labelStep, launchText, localDay, mergedPerDay, nextStage, parseDay,
   recentlyLanded, shortDate, shortDay, spanStyle, stageById, stageFeed, stageGoals, stageOfTask, stageWeights, stationWord,
-  timelineScale, todayFrac, columnIndex, columnStarts, type Scale, type Span,
+  timelineScale, todayFrac, stageCount, stageBasis, goalCount, overallText, columnIndex, columnStarts, type Scale, type Span,
 } from '../roadmap';
 
 type View = 'timeline' | 'stages';
@@ -51,6 +53,7 @@ export function createRoadmap(): Page {
   try { if (localStorage.getItem(VIEW_KEY) === 'stages') view = 'stages'; } catch { /* ignore */ }
   const stageOpen = new Map<string, boolean>(); // timeline: stage expanded (overrides "current stage is open")
   const goalOpen = new Map<string, boolean>(); // detail: goal group expanded (overrides "current goal is open")
+  const researchModal = createResearchModal(); // opened straight from here while there is no research yet
 
   const subbar = h('div.rm-sub');
   const banner = h('div.rm-banner-host');
@@ -156,9 +159,13 @@ export function createRoadmap(): Page {
       class: view === v && 'on',
       onclick: () => { view = v; try { localStorage.setItem(VIEW_KEY, v); } catch { /* ignore */ } render(); },
     }, label);
-    const n = rm.stages.length;
+    const captains = new Set(['captain', ...state.agents.filter((a) => a.role === 'captain').map((a) => a.id)]);
+    const summary = [rm.title, rm.launchDate ? `launch ${shortDate(rm.launchDate)}` : '', updatedLine(state.feed, rm, captains)].filter(Boolean).join(' · ');
     setChildren(subbar,
-      h('div.rm-sub-text', { title: rm.summary }, [rm.title, `${n} ${n === 1 ? 'stage' : 'stages'}`, rm.launchDate ? `launch target ${shortDate(rm.launchDate)}` : ''].filter(Boolean).join(' · ')),
+      h('div.rm-sub-text', { title: rm.summary ? `${summary}
+
+${rm.summary}` : summary }, summary),
+      researchButton(state),
       h('div.rm-toggle', null, toggleBtn('timeline', 'Timeline'), toggleBtn('stages', 'Stages')),
       h('button.btn.sm', { onclick: () => void replan() }, 'Ask Captain to replan'),
       h('button.btn.sm.primary', { onclick: () => void newStage() }, 'New stage'));
@@ -171,18 +178,29 @@ export function createRoadmap(): Page {
       h('div.rm-panels', null, landedPanel(state, rm, cur), velocityPanel(state, today), upNextPanel(rm, pg, cur)));
   }
 
+  /** Blue Research button with the count of new ideas: the research page, or the New research modal when there is none yet. */
+  function researchButton(state: MusterState): HTMLElement {
+    const r = state.research;
+    const n = newCount(r);
+    const none = !r || (!r.runs.length && !r.ideas.length);
+    return h('button.rs-btn', {
+      title: none ? 'Start research: scout reads similar apps, reviews and forums for ideas' : n ? `${n} new ${n === 1 ? 'idea' : 'ideas'} from scout` : 'Research ideas from scout',
+      onclick: () => { if (none) researchModal.open(r ?? null); else go('#/roadmap/research'); },
+    }, icon('search-plus', 14), h('span', null, 'Research'), n ? h('span.rs-btn-n', null, `${n} new`) : null);
+  }
+
   function summaryStrip(rm: Roadmap, pg: RoadmapProgress, cur?: string): HTMLElement {
     const weights = stageWeights(rm, pg.stages);
     const sp = (id: string) => pg.stages[id] ?? NO_STAGE;
     return h('div.rm-summary', null,
       h('div.rm-overall', null,
         h('div.section-label', null, 'OVERALL'),
-        h('div.rm-overall-row', null, h('div.rm-big', null, `${pg.overall.percent}%`), h('div.rm-of', null, `${pg.overall.done} / ${pg.overall.total} tasks`))),
+        h('div.rm-overall-row', null, h('div.rm-big', null, `${pg.overall.percent}%`), h('div.rm-of', { title: pg.overall.unlinked ? 'Tasks with no goal are left out of the counts; the Captain links them with link_tasks' : undefined }, overallText(pg.overall)))),
       h('div.rm-segs', null,
         h('div.rm-segbar', null, rm.stages.map((s, i) => {
           const p = sp(s.id);
           const isCur = s.id === cur;
-          return h('div.rm-segbar-s', { class: [s.status === 'done' && 'done'], style: { flex: weights[i] }, title: `${s.id} ${s.title} · ${p.done}/${p.total}` },
+          return h('div.rm-segbar-s', { class: [s.status === 'done' && 'done'], style: { flex: weights[i] }, title: `${s.id} ${s.title} · ${p.percent}% · ${stageBasis(p)}` },
             s.status !== 'done' && p.percent > 0 ? h('div.fill', { class: !isCur && 'muted', style: { width: pct(p.percent) } }) : null);
         })),
         h('div.rm-seglabels', null, rm.stages.map((s, i) => {
@@ -266,7 +284,7 @@ export function createRoadmap(): Page {
         stageIcon(s, isCur, isLaunch),
         h('span.rm-id', { style: { color: isCur ? 'var(--color-crew)' : undefined } }, s.id),
         h('span.rm-title', null, s.title),
-        h('span.rm-count', null, `${p.done}/${p.total}`)),
+        h('span.rm-count', { title: stageBasis(p) }, stageCount(p))),
       h('div.rm-trk', null, track));
   }
 
@@ -295,7 +313,7 @@ export function createRoadmap(): Page {
     h('div.rm-lab.rm-goal-lab', null, dot,
       h('span.rm-title', { class: g.status === 'active' ? 'on' : g.status === 'cancelled' ? 'struck' : '' }, g.title),
       isCurGoal ? h('span.rm-tag', null, 'GOAL') : null,
-      h('span.rm-count', { class: g.status === 'active' && 'on' }, `${p.done}/${p.total}`)),
+      h('span.rm-count', { class: g.status === 'active' && 'on' }, goalCount(p, g.status))),
     h('div.rm-trk', null, track));
   }
 
@@ -311,13 +329,13 @@ export function createRoadmap(): Page {
         s.description ? h('div.rm-card-desc', null, s.description) : null,
         h('div.rm-prog', null, h('div.fill', { class: s.status === 'done' && 'done', style: { width: pct(s.status === 'done' ? 100 : p.percent) } })),
         h('div.rm-card-meta', null,
-          h('span', null, `${p.done}/${p.total} tasks`),
+          h('span', null, p.total ? `${p.done}/${p.total} tasks` : `${p.percent}%`),
           h('span', null, s.start || s.due ? `${shortDate(s.start) || '…'} – ${shortDate(s.due) || '…'}` : 'no dates'),
           p.criteriaTotal ? h('span', null, `${p.criteriaDone}/${p.criteriaTotal} criteria`) : null),
         h('div.rm-card-goals', null, stageGoals(rm, s.id).map((g) => {
           const gp = pg.goals[g.id] ?? NO_GOAL;
           return h('div.rm-li', null, h(g.status === 'done' ? 'span.rm-gdot.done' : g.status === 'active' ? 'span.rm-gdot.active' : 'span.rm-gdot'),
-            h('span.flex1.ellipsis', { class: g.status !== 'active' && 'muted' }, g.title), h('span.rm-mono-faint', null, `${gp.done}/${gp.total}`));
+            h('span.flex1.ellipsis', { class: g.status !== 'active' && 'muted' }, g.title), h('span.rm-mono-faint', null, goalCount(gp, g.status)));
         })));
     }));
   }
@@ -415,7 +433,7 @@ export function createRoadmap(): Page {
           h('div.rm-dtitle-row', null, h('h1.rm-dtitle', null, s.title), statusPill(s, isCur)),
           s.description ? h('div.rm-ddesc', null, s.description) : null),
         h('div.rm-stats', null,
-          stat('TASKS', `${p.done} / ${p.total}`),
+          stat(p.total ? 'TASKS' : 'PROGRESS', p.total ? `${p.done} / ${p.total}` : `${p.percent}%`),
           stat('WINDOW', s.start || s.due ? `${shortDate(s.start) || '…'} – ${shortDate(s.due) || '…'}` : '—'),
           stat('CREW ON IT', String(crew.size)))),
       goals.length ? null : h('div.rm-goal.rm-goal-empty', null, 'No goals in this stage yet. Use Add goal to ask the Captain for one.'),
@@ -430,7 +448,7 @@ export function createRoadmap(): Page {
     const p = pg.goals[g.id] ?? NO_GOAL;
     const toggle = () => { goalOpen.set(g.id, !open); render(); };
     const bar = h('div.rm-gprog', null, h('div.fill', { class: g.status === 'done' && 'done', style: { width: pct(p.percent) } }));
-    const count = h('div.rm-gcount', { class: open && 'on' }, `${p.done}/${p.total}`);
+    const count = h('div.rm-gcount', { class: open && 'on' }, goalCount(p, g.status));
     if (!open) {
       const active = goals.find((x) => x.status === 'active');
       const word = g.status === 'done' ? `done${g.completedAt ? ` ${shortDate(g.completedAt)}` : ''}`

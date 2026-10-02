@@ -7,6 +7,7 @@ import { api, type ProjectInfo } from '../api';
 import { errToast, openGithubBackup } from '../actions';
 import { stationRole } from '../util';
 import { showStationEditor } from '../stationeditor';
+import { weeklyStatus } from '../usagealert';
 
 const MODELS = [
   { value: 'opus', label: 'Opus' },
@@ -214,7 +215,14 @@ export function createSettings(): Page {
         toggle(c.githubOffer !== 'never', (v) => save({ githubOffer: v ? 'ask' : 'never' }))));
   }
 
+  let usageKey = ''; // the weekly alert state shown under "Weekly alerts"
+  const usageOf = (s: Snapshot | null) => {
+    const u = s?.state.usage;
+    return { weeklyRemindAt: u?.weeklyRemindAt, weeklySnoozedUntil: u?.weeklySnoozedUntil };
+  };
+
   function render(c: MusterConfig): void {
+    const weeklyOn = c.weeklyAlerts !== false;
     setChildren(body,
       h('div', { style: 'display:flex;flex-direction:column;gap:4px' },
         h('div.settings-title', null, 'Settings'),
@@ -249,8 +257,10 @@ export function createSettings(): Page {
           panel('Usage guard · Max 5x',
             row('Pause new work at', '5-hour window. No spawning or assigning until it resets',
               ctl(pctInput(c.pauseAtFiveHourPct, (v) => save({ pauseAtFiveHourPct: v })), 120)),
-            row('Warn me at', 'Weekly window',
-              ctl(pctInput(c.warnAtWeeklyPct, (v) => save({ warnAtWeeklyPct: v })), 120))),
+            row('Weekly alerts', weeklyStatus(usageOf(events.snapshot), c),
+              toggle(weeklyOn, (v) => save({ weeklyAlerts: v }))),
+            row('Weekly alert at', weeklyOn ? 'One note on the board when the weekly window reaches this' : 'Turn weekly alerts on to use it',
+              h('div.ctl', { style: { width: '120px', opacity: weeklyOn ? '' : '.5' } }, pctInput(c.warnAtWeeklyPct, (v) => save({ warnAtWeeklyPct: v }))))),
           githubPanel(c),
           h('div.panel', null,
             h('div.panel-head', null, h('div.section-label', null, 'Factory line and review'),
@@ -269,10 +279,12 @@ export function createSettings(): Page {
     el,
     update(s: Snapshot) {
       const json = JSON.stringify(s.config);
-      if (json === lastJson) return;
+      const uk = JSON.stringify(usageOf(s));
+      if (json === lastJson && uk === usageKey) return;
       // don't rebuild under the user's cursor
       if (cfg && body.contains(document.activeElement) && document.activeElement !== document.body && (document.activeElement as HTMLElement).tagName === 'INPUT') return;
       lastJson = json;
+      usageKey = uk;
       cfg = s.config;
       render(s.config);
       void loadRoles();

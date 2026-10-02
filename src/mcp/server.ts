@@ -6,7 +6,7 @@ import { z } from 'zod';
 import { musterFetch } from '../client.js';
 import { formatEvidence } from '../core/evidence.js';
 import { formatGuideline } from '../core/stations.js';
-import type { Agent, Evidence, FeedItem, InboxItem, MusterState, Note, Role, Roadmap, RoadmapProgress, StationDef, Task } from '../types.js';
+import type { Agent, Evidence, FeedItem, InboxItem, MusterState, Note, ResearchIdea, ResearchRun, ResearchState, Role, Roadmap, RoadmapProgress, StationDef, Task } from '../types.js';
 import {
   BOARD_FILTERS,
   boardQuery,
@@ -14,6 +14,9 @@ import {
   formatAgents,
   formatBoard,
   formatDiff,
+  formatIdeaDetail,
+  formatIdeaLine,
+  formatIdeas,
   formatInbox,
   formatNoteLine,
   formatRoadmap,
@@ -59,12 +62,24 @@ export const CAPTAIN_TOOLS = [
   'spawn_crew', 'post_task', 'assign', 'list_agents', 'list_tasks', 'read_board', 'reply', 'message',
   'read_inbox', 'read_output', 'get_diff', 'run_tests', 'request_review', 'merge_task', 'send_back', 'cancel_task', 'close_crew', 'escalate',
   'add_evidence', 'get_evidence',
-  'roadmap', 'set_roadmap', 'update_stage', 'check_criterion', 'complete_stage', 'add_goal', 'update_goal',
+  'roadmap', 'set_roadmap', 'update_stage', 'check_criterion', 'complete_stage', 'add_goal', 'update_goal', 'link_tasks',
+  'list_ideas', 'get_idea', 'advise_idea',
 ] as const;
 export const CREW_TOOLS = [
   'claim_task', 'list_agents', 'list_tasks', 'post_note', 'read_board', 'reply', 'ask_captain',
   'message_crew', 'handoff', 'report_done', 'read_inbox', 'add_evidence',
 ] as const;
+/** The research agent (scout): reads public pages and posts ideas; no board, task or code tools. */
+export const RESEARCH_TOOLS = ['research_brief', 'add_idea', 'finish_research', 'read_inbox'] as const;
+
+const IDEA_STATUSES = ['new', 'approved', 'rejected'] as const;
+const evidenceShape = z.object({
+  kind: z.enum(['review', 'forum', 'competitor', 'app', 'web']),
+  source: z.string().min(1).max(160).describe('Where it came from, e.g. "App Store review · Padlet · 2★", "r/Teachers · 412 upvotes", "Wakelet public roadmap"'),
+  text: z.string().max(300).optional().describe('A short quote or finding, at most 300 characters'),
+  url: z.string().optional().describe('Link to the page'),
+  count: z.number().int().min(1).optional().describe('How many similar reports you saw ("+37 similar")'),
+});
 
 export function createMusterServer(opts: MusterServerOptions): McpServer {
   const { role, agentId: me } = opts;
@@ -79,7 +94,9 @@ export function createMusterServer(opts: MusterServerOptions): McpServer {
       instructions:
         role === 'captain'
           ? `You are ${me}, the Muster Captain. Check read_board first every turn. Never write code; merge only tasks the user approved, with merge_task.`
-          : `You are ${me}, Muster ${role === 'design' ? 'design crew' : 'crew'}. Work only in your worktree; ask crew before the Captain.`,
+          : role === 'research'
+            ? `You are ${me}, the Muster research agent. Start with research_brief; post each idea with add_idea; end with finish_research. Public pages only; never change code.`
+            : `You are ${me}, Muster ${role === 'design' ? 'design crew' : 'crew'}. Work only in your worktree; ask crew before the Captain.`,
     },
   );
 
@@ -113,7 +130,18 @@ export function createMusterServer(opts: MusterServerOptions): McpServer {
     return task;
   };
 
-  // ---- shared tools ----------------------------------------------------------
+  tool('read_inbox', 'Read and clear your unread inbox: replies, messages, assignments, hand-offs. Call it whenever a [muster] line appears.', {}, async () => {
+    const items = await api<InboxItem[]>(`/api/inbox/${enc(me)}?unread=1`);
+    if (items.length) await api(`/api/inbox/${enc(me)}/read`, { method: 'POST', body: { ids: items.map((i) => i.id) } });
+    return formatInbox(items, now());
+  });
+
+  if (role === 'research') {
+    registerResearch();
+    return server;
+  }
+
+  // ---- shared tools (captain, crew, design) ---------------------------------------
 
   tool('list_agents', 'List every agent: role, status, branch and held task.', {}, async () => {
     const state = await getState();
@@ -140,12 +168,6 @@ export function createMusterServer(opts: MusterServerOptions): McpServer {
       return `Replied on ${n.id}${n.open ? '' : ' (closed)'}. Delivered to ${n.from}.`;
     },
   );
-
-  tool('read_inbox', 'Read and clear your unread inbox: replies, messages, assignments, hand-offs. Call it whenever a [muster] line appears.', {}, async () => {
-    const items = await api<InboxItem[]>(`/api/inbox/${enc(me)}?unread=1`);
-    if (items.length) await api(`/api/inbox/${enc(me)}/read`, { method: 'POST', body: { ids: items.map((i) => i.id) } });
-    return formatInbox(items, now());
-  });
 
   tool(
     'add_evidence',
@@ -446,19 +468,29 @@ ${r.output}`;
 
     tool(
       'add_goal',
-      "Add a goal at the end of a stage, e.g. a goal the user gave that isn't on the roadmap yet. It is a plan change: an approved roadmap goes back to the user for approval.",
-      { stage: z.string().describe('Stage id, e.g. M2'), title: z.string().min(1).max(120), description: z.string().min(1), start: day.optional(), due: day.optional() },
-      async ({ stage, title, description, start, due }) => {
+      "Add a goal at the end of a stage, e.g. a goal the user gave that isn't on the roadmap yet. It is a plan change: an approved roadmap goes back to the user for approval. idea = the approved research idea (R7) this goal delivers: that change is already approved, so the roadmap stays approved.",
+      {
+        stage: z.string().describe('Stage id, e.g. M2'),
+        title: z.string().min(1).max(120),
+        description: z.string().min(1),
+        start: day.optional(),
+        due: day.optional(),
+        idea: z.string().optional().describe('Approved research idea id, e.g. R7'),
+      },
+      async ({ stage, title, description, start, due, idea }) => {
         const id = upId(stage);
-        const v = await api<RoadmapView>('/api/roadmap/goals', { method: 'POST', body: { actor: me, stageId: id, title, description, start, due } });
+        const ideaId = idea?.trim() ? upId(idea) : undefined;
+        const body: Record<string, unknown> = { actor: me, stageId: id, title, description, start, due };
+        if (ideaId) body.ideaId = ideaId;
+        const v = await api<RoadmapView>('/api/roadmap/goals', { method: 'POST', body });
         const g = v?.roadmap?.goals.filter((x) => x.stageId === id && x.title === title).at(-1);
-        return `Added ${g ? `${g.id} ` : 'goal '}${clip(title, 60)} to ${id}.${draftNote(v?.roadmap)}`;
+        return `Added ${g ? `${g.id} ` : 'goal '}${clip(title, 60)} to ${id}${ideaId ? ` for idea ${ideaId}` : ''}.${draftNote(v?.roadmap)}`;
       },
     );
 
     tool(
       'update_goal',
-      'Edit one goal: title, description, dates or status (planned, active, done, cancelled). Goals normally finish on their own when all their tasks are merged.',
+      'Edit one goal: title, description, dates or status (planned, active, done, cancelled). Goals normally finish on their own when all their tasks are merged. idea = the approved research idea this edit delivers (e.g. widening an overlapping goal): it links the idea to the goal, no second approval.',
       {
         goal: z.string().describe('Goal id, e.g. G3'),
         title: z.string().min(1).max(120).optional(),
@@ -466,12 +498,119 @@ ${r.output}`;
         status: z.enum(['planned', 'active', 'done', 'cancelled']).optional(),
         start: day.optional(),
         due: day.optional(),
+        idea: z.string().optional().describe('Approved research idea id, e.g. R7'),
       },
-      async ({ goal, ...patch }) => {
+      async ({ goal, idea, ...patch }) => {
         const id = upId(goal);
-        const v = await api<RoadmapView>(`/api/roadmap/goals/${enc(id)}`, { method: 'PATCH', body: { actor: me, ...patch } });
+        const body = { actor: me, ...patch, ...(idea ? { ideaId: upId(idea) } : {}) };
+        const v = await api<RoadmapView>(`/api/roadmap/goals/${enc(id)}`, { method: 'PATCH', body });
         const g = v?.roadmap?.goals.find((x) => x.id === id);
-        return `Updated ${id}${g ? ` ${clip(g.title, 60)} [${g.status}]` : ''}.${draftNote(v?.roadmap)}`;
+        return `Updated ${id}${g ? ` ${clip(g.title, 60)} [${g.status}]` : ''}${idea ? ` for idea ${upId(idea)}` : ''}.${draftNote(v?.roadmap)}`;
+      },
+    );
+
+    tool(
+      'link_tasks',
+      'Put existing tasks on the goal they deliver (or take them off with unlink: true), e.g. work merged before the roadmap existed or a task posted without a goal. Progress is counted from linked tasks; a goal whose linked tasks are all merged finishes. No approval needed.',
+      { goal: z.string().describe('Goal id, e.g. G3'), tasks: z.array(z.string()).min(1).describe('Task ids, e.g. ["T21", "T26"]'), unlink: z.boolean().optional() },
+      async ({ goal, tasks, unlink }) => {
+        const id = upId(goal);
+        const v = await api<RoadmapView & { linked?: string[] }>(`/api/roadmap/goals/${enc(id)}/tasks`, { method: 'POST', body: { actor: me, taskIds: tasks.map(upId), unlink: unlink === true } });
+        const g = v?.roadmap?.goals.find((x) => x.id === id);
+        const p = v?.progress?.goals[id];
+        const ids = (v?.linked ?? tasks.map(upId)).join(', ');
+        return `${unlink ? 'Took' : 'Put'} ${ids} ${unlink ? 'off' : 'on'} ${id}${g ? ` ${clip(g.title, 60)} [${g.status}]` : ''}${p ? ` · ${p.done}/${p.total} merged` : ''}.`;
+      },
+    );
+
+    // ---- research ideas ----
+
+    tool(
+      'list_ideas',
+      "List the research ideas scout found: status, impact, effort, the stage it fits, and whether a question from the user waits for your advice. status = new, approved or rejected (default: all).",
+      { status: z.enum(IDEA_STATUSES).optional() },
+      async ({ status }) => {
+        const ideas = (await getResearch()).ideas;
+        return formatIdeas(status ? ideas.filter((i) => i.status === status) : ideas);
+      },
+    );
+
+    tool(
+      'get_idea',
+      'Read one research idea in full: summary, evidence (quotes and links), the thread with the user, and your plan for it.',
+      { idea: z.string().describe('Idea id, e.g. R7') },
+      async ({ idea }) => formatIdeaDetail(await findIdea(idea), now()),
+    );
+
+    tool(
+      'advise_idea',
+      'Answer the user about a research idea: honest cost, where it fits on the roadmap, what it moves. plan = the roadmap changes you will make if they approve, one per item, e.g. ["+ Add goal Moderation queue to M3 (Oct 13-17)", "~ Move M3 due Oct 17 -> 20"].',
+      { idea: z.string().describe('Idea id, e.g. R7'), text: z.string().min(1), plan: z.array(z.string().min(1)).optional() },
+      async ({ idea, text, plan }) => {
+        const body: Record<string, unknown> = { actor: me, text };
+        if (plan) body.plan = plan;
+        const i = await api<ResearchIdea>(`/api/research/ideas/${enc(upId(idea))}/advice`, { method: 'POST', body });
+        return `Advised on ${i?.id ?? upId(idea)}${i?.title ? ` ${clip(i.title, 60)}` : ''}${plan?.length ? ` with a ${plan.length}-step plan` : ''}. The user sees it on the Research page.`;
+      },
+    );
+  }
+
+  async function getResearch(): Promise<ResearchState> {
+    const r = await api<ResearchState | null>('/api/research');
+    return { runs: r?.runs ?? [], ideas: r?.ideas ?? [] };
+  }
+
+  async function findIdea(id: string): Promise<ResearchIdea> {
+    const want = upId(id);
+    const i = (await getResearch()).ideas.find((x) => x.id.toUpperCase() === want);
+    if (!i) throw new Error(`No idea ${id}. list_ideas shows them.`);
+    return i;
+  }
+
+  // ---- research (scout) ---------------------------------------------------------
+
+  function registerResearch() {
+    tool(
+      'research_brief',
+      'Read the brief for the running research run: the sources to study, focus, depth, the product and its roadmap stages and goals (ids for stage/overlaps), ideas already found (do not repeat them), and the rules. Call it first.',
+      {},
+      async () => (await api<{ text: string }>('/api/research/brief'))?.text?.trim() || 'No brief: no research run is running.',
+    );
+
+    tool(
+      'add_idea',
+      'Post one idea: a user problem or opportunity backed by evidence, not a feature wish. One call per idea. impact: high, medium, low, or business (helps the business more than users). effort: S, M or L. stage = the roadmap stage it fits (M3); overlaps = an existing goal it overlaps (G9). evidence: 1-8 items, each with kind, source, a short quote (at most 300 chars), url, and count of similar reports.',
+      {
+        title: z.string().min(1).max(120).describe('The problem in a few words, e.g. "No way to hold posts for review"'),
+        summary: z.string().min(1).describe('The problem or opportunity in one or two sentences'),
+        impact: z.enum(['high', 'medium', 'low', 'business']),
+        effort: z.enum(['S', 'M', 'L']),
+        evidence: z.array(evidenceShape).min(1).max(8),
+        stage: z.string().optional().describe('Stage id from the brief, e.g. M3'),
+        overlaps: z.string().optional().describe('Goal id from the brief it overlaps, e.g. G9'),
+      },
+      async ({ title, summary, impact, effort, evidence, stage, overlaps }) => {
+        const body: Record<string, unknown> = { actor: me, title, summary, impact, effort, evidence };
+        if (stage?.trim()) body.stageId = upId(stage);
+        if (overlaps?.trim()) body.overlapsGoalId = upId(overlaps);
+        const i = await api<ResearchIdea>('/api/research/ideas', { method: 'POST', body });
+        return `Added ${formatIdeaLine(i)}`;
+      },
+    );
+
+    tool(
+      'finish_research',
+      'End the run once your ideas are posted. summary = one paragraph on what you read and what stood out; sourcesRead = how many pages you read. Muster stops you afterwards.',
+      { summary: z.string().min(1), sourcesRead: z.number().int().min(0).optional() },
+      async ({ summary, sourcesRead }) => {
+        const { runs } = await getResearch();
+        const run = runs.find((r) => r.status === 'running' && r.agentId === me) ?? runs.find((r) => r.status === 'running');
+        if (!run) throw new Error('No research run is running.');
+        const body: Record<string, unknown> = { actor: me, summary };
+        if (sourcesRead !== undefined) body.sourcesRead = sourcesRead;
+        const r = await api<ResearchRun>(`/api/research/runs/${enc(run.id)}/finish`, { method: 'POST', body });
+        const n = (r ?? run).ideaIds?.length ?? 0;
+        return `Finished ${r?.id ?? run.id}: ${n} idea${n === 1 ? '' : 's'}. The user has been told. You are done; stop here.`;
       },
     );
   }

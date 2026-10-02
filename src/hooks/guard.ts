@@ -374,10 +374,32 @@ function captainShell(command: string): Decision {
   return ALLOW;
 }
 
+const SCOUT = 'scout researches and never changes code';
+const BRANCH_LIST_FLAG = /^(-a|-r|-v|-vv|--all|--remotes|--verbose|--show-current|--contains|--no-contains|--merged|--no-merged|--format=.*|--sort=.*|--color.*|--no-color|--column.*)$/;
+// Read-only forms of git subcommands that otherwise write: `git branch` (list), `git stash list`, `git config --get`…
+const GIT_READ_FORMS: Record<string, (args: string[]) => boolean> = {
+  branch: (a) => a.includes('--list') || a.includes('-l') || a.every((x) => BRANCH_LIST_FLAG.test(x)),
+  tag: (a) => a.length === 0 || a.includes('-l') || a.includes('--list'),
+  stash: (a) => a[0] === 'list' || a[0] === 'show',
+  worktree: (a) => a[0] === 'list',
+  config: (a) => a.some((x) => /^(--get(-all|-regexp)?|-l|--list)$/.test(x)),
+  notes: (a) => a[0] === 'list' || a[0] === 'show',
+};
+
+/** The research agent only reads: every git subcommand that writes is refused; read forms (`git branch`, `git stash list`) pass. */
+function researchShell(command: string): Decision {
+  for (const seg of splitCommands(command)) {
+    const git = parseGit(tokenize(seg));
+    if (!git || !GIT_WRITE.has(git.sub) || GIT_READ_FORMS[git.sub]?.(git.args)) continue;
+    return deny(`${SCOUT}: git ${git.sub} is not allowed. Read the code and post what you find with add_idea.`);
+  }
+  return ALLOW;
+}
+
 export function decide(input: PreToolInput, env: GuardEnv): Decision {
   const role = env.role;
   const tool = input.tool_name ?? '';
-  if (role !== 'captain' && role !== 'crew' && role !== 'design') return ALLOW;
+  if (role !== 'captain' && role !== 'crew' && role !== 'design' && role !== 'research') return ALLOW;
   const cwd = input.cwd || env.worktree || process.cwd();
 
   if (READ_TOOLS.has(tool)) {
@@ -389,11 +411,13 @@ export function decide(input: PreToolInput, env: GuardEnv): Decision {
     const command = String(input.tool_input?.command ?? '');
     const common = commonShell(command, env);
     if (!common.allow) return common;
+    if (role === 'research') return researchShell(command);
     return role === 'captain' ? captainShell(command) : crewShell(command, env, cwd);
   }
 
   if (EDIT_TOOLS.has(tool)) {
     if (role === 'captain') return deny("The Captain doesn't write code: post_task or assign it to crew");
+    if (role === 'research') return deny(`${SCOUT}: no file edits. Post what you found with add_idea.`);
     const target = toolPath(input);
     if (!target || !env.worktree) return ALLOW;
     return crewEdit(target, cwd, env);

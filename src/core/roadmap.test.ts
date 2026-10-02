@@ -1,7 +1,7 @@
 import { beforeEach, describe, expect, it } from 'vitest';
 import { DEFAULT_CONFIG, type MusterState, type Task } from '../types.js';
 import { inboxFor } from './board.js';
-import { addGoal, advanceRoadmap, approveRoadmap, completeStage, computeProgress, patchGoal, patchStage, rejectRoadmap, setRoadmap, tickCriterion, type RoadmapInput } from './roadmap.js';
+import { addGoal, advanceRoadmap, approveRoadmap, completeStage, computeProgress, linkTasks, patchGoal, patchStage, rejectRoadmap, setRoadmap, tickCriterion, type RoadmapInput } from './roadmap.js';
 import { emptyState, migrate } from './store.js';
 import { cancelTask, createTask, markMerged } from './tasks.js';
 import { makeAgent } from './testutil.js';
@@ -18,7 +18,7 @@ const plan = (): RoadmapInput => ({
     { title: 'Checkout', description: 'pay', start: '2026-10-12', due: '2026-10-31', exitCriteria: ['Pays'], goals: [{ title: 'Cart', description: '' }] },
   ],
 });
-const task = (title: string, goalId: string): Task => createTask(s, config, { title, goalId, actor: 'captain' });
+const task = (title: string, goalId?: string): Task => createTask(s, config, { title, ...(goalId ? { goalId } : {}), actor: 'captain' });
 const captainInbox = () => inboxFor(s, 'captain').map((i) => i.text);
 const approvalNotes = () => s.notes.filter((n) => n.type === 'approval');
 
@@ -198,9 +198,9 @@ describe('roadmap', () => {
     let p = computeProgress(s, '2026-10-02')!;
     expect(p.goals.G1).toEqual({ done: 1, total: 3, percent: 33, agents: ['crew-2'] });
     expect(p.goals.G2).toEqual({ done: 0, total: 1, percent: 0, agents: [] });
-    expect(p.stages.M1).toEqual({ done: 1, total: 4, percent: 25, health: 'on_track', criteriaDone: 0, criteriaTotal: 2 });
+    expect(p.stages.M1).toEqual({ done: 1, total: 4, percent: 25, health: 'on_track', criteriaDone: 0, criteriaTotal: 2, basis: 'tasks' });
     expect(p.stages.M2.health).toBe('not_started');
-    expect(p).toMatchObject({ overall: { done: 1, total: 4, percent: 25 }, health: 'on_track', currentStageId: 'M1', currentGoalId: 'G1', daysToLaunch: 60 });
+    expect(p).toMatchObject({ overall: { done: 1, total: 4, percent: 17, unlinked: 0 }, health: 'on_track', currentStageId: 'M1', currentGoalId: 'G1', daysToLaunch: 60 });
     // 10 days from Oct 1 to Oct 11: on Oct 6, 50% elapsed and 25% done → at risk (25% < 35%)
     p = computeProgress(s, '2026-10-06')!;
     expect(p.stages.M1.health).toBe('at_risk');
@@ -214,6 +214,53 @@ describe('roadmap', () => {
     patchGoal(s, 'G2', { status: 'cancelled' }, 'you');
     expect(computeProgress(s, '2026-10-02')!.stages.M1).toMatchObject({ done: 1, total: 3, percent: 33 });
     expect(computeProgress({ ...s, roadmap: undefined }, '2026-10-02')).toBeNull();
+  });
+
+  it('counts stages with no linked tasks from their criteria, then their goals', () => {
+    setRoadmap(s, plan(), 'captain');
+    approveRoadmap(s, 'you');
+    tickCriterion(s, 'M1', 0, true, 'captain');
+    const p = computeProgress(s, '2026-10-02')!;
+    expect(p.stages.M1).toMatchObject({ total: 0, percent: 50, basis: 'criteria' });
+    expect(p.overall.percent).toBeGreaterThan(0);
+    patchGoal(s, 'G1', { status: 'done' }, 'captain');
+    expect(computeProgress(s, '2026-10-02')!.goals.G1.percent).toBe(100);
+  });
+
+  it('links existing tasks to a goal and reminds the Captain about unlinked work', () => {
+    const old = [task('old a'), task('old b')];
+    for (const t of old) markMerged(s, t, 'captain');
+    setRoadmap(s, plan(), 'captain');
+    approveRoadmap(s, 'you');
+    const inbox = () => s.inbox.filter((i) => i.agentId === 'captain').map((i) => i.text).join(' | ');
+    expect(inbox()).toMatch(/2 tasks are not on the roadmap yet \(T1, T2\).*link_tasks/);
+    expect(computeProgress(s, '2026-10-02')!.overall.unlinked).toBe(2);
+    expect(() => linkTasks(s, 'G1', ['T1'], 'crew-2')).toThrow(/Only the Captain or you/);
+    expect(() => linkTasks(s, 'G1', ['T99'], 'captain')).toThrow(/No task/);
+    linkTasks(s, 'G1', ['t1', 'T2'], 'captain');
+    expect(s.tasks.map((t) => t.goalId)).toEqual(['G1', 'G1']);
+    const p = computeProgress(s, '2026-10-02')!;
+    expect(p.overall.unlinked).toBe(0);
+    expect(p.goals.G1).toMatchObject({ done: 2, total: 2, percent: 100 });
+    expect(s.roadmap!.goals.find((g) => g.id === 'G1')!.status).toBe('done'); // all its linked tasks were merged
+    linkTasks(s, 'G1', ['T2'], 'you', true);
+    expect(s.tasks[1].goalId).toBeUndefined();
+    // a task merged with no goal on an approved roadmap → the Captain is asked to place it
+    const t = task('late one');
+    markMerged(s, t, 'captain');
+    expect(inbox()).toMatch(new RegExp(`${t.id} late one merged without a roadmap goal`));
+  });
+
+  it('tags system notes from before topics existed', () => {
+    const raw = {
+      notes: [
+        { id: 'N1', type: 'system', from: 'muster', text: 'Weekly usage at 83% (resets 05/10/2026, 19:00:00). Consider slowing down.', createdAt: '', open: true, replies: [] },
+        { id: 'N2', type: 'system', from: 'muster', text: 'Paused: 5-hour window at 81%. New spawns are on hold.', createdAt: '', open: false, replies: [] },
+        { id: 'N3', type: 'approval', from: 'muster', text: 'Roadmap ready for your approval: x', createdAt: '', open: true, replies: [] },
+        { id: 'N4', type: 'system', from: 'muster', text: 'Something else', createdAt: '', open: false, replies: [] },
+      ],
+    } as unknown as MusterState;
+    expect(migrate(raw, '/r').notes.map((n) => n.topic)).toEqual(['weekly_usage', 'five_hour', 'roadmap', undefined]);
   });
 
   it('migrates old state files without stage/goal ids', () => {

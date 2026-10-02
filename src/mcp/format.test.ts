@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
-import type { Agent, InboxItem, Note, Task } from '../types.js';
-import { boardQuery, clip, formatAgentLine, formatBoard, formatDiff, formatInbox, formatNoteLine, formatRoadmap, formatTaskLine, formatTests, isTaskId, NO_ROADMAP, relTime } from './format.js';
+import type { Agent, InboxItem, Note, ResearchIdea, Task } from '../types.js';
+import { boardQuery, clip, formatAgentLine, formatBoard, formatDiff, formatIdeaDetail, formatIdeaLine, formatIdeas, formatInbox, formatNoteLine, formatRoadmap, formatTaskLine, formatTests, isTaskId, NO_ROADMAP, relTime } from './format.js';
 import { PROGRESS, ROADMAP } from './roadmap.fixture.js';
 
 const NOW = Date.parse('2026-09-30T12:00:00Z');
@@ -118,5 +118,40 @@ describe('roadmap', () => {
     r.stages[1].exitCriteria.forEach((c) => (c.done = true));
     expect(formatRoadmap({ roadmap: r, progress: { ...PROGRESS, daysToLaunch: -2 } })).toContain('    All exit criteria ticked: complete_stage M2.');
     expect(formatRoadmap({ roadmap: r, progress: { ...PROGRESS, daysToLaunch: -2 } })).toContain('(2 days past)');
+  });
+});
+
+describe('research ideas', () => {
+  const idea = (p: Partial<ResearchIdea> = {}): ResearchIdea => ({
+    id: 'R7', runId: 'RR1', title: 'Moderation queue', summary: ' Teachers want to hold posts for review. ', impact: 'high', effort: 'M',
+    evidence: [], status: 'new', thread: [], createdAt: ago(60), ...p,
+  });
+  it('formats one compact line per idea', () => {
+    expect(formatIdeaLine(idea({ stageId: 'M3' }))).toBe('R7 [new] Moderation queue · impact high · effort M · fits M3 · 0 evidence');
+    expect(formatIdeaLine(idea({ status: 'approved' }))).toContain('[approved, not on the roadmap yet]');
+    expect(formatIdeaLine(idea({ status: 'approved', goalId: 'G14' }))).toContain('[approved → G14]');
+    expect(formatIdeaLine(idea({ thread: [{ at: ago(5), from: 'you', text: 'q' }] }))).toMatch(/· question waiting for your advice$/);
+    expect(formatIdeaLine(idea({ thread: [{ at: ago(5), from: 'you', text: 'q' }, { at: ago(1), from: 'captain', text: 'a' }] }))).toMatch(/· advised$/);
+    expect(formatIdeas([])).toBe('No research ideas match.');
+    expect(formatIdeas([idea(), idea({ id: 'R8' })]).split('\n')).toHaveLength(2);
+  });
+  it('formats the full idea with evidence, thread and plan', () => {
+    const text = formatIdeaDetail(
+      idea({
+        evidence: [
+          { kind: 'review', source: 'App Store · Padlet · 2★', text: 'x'.repeat(400), url: 'https://apps.apple.com/x', count: 12 },
+          { kind: 'competitor', source: 'Wakelet public roadmap' },
+        ],
+        thread: [{ at: ago(5), from: 'you', text: 'How big is it?' }],
+        plan: ['+ Add goal Moderation queue to M3'],
+      }),
+      NOW,
+    ).split('\n');
+    expect(text[2]).toBe('Teachers want to hold posts for review.');
+    expect(text).toContain('Evidence:');
+    expect(text.find((l) => l.startsWith('- [review]'))).toMatch(/^- \[review\] App Store · Padlet · 2★ \(\+12 similar\): "x+…" <https:\/\/apps\.apple\.com\/x>$/);
+    expect(text).toContain('- [competitor] Wakelet public roadmap');
+    expect(text).toContain('- you · 5m ago: How big is it?');
+    expect(text.slice(-2)).toEqual(['Plan on approval:', '- + Add goal Moderation queue to M3']);
   });
 });

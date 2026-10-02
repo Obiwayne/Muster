@@ -244,3 +244,33 @@ export function stationWord(station: string): string {
   const map: Record<string, string> = { build: 'Building', test: 'Testing', design: 'Design check', plan: 'Planning', review: 'Captain review', discover: 'Discovery', concept: 'Concept' };
   return map[station] ?? (station ? station[0].toUpperCase() + station.slice(1) : 'In progress');
 }
+
+// ---------------------------------------------------------------- progress labels
+
+type StageCounts = { done: number; total: number; percent: number; criteriaDone: number; criteriaTotal: number; basis?: string };
+
+/** Compact count for a stage row: tasks when it has any, else the percent it was counted from. */
+export function stageCount(p: StageCounts): string {
+  return p.total ? `${p.done}/${p.total}` : `${p.percent}%`;
+}
+
+/** What a stage's percent is based on, for tooltips and the stage header. */
+export function stageBasis(p: StageCounts): string {
+  switch (p.basis) {
+    case 'done': return 'stage complete';
+    case 'criteria': return `no tasks linked yet · ${p.criteriaDone}/${p.criteriaTotal} exit criteria met`;
+    case 'goals': return 'no tasks linked yet · counted from its goals';
+    default: return `${p.done}/${p.total} tasks merged`;
+  }
+}
+
+/** Compact count for a goal row: tasks when it has any, else a tick when done or a dash. */
+export function goalCount(p: { done: number; total: number }, status: string): string {
+  return p.total ? `${p.done}/${p.total}` : status === 'done' ? '✓' : '–';
+}
+
+/** The line under OVERALL. */
+export function overallText(o: { done: number; total: number; unlinked?: number }): string {
+  const tasks = o.total ? `${o.done} / ${o.total} tasks` : 'no tasks linked yet';
+  return o.unlinked ? `${tasks} · ${o.unlinked} not on the roadmap` : tasks;
+}

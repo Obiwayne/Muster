@@ -6,6 +6,8 @@
 //   MOCK_EMPTY=1 node ui/dev/mock-server.mjs   → no agents (empty-state dashboard)
 //   MOCK_STRICT_DIFF=1 …                         → /diff ignores ?branch= (today's contract)
 //   MOCK_ROADMAP=none|draft …                    → no roadmap / a draft waiting for approval (default: approved, M3 active)
+//   MOCK_RESEARCH=none|running …                 → no research yet / scout still researching (default: a finished run, 4 new ideas)
+//   MOCK_WEEKLY=84 …                             → weekly usage % (default 38; at 75+ an open weekly usage alert note)
 //
 // With `npx vite ui` (dev), set VITE_MUSTER_TOKEN=dev-token; vite proxies /api and /ws here.
 // Implements the HTTP API and WebSockets from docs/ARCHITECTURE.md with in-memory state.
@@ -20,6 +22,7 @@ import { WebSocketServer } from 'ws';
 const PORT = Number(process.env.PORT ?? 47800);
 const TOKEN = process.env.MOCK_TOKEN ?? 'dev-token';
 const EMPTY = !!process.env.MOCK_EMPTY;
+const WEEKLY = Number(process.env.MOCK_WEEKLY ?? 38);
 const here = dirname(fileURLToPath(import.meta.url));
 const DIST = normalize(join(here, '..', '..', 'dist', 'ui'));
 
@@ -74,6 +77,7 @@ const config = {
   crewNames: 'names',
   requireEvidence: true,
   githubOffer: 'ask',
+  weeklyAlerts: true,
 };
 
 const lineDefs = [
@@ -155,12 +159,18 @@ const state = {
   inbox: [],
   usage: {
     fiveHour: { usedPercentage: 62, resetsAt: new Date(now + 108 * 60_000).toISOString() },
-    sevenDay: { usedPercentage: 38, resetsAt: nextMonday() },
+    sevenDay: { usedPercentage: WEEKLY, resetsAt: nextMonday() },
     updatedAt: iso(0.2), perAgentCostUsd: {}, paused: false, weeklyWarned: false,
   },
   goal: EMPTY ? undefined : { text: 'Build the invite-link sharing flow', at: iso(42) },
-  nextIds: { agent: 6, task: 10, note: 22, feed: 1, inbox: 1, stage: 6, goal: 13 },
+  nextIds: { agent: 6, task: 10, note: 23, feed: 1, inbox: 1, stage: 6, goal: 15, idea: 12, run: 2 },
 };
+if (!EMPTY && WEEKLY >= config.warnAtWeeklyPct) {
+  state.usage.weeklyWarned = true;
+  const r = new Date(state.usage.sevenDay.resetsAt);
+  const when = `${r.toLocaleDateString('en-GB', { weekday: 'short', day: 'numeric', month: 'short' }).replace(',', '')}, ${String(r.getHours()).padStart(2, '0')}:${String(r.getMinutes()).padStart(2, '0')}`;
+  state.notes.unshift({ id: 'N22', type: 'system', topic: 'weekly_usage', from: 'muster', to: 'you', text: `Weekly usage at ${WEEKLY}%. Resets ${when}.`, createdAt: iso(31), open: true, replies: [] });
+}
 
 // ---------------------------------------------------------------- roadmap (dates relative to today)
 const ROADMAP_MODE = process.env.MOCK_ROADMAP ?? 'approved';
@@ -179,9 +189,9 @@ function seedRoadmap() {
       stage('M1', 'Foundations', 'Repo, CI, design tokens and the app shell.', -24, -13, 'done', ['G1', 'G2'], [crit('CI runs on every push', true)], -13),
       stage('M2', 'Accounts & classes', 'Sign-in, roles and classes with join codes.', -17, -1, 'done', ['G3', 'G4', 'G5'], [crit('A teacher can create a class', true)], -1),
       stage('M3', 'Sharing & invites', 'Teachers share a wall with a link, set who can post, and pull in a class roster.', -3, 15, 'active', ['G7', 'G8', 'G9'],
-        [crit('A teacher shares a wall by link', false), crit('Roles are enforced on every API route', false), crit('A 30-student roster imports cleanly', false)]),
+        [{ ...crit('A teacher shares a wall by link', true), ...(draft ? {} : { doneAt: iso(12), by: 'captain' }) }, crit('Roles are enforced on every API route', false), crit('A 30-student roster imports cleanly', false)]),
       stage('M4', 'Wall editor', 'The wall canvas: posts, layout and live presence.', 11, 36, 'planned', ['G10', 'G11', 'G12'], [crit('Posts sync between two browsers in under a second', false)]),
-      stage('M5', 'Launch v1.0', 'Hardening, load test and the launch checklist.', 33, 42, 'planned', ['G6'], [crit('Load test: 500 concurrent students', false)]),
+      stage('M5', 'Launch v1.0', 'Hardening, load test and the launch checklist.', 33, 42, 'planned', draft ? ['G6'] : ['G6', 'G14'], [crit('Load test: 500 concurrent students', false)]),
     ],
     goals: [
       goal('G1', 'M1', 'Repo and CI', '', 'done'), goal('G2', 'M1', 'Design tokens', '', 'done'),
@@ -191,6 +201,7 @@ function seedRoadmap() {
       goal('G9', 'M3', 'Class roster import', 'CSV + Google Classroom', 'planned', 6, 15),
       goal('G10', 'M4', 'Wall canvas & layout', '', 'planned'), goal('G11', 'M4', 'Post types: text, image, link', '', 'planned'), goal('G12', 'M4', 'Realtime presence', '', 'planned'),
       goal('G6', 'M5', 'Hardening', '', 'planned'),
+      ...(draft ? [] : [goal('G14', 'M5', 'Export a wall as a PDF for parents', 'From research idea R8', 'planned')]),
     ],
   };
   if (draft) {
@@ -203,6 +214,74 @@ function seedRoadmap() {
   for (const [id, title, goalId, daysAgo] of merged) state.tasks.push({ ...task(id, title, 'merged', ['build', 'review'], 1, { created: daysAgo * 1440 + 300, updated: daysAgo * 1440 }), goalId });
 }
 seedRoadmap();
+
+// ---------------------------------------------------------------- research (scout's runs and ideas)
+const RESEARCH_MODE = process.env.MOCK_RESEARCH ?? 'done';
+function seedResearch() {
+  state.research = { runs: [], ideas: [] };
+  if (EMPTY || RESEARCH_MODE === 'none') return;
+  const running = RESEARCH_MODE === 'running';
+  const sources = { competitors: ['Padlet', 'Wakelet', 'Linoit'], reviews: true, forums: ['r/Teachers', 'r/edtech'], ownApp: false };
+  const idea = (id, minAgo, over) => ({ id, runId: 'RR1', effort: 'M', evidence: [], status: 'new', thread: [], createdAt: iso(minAgo), ...over });
+  const ev = (kind, source, text, url, count) => ({ kind, source, ...(text ? { text } : {}), ...(url ? { url } : {}), ...(count ? { count } : {}) });
+  const ideas = [
+    idea('R7', 118, {
+      title: 'Moderation queue before posts go live', summary: "Teachers' top Padlet complaint: inappropriate posts appear before anyone can review them.",
+      impact: 'high', stageId: 'M3',
+      evidence: [
+        ev('review', 'App Store review · Padlet · 2★', 'A student posted something awful and the whole class saw it before I could delete it.', 'https://apps.apple.com/us/app/padlet/id834618886?see-all=reviews', 37),
+        ev('forum', 'r/Teachers · 412 upvotes', 'Is there any wall tool where I approve posts first? I stopped using them because of this.', 'https://www.reddit.com/r/Teachers/', 5),
+        ev('competitor', 'Wakelet public roadmap: “Post approval” · planned', undefined, 'https://wakelet.com/'),
+      ],
+      thread: [
+        { at: iso(40), from: 'you', text: 'Worth doing before launch? What would it cost us?' },
+        { at: iso(34), from: 'captain', text: "Yes. It's the complaint that makes teachers leave, and it fits right after Share permissions: about 5 tasks (hold queue, review list, “pending” state, per-wall toggle, tests).\n\nM3 moves from Oct 17 to Oct 20. Launch stays Nov 14." },
+      ],
+      plan: ['+ Add goal Moderation queue to M3 (Oct 13–17)', '~ Move M3 due date (Oct 17 → 20)'],
+    }),
+    idea('R9', 112, {
+      title: 'Unlimited walls on the free plan', summary: "Padlet's 3-wall free limit is the most upvoted complaint on r/Teachers this year.",
+      impact: 'business', effort: 'S', stageId: 'M5',
+      evidence: [ev('review', 'G2 review · Padlet · 2★', 'Three walls is nothing. I teach five classes.', undefined, 53), ev('forum', 'r/Teachers · 1.2k upvotes', 'Padlet just cut free accounts to 3 walls. Alternatives?', 'https://www.reddit.com/r/Teachers/', 8), ev('competitor', 'Padlet: 3 free walls', undefined, 'https://padlet.com/premium')],
+    }),
+    idea('R10', 104, {
+      title: 'Google Classroom roster sync', summary: 'Teachers re-type class lists. Both Padlet and Wakelet list Classroom sync as “coming soon”.',
+      impact: 'medium', stageId: 'M3', overlapsGoalId: 'G9',
+      evidence: [ev('review', 'Play Store review · Wakelet · 3★', 'I had to add 31 kids by hand.', undefined, 11), ev('forum', 'r/edtech · 88 upvotes', undefined, 'https://www.reddit.com/r/edtech/', 2), ev('competitor', 'On 2 competitor roadmaps')],
+    }),
+    idea('R11', 96, {
+      title: 'Wall templates for the first lesson', summary: 'New teachers stare at an empty wall; Linoit and Padlet both lead with templates in onboarding.',
+      impact: 'low', effort: 'S', stageId: 'M4',
+      evidence: [ev('competitor', 'Linoit onboarding: 12 starter templates', undefined, 'https://en.linoit.com/'), ev('app', 'Our app: empty wall has no hint text')],
+    }),
+    idea('R8', 116, {
+      title: 'Export a wall as a PDF for parents', summary: "Parents can't log in, so teachers screenshot walls by hand. Padlet charges for PDF export.",
+      impact: 'medium', effort: 'S', stageId: 'M5', status: 'approved', goalId: 'G14', decidedAt: iso(100),
+      evidence: [ev('review', 'App Store review · Padlet · 3★', 'PDF export should not be a paid feature.', undefined, 20), ev('forum', 'r/Teachers · 96 upvotes', undefined, undefined, 3), ev('competitor', 'Paid on Padlet')],
+      thread: [{ at: iso(99), from: 'captain', text: 'Added it to M5 Launch as G14: one task for the PDF renderer, one for the share sheet.' }],
+      plan: ['+ Add goal Export a wall as a PDF to M5 (Nov 3–7)'],
+    }),
+    idea('R6', 114, { title: 'Dark mode for projector use', summary: 'Teachers project walls in dim rooms; white backgrounds glare.', impact: 'low', effort: 'S', stageId: 'M4', status: 'approved', decidedAt: iso(20),
+      evidence: [ev('forum', 'r/Teachers · 54 upvotes', 'My projector turns every white wall into a flashbang.', undefined, 1)] }),
+    idea('R3', 117, { title: 'AI-written post suggestions', summary: 'One competitor added AI prompts; reviews are mixed.', impact: 'low', effort: 'L', status: 'rejected', decidedAt: iso(60), evidence: [ev('competitor', 'Padlet AI recipes')] }),
+    idea('R4', 117, { title: 'Native iPad app', summary: 'Some reviews ask for an app; most use the browser fine.', impact: 'medium', effort: 'L', status: 'rejected', decidedAt: iso(61), evidence: [ev('review', 'App Store review · Padlet · 4★', 'Wish it was an app on our iPads.', undefined, 6)] }),
+    idea('R5', 116, { title: 'Wall comment threads', summary: 'Nested replies on posts.', impact: 'low', effort: 'M', status: 'rejected', decidedAt: iso(62), evidence: [ev('forum', 'r/edtech · 12 upvotes')] }),
+  ];
+  if (running) {
+    const keep = new Set(['R7', 'R9', 'R10']);
+    state.research.ideas = ideas.filter((i) => keep.has(i.id)).map((i) => ({ ...i, runId: 'RR2', status: 'new', thread: [], plan: undefined, createdAt: iso(i.id === 'R7' ? 6 : i.id === 'R9' ? 4 : 2) }));
+    state.research.runs = [{ id: 'RR2', status: 'running', sources, focus: 'Why do teachers stop using wall apps after the first month?', depth: 'thorough', agentId: 'scout', startedAt: iso(9), ideaIds: ['R7', 'R9', 'R10'] }];
+    state.agents.push(agent('scout', 'research', 'main', 'working', undefined, 9));
+    state.nextIds.run = 3;
+    return;
+  }
+  state.research.ideas = ideas;
+  state.research.runs = [{
+    id: 'RR1', status: 'done', sources, depth: 'thorough', agentId: 'scout', startedAt: iso(138), finishedAt: iso(120), sourcesRead: 47,
+    summary: 'Padlet, Wakelet and Linoit roadmaps · 312 app-store reviews · 18 Reddit threads', ideaIds: ideas.map((i) => i.id),
+  }];
+}
+seedResearch();
 
 function roadmapProgress() {
   const r = state.roadmap;
@@ -282,6 +361,11 @@ const feedSeed = [
   [1, 'reply', 'ada', undefined, 'Fixture helper is makeInviteToken() in test/fixtures.ts, use that instead of a hard-coded string.', { noteId: 'N14' }],
   [0.5, 'note', 'captain', undefined, 'Invites table ready to merge. 3 files, 12 tests passing.', { noteId: 'N13', noteType: 'review' }],
 ];
+if (ROADMAP_MODE === 'approved') {
+  feedSeed.push([95, 'event', 'captain', undefined, 'added goal G14 Export a wall as a PDF for parents to M5 Launch v1.0', {}]);
+  feedSeed.push([12, 'event', 'captain', undefined, 'ticked M3 exit criterion 1: A teacher shares a wall by link', {}]);
+  feedSeed.sort((a, b) => b[0] - a[0]);
+}
 if (!EMPTY) {
   // a few items from yesterday so the day divider shows
   state.feed.push(feedItem(26 * 60, 'event', 'muster', undefined, 'orchestrator started · captain on opus', {}));
@@ -591,6 +675,106 @@ async function api(req, url) {
     broadcast();
     return { ok: true };
   }
+  // ---- research
+  if (m === 'GET' && p === '/api/research') return state.research;
+  if (m === 'POST' && p === '/api/research/runs') {
+    const b = await body(req);
+    need(b.actor === 'you', 403, 'Only you can start research');
+    need(!paused(), 409, `Paused: 5-hour window at ${state.usage.fiveHour.usedPercentage}%`);
+    need(!state.research.runs.some((r) => r.status === 'running'), 409, 'A research run is already running');
+    const src = b.sources ?? {};
+    need(src.competitors?.length || src.reviews || src.forums?.length || src.ownApp, 400, 'Pick at least one source');
+    const run = { id: `RR${state.nextIds.run++}`, status: 'running', sources: { competitors: src.competitors ?? [], reviews: !!src.reviews, forums: src.forums ?? [], ownApp: !!src.ownApp }, ...(b.focus ? { focus: b.focus } : {}), depth: b.depth === 'thorough' ? 'thorough' : 'quick', agentId: 'scout', startedAt: new Date().toISOString(), ideaIds: [] };
+    state.research.runs.push(run);
+    let scout = state.agents.find((a) => a.id === 'scout');
+    if (!scout) { scout = agent('scout', 'research', 'main', 'starting', undefined, 0); state.agents.push(scout); }
+    scout.status = 'working';
+    addFeed('event', 'you', undefined, `you started research ${run.id} (${run.depth})`);
+    broadcast();
+    // scout finds two ideas, then finishes
+    const found = [
+      { title: 'Read-only share links for parents', summary: 'Parents want to see the wall without an account; teachers paste screenshots into emails instead.', impact: 'medium', effort: 'S', stageId: 'M3', evidence: [{ kind: 'forum', source: 'r/Teachers · 77 upvotes', text: 'How do you show parents the class wall without giving them a login?', count: 3 }] },
+      { title: 'Bulk-delete posts after a lesson', summary: 'Cleaning a wall for the next class means deleting posts one by one.', impact: 'low', effort: 'S', stageId: 'M4', evidence: [{ kind: 'review', source: 'Play Store review · Linoit · 2★', text: 'Deleting 30 sticky notes one at a time is painful.', count: 9 }] },
+    ];
+    found.forEach((f, k) => setTimeout(() => {
+      if (run.status !== 'running') return;
+      const i = { id: `R${state.nextIds.idea++}`, runId: run.id, status: 'new', thread: [], createdAt: new Date().toISOString(), ...f };
+      state.research.ideas.push(i); run.ideaIds.push(i.id);
+      broadcast();
+    }, 4000 + k * 4000));
+    setTimeout(() => {
+      if (run.status !== 'running') return;
+      run.status = 'done'; run.finishedAt = new Date().toISOString(); run.sourcesRead = 23; run.summary = `${run.sources.competitors.join(', ') || 'No competitors'} · reviews and forum threads`;
+      scout.status = 'stopped';
+      toastAll('info', `scout found ${run.ideaIds.length} ideas`);
+      broadcast();
+    }, 12000);
+    return run;
+  }
+  let rr;
+  if (m === 'POST' && (rr = /^\/api\/research\/runs\/([^/]+)\/cancel$/.exec(p))) {
+    const run = state.research.runs.find((r) => r.id === decodeURIComponent(rr[1]));
+    need(run, 404, 'No such run');
+    need(run.status === 'running', 409, `${run.id} is not running`);
+    run.status = 'cancelled'; run.finishedAt = new Date().toISOString();
+    const scout = state.agents.find((a) => a.id === 'scout'); if (scout) scout.status = 'stopped';
+    addFeed('event', 'you', undefined, `you cancelled research ${run.id}`);
+    broadcast();
+    return run;
+  }
+  if (m === 'POST' && (rr = /^\/api\/research\/ideas\/([^/]+)\/(ask|approve|reject|reopen)$/.exec(p))) {
+    const b = await body(req);
+    const i = state.research.ideas.find((x) => x.id === decodeURIComponent(rr[1]));
+    need(i, 404, 'No such idea');
+    const now = new Date().toISOString();
+    if (rr[2] === 'ask') {
+      need(b.text?.trim(), 400, 'text is required');
+      i.thread.push({ at: now, from: 'you', text: b.text.trim() });
+      setTimeout(() => {
+        i.thread.push({ at: new Date().toISOString(), from: 'captain', text: `It fits ${i.stageId ?? 'the next stage'}: roughly ${i.effort === 'L' ? '8' : i.effort === 'M' ? '5' : '2'} tasks.\n\nNothing else moves if it goes in after the current goal.` });
+        i.plan = [`+ Add goal ${i.title} to ${i.stageId ?? 'M4'}`];
+        toastAll('info', `Captain answered on ${i.id}`);
+        broadcast();
+      }, 2500);
+    } else if (rr[2] === 'approve') {
+      need(i.status === 'new', 409, `${i.id} is ${i.status}`);
+      i.status = 'approved'; i.decidedAt = now;
+      setTimeout(() => {
+        const r = state.roadmap; if (!r) return;
+        const stage = r.stages.find((x) => x.id === i.stageId) ?? r.stages.find((x) => x.status !== 'done');
+        if (!stage) return;
+        const g = { id: `G${state.nextIds.goal++}`, stageId: stage.id, title: i.title, description: `From research idea ${i.id}`, status: 'planned' };
+        r.goals.push(g); stage.goalIds.push(g.id); i.goalId = g.id; r.updatedAt = new Date().toISOString();
+        addFeed('event', 'captain', undefined, `added goal ${g.id} ${g.title} to ${stage.id} ${stage.title}`);
+        broadcast();
+      }, 3000);
+    } else if (rr[2] === 'reject') {
+      need(i.status === 'new', 409, `${i.id} is ${i.status}`);
+      i.status = 'rejected'; i.decidedAt = now;
+    } else {
+      need(i.status !== 'new', 409, `${i.id} is already new`);
+      i.status = 'new'; delete i.decidedAt;
+    }
+    broadcast();
+    return i;
+  }
+  // ---- usage alerts
+  if (m === 'POST' && p === '/api/usage/weekly-alert') {
+    const b = await body(req);
+    need(b.actor === 'you', 403, 'Only you can change usage alerts');
+    const u = state.usage;
+    if (b.action === 'remind_at') {
+      const pct = Number(b.percent);
+      need(Number.isInteger(pct) && pct >= 1 && pct <= 100, 400, 'percent must be 1–100');
+      need(pct > (u.sevenDay?.usedPercentage ?? 0), 400, `Weekly usage is already at ${u.sevenDay?.usedPercentage}%: pick a higher percentage`);
+      u.weeklyRemindAt = pct; u.weeklyWarned = false;
+    } else if (b.action === 'snooze_week') u.weeklySnoozedUntil = u.sevenDay?.resetsAt ?? new Date(Date.now() + 7 * 86400000).toISOString();
+    else if (b.action === 'never') config.weeklyAlerts = false;
+    else throw new HttpError(400, 'action must be remind_at, snooze_week or never');
+    if (b.noteId) { const n = state.notes.find((x) => x.id === b.noteId); if (n) { n.open = false; n.dismissed = true; n.closedAt = new Date().toISOString(); } }
+    broadcast();
+    return { usage: u, config };
+  }
   if (m === 'GET' && p === '/api/roadmap') return roadmapOut();
   if (m === 'POST' && p === '/api/roadmap/approve') {
     const r = state.roadmap;
@@ -659,7 +843,7 @@ async function api(req, url) {
   }
   if (m === 'GET' && p === '/api/notes') {
     const q = url.searchParams;
-    let list = state.notes;
+    let list = q.get('dismissed') ? state.notes : state.notes.filter((n) => !n.dismissed);
     if (q.get('open')) list = list.filter((n) => n.open);
     if (q.get('type')) list = list.filter((n) => n.type === q.get('type'));
     if (q.get('needsYou')) list = list.filter((n) => n.open && (n.type === 'escalation' || n.type === 'review' || n.to === 'you'));
@@ -670,6 +854,14 @@ async function api(req, url) {
     const n = { id: `N${state.nextIds.note++}`, type: b.type, from: b.actor, to: b.to, taskId: b.taskId, text: b.text, createdAt: new Date().toISOString(), open: ['stuck', 'question', 'waiting', 'review', 'escalation'].includes(b.type), replies: [] };
     state.notes.push(n);
     addFeed('note', b.actor, undefined, b.text, { noteId: n.id, noteType: n.type });
+    broadcast();
+    return n;
+  }
+  if ((mm = /^\/api\/notes\/([^/]+)\/dismiss$/.exec(p)) && m === 'POST') {
+    const b = await body(req);
+    need(b.actor === 'you', 403, 'Only you can dismiss notes');
+    const n = findNote(decodeURIComponent(mm[1]));
+    n.open = false; n.dismissed = true; n.closedAt = new Date().toISOString();
     broadcast();
     return n;
   }

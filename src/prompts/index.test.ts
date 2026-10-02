@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { captainPrompt, crewPrompt, designPrompt, type PromptContext } from './index.js';
+import { captainPrompt, crewPrompt, designPrompt, researchPrompt, type PromptContext } from './index.js';
 
 const ctx: PromptContext = {
   agentId: 'crew-2',
@@ -132,7 +132,7 @@ describe('designPrompt', () => {
 
 describe('the user’s name', () => {
   it('tells every role to use the name and never "the human"', () => {
-    for (const make of [captainPrompt, crewPrompt, designPrompt]) {
+    for (const make of [captainPrompt, crewPrompt, designPrompt, researchPrompt]) {
       const p = make({ ...ctx, userName: 'Wayne' });
       expect(p).toContain('The person you work for is **Wayne**');
       expect(p).not.toMatch(/\bthe human\b(?!")/i);
@@ -154,5 +154,40 @@ describe('design crew and Vellum edits', () => {
     const never = designPrompt({ ...ctx, vellumEdit: 'never', userName: 'Wayne' });
     expect(never).toContain('read-only for you, always');
     expect(never).toContain('Wayne makes it');
+  });
+});
+
+describe('researchPrompt', () => {
+  const p = researchPrompt({ ...ctx, agentId: 'scout', worktree: ctx.repoRoot, branch: 'main' });
+  it('keeps scout to public pages and no code changes', () => {
+    expect(p).toContain('# Muster — you are the research agent (scout)');
+    expect(p).toMatch(/Public pages only/);
+    expect(p).toMatch(/Never sign in/);
+    expect(p).toMatch(/Never change code/);
+    expect(p).toContain('muster:web-research');
+    expect(p).toMatch(/at most 300 characters/);
+    expect(p).toContain('F:/Proj');
+  });
+  it('asks for evidence-backed user problems and walks the tools in order', () => {
+    expect(p).toMatch(/user problem or opportunity backed by evidence/);
+    expect(p).toMatch(/not a feature wish/);
+    expect(p.indexOf('research_brief()')).toBeLessThan(p.indexOf('add_idea('));
+    expect(p).toMatch(/Skip ideas the brief already lists/);
+    expect(p).toContain('`finish_research`');
+    expect(p).not.toContain('claim_task()');
+  });
+  it('is short', () => expect(lines(p)).toBeLessThan(60));
+});
+
+describe('captainPrompt research ideas', () => {
+  const p = captainPrompt({ ...ctx, agentId: 'captain', userName: 'Wayne' });
+  it('answers questions with advise_idea and adds approved ideas without a second approval', () => {
+    expect(p).toContain('## Research ideas');
+    expect(p).toContain('"You asked about R7 …"');
+    expect(p).toContain('`advise_idea(R7, text, plan)`');
+    expect(p).toMatch(/honest cost/);
+    expect(p).toContain('`add_goal(stage, title, description, idea: "R7")`');
+    expect(p).toMatch(/no second one/);
+    expect(p).toContain('`list_ideas(status?)`');
   });
 });

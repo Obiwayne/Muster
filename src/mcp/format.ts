@@ -1,6 +1,6 @@
 // Pure formatting helpers for muster-mcp tool results. Agents read these, so keep them short.
 import { formatEvidence } from '../core/evidence.js';
-import type { Agent, InboxItem, Note, NoteType, Roadmap, RoadmapHealth, RoadmapProgress, Task } from '../types.js';
+import type { Agent, IdeaEvidence, InboxItem, Note, NoteType, ResearchIdea, Roadmap, RoadmapHealth, RoadmapProgress, Task } from '../types.js';
 
 export function relTime(iso: string | undefined, now: number = Date.now()): string {
   if (!iso) return '?';
@@ -186,6 +186,7 @@ export function formatRoadmap(data: { roadmap: Roadmap | null; progress: Roadmap
   const status = r.status === 'draft' ? `DRAFT rev ${r.revision}, waiting for the user's approval${r.noteId ? ` (${r.noteId})` : ''}` : `approved rev ${r.revision}`;
   const overall = p ? `${p.overall.percent}% (${p.overall.done}/${p.overall.total} tasks) · ${HEALTH[p.health]}` : '';
   const lines = [[`Roadmap: ${clip(r.title, 80)}`, status, overall, launchLine(r, p?.daysToLaunch)].filter(Boolean).join(' · ')];
+  if (p?.overall.unlinked) lines.push(`${p.overall.unlinked} task${p.overall.unlinked === 1 ? '' : 's'} not on any goal: put them on the goal they deliver with link_tasks.`);
   const current = p?.currentStageId;
   const goalById = new Map(r.goals.map((g) => [g.id, g]));
   for (const s of r.stages) {
@@ -213,5 +214,47 @@ export function formatRoadmap(data: { roadmap: Roadmap | null; progress: Roadmap
       lines.push(`    All exit criteria ticked: complete_stage ${s.id}.`);
     }
   }
+  return lines.join('\n');
+}
+
+// ---- research ideas --------------------------------------------------------------
+
+function ideaStatus(i: ResearchIdea): string {
+  if (i.status === 'approved') return i.goalId ? `approved → ${i.goalId}` : 'approved, not on the roadmap yet';
+  return i.status;
+}
+
+/** `R7 [new] Moderation queue · impact high · effort M · fits M3 · 4 evidence · advised` */
+export function formatIdeaLine(i: ResearchIdea): string {
+  const parts = [`${i.id} [${ideaStatus(i)}] ${clip(i.title, 80)}`, `impact ${i.impact}`, `effort ${i.effort}`];
+  if (i.stageId) parts.push(`fits ${i.stageId}`);
+  if (i.overlapsGoalId) parts.push(`overlaps ${i.overlapsGoalId}`);
+  parts.push(`${i.evidence?.length ?? 0} evidence`);
+  const last = i.thread?.at(-1);
+  if (last && last.from !== 'captain') parts.push('question waiting for your advice');
+  else if (last) parts.push('advised');
+  return parts.join(' · ');
+}
+
+export function formatIdeas(ideas: ResearchIdea[]): string {
+  if (!ideas.length) return 'No research ideas match.';
+  return ideas.map(formatIdeaLine).join('\n');
+}
+
+function evidenceLine(e: IdeaEvidence): string {
+  const head = `[${e.kind}] ${clip(e.source, 100)}${e.count ? ` (+${e.count} similar)` : ''}`;
+  const quote = e.text ? `: "${clip(e.text, 300)}"` : '';
+  return `- ${head}${quote}${e.url ? ` <${e.url}>` : ''}`;
+}
+
+/** One idea in full: summary, evidence with quotes and links, the thread with the user, the Captain's plan. */
+export function formatIdeaDetail(i: ResearchIdea, now: number = Date.now()): string {
+  const lines = [formatIdeaLine(i), '', i.summary.trim()];
+  if (i.evidence?.length) lines.push('', 'Evidence:', ...i.evidence.map(evidenceLine));
+  if (i.thread?.length) {
+    lines.push('', 'Thread:');
+    for (const m of i.thread) lines.push(`- ${m.from} · ${relTime(m.at, now)}: ${m.text.trim()}`);
+  }
+  if (i.plan?.length) lines.push('', 'Plan on approval:', ...i.plan.map((p) => `- ${p}`));
   return lines.join('\n');
 }

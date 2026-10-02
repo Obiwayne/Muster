@@ -91,6 +91,10 @@ const ICONS: Record<string, string> = {
   'chevron-left': '<path d="M15 6l-6 6 6 6"/>',
   arrow: '<path d="M5 12h14M13 6l6 6-6 6"/>',
   tick: '<path d="M5 12l5 5L20 7"/>',
+  search: '<circle cx="11" cy="11" r="7"/><path d="M21 21l-4.3-4.3"/>',
+  'search-plus': '<circle cx="11" cy="11" r="7"/><path d="M21 21l-4.3-4.3"/><path d="M11 8v6M8 11h6"/>',
+  lock: '<rect x="4" y="11" width="16" height="10" rx="2"/><path d="M8 11V7a4 4 0 0 1 8 0v4"/>',
+  external: '<path d="M7 17L17 7M9 7h8v8"/>',
 };
 
 export function icon(name: string, size = 16, strokeWidth = 2): SVGSVGElement {

@@ -9,6 +9,7 @@ export interface Colors {
   amber(s: string): string;
   teal(s: string): string;
   lavender(s: string): string;
+  blue(s: string): string;
   red(s: string): string;
   green(s: string): string;
   dim(s: string): string;
@@ -22,6 +23,7 @@ export function colors(enabled: boolean): Colors {
     amber: wrap('\x1b[38;5;214m', '\x1b[39m'),
     teal: wrap('\x1b[38;5;43m', '\x1b[39m'),
     lavender: wrap('\x1b[38;5;183m', '\x1b[39m'),
+    blue: wrap('\x1b[38;5;75m', '\x1b[39m'),
     red: wrap('\x1b[31m', '\x1b[39m'),
     green: wrap('\x1b[32m', '\x1b[39m'),
     dim: wrap('\x1b[2m', '\x1b[22m'),
@@ -30,7 +32,7 @@ export function colors(enabled: boolean): Colors {
 }
 
 export function roleColor(c: Colors, role: Role): (s: string) => string {
-  return role === 'captain' ? c.amber : role === 'design' ? c.lavender : c.teal;
+  return role === 'captain' ? c.amber : role === 'design' ? c.lavender : role === 'research' ? c.blue : c.teal;
 }
 
 const ANSI = /\x1b\[[0-9;?]*[A-Za-z]/g;
@@ -118,7 +120,7 @@ export function bar(pct: number, width = 20): string {
 // ---------------------------------------------------------------- domain views
 
 export function needsYou(n: Note): boolean {
-  return n.open && (n.type === 'escalation' || n.type === 'review' || n.type === 'approval' || n.to === 'you');
+  return n.open && !n.dismissed && (n.type === 'escalation' || n.type === 'review' || n.type === 'approval' || n.to === 'you');
 }
 
 function statusCell(c: Colors, a: Agent): string {
@@ -155,7 +157,7 @@ export function formatStatus(
   if (!state.agents.length) {
     out.push('No agents yet. Run `muster up` to start the Captain, `muster add` for crew.');
   } else {
-    const order: Record<Role, number> = { captain: 0, crew: 1, design: 2, human: 3 };
+    const order: Record<Role, number> = { captain: 0, crew: 1, design: 2, research: 3, human: 4 };
     const agents = [...state.agents].sort((a, b) => order[a.role] - order[b.role]);
     const rows = agents.map((a) => {
       const color = roleColor(c, a.role);

@@ -9,6 +9,7 @@ import { agentStatusWord, agoLong, resetsIn, setUserName, sortedAgents } from '.
 import type { Page } from './page';
 import { createDashboard } from './pages/dashboard';
 import { createRoadmap } from './pages/roadmap';
+import { createResearch } from './pages/research';
 import { currentStageId } from './roadmap';
 import { createBoard } from './pages/board';
 import { createChat } from './pages/chat';
@@ -17,8 +18,9 @@ import { createBranches } from './pages/branches';
 import { createVellum } from './pages/vellum';
 import { createSettings } from './pages/settings';
 
-type RouteId = 'dashboard' | 'roadmap' | 'board' | 'chat' | 'tasks' | 'branches' | 'vellum' | 'settings';
-const ROUTES: { id: RouteId; label: string; icon: string; create: () => Page }[] = [
+type RouteId = 'dashboard' | 'roadmap' | 'research' | 'board' | 'chat' | 'tasks' | 'branches' | 'vellum' | 'settings';
+type NavId = Exclude<RouteId, 'research'>;
+const ROUTES: { id: NavId; label: string; icon: string; create: () => Page }[] = [
   { id: 'dashboard', label: 'Dashboard', icon: 'grid', create: createDashboard },
   { id: 'roadmap', label: 'Roadmap', icon: 'route', create: createRoadmap },
   { id: 'board', label: 'Bulletin board', icon: 'pin', create: createBoard },
@@ -28,23 +30,28 @@ const ROUTES: { id: RouteId; label: string; icon: string; create: () => Page }[]
   { id: 'vellum', label: 'Vellum boards', icon: 'pen', create: createVellum },
   { id: 'settings', label: 'Settings', icon: 'settings', create: createSettings },
 ];
+// Pages without a nav item of their own: [route, page factory, nav item it highlights]
+const SUB_ROUTES: { id: RouteId; create: () => Page; nav: NavId }[] = [
+  { id: 'research', create: createResearch, nav: 'roadmap' },
+];
 
 export function parseHash(): { route: RouteId; params: URLSearchParams } {
   const raw = location.hash.replace(/^#\/?/, '');
   const [path, query] = raw.split('?');
   const [head, ...rest] = (path ?? '').split('/');
-  const route = (ROUTES.find((r) => r.id === head)?.id ?? 'dashboard') as RouteId;
+  let route = (ROUTES.find((r) => r.id === head)?.id ?? 'dashboard') as RouteId;
   const params = new URLSearchParams(query ?? '');
-  // #/roadmap/M3 → route "roadmap", params.stage = "M3"
-  if (route === 'roadmap' && rest[0]) params.set('stage', decodeURIComponent(rest[0]));
+  // #/roadmap/research → the research page (not a stage); #/roadmap/M3 → route "roadmap", params.stage = "M3"
+  if (route === 'roadmap' && rest[0] === 'research') route = 'research';
+  else if (route === 'roadmap' && rest[0]) params.set('stage', decodeURIComponent(rest[0]));
   return { route, params };
 }
 
 // ---------- shell ----------
 const app = document.getElementById('app')!;
 const projectEl = h('div.logo-project', null, '');
-const navCounts = new Map<RouteId, HTMLElement>();
-const navItems = new Map<RouteId, HTMLElement>();
+const navCounts = new Map<NavId, HTMLElement>();
+const navItems = new Map<NavId, HTMLElement>();
 const agentsLabel = h('div.section-label.flex1', null, 'AGENTS');
 const agentList = h('div.agent-list');
 const addSide = h('button.icon-btn', { title: 'Add agent' }, icon('plus', 14));
@@ -159,7 +166,7 @@ let current: RouteId | null = null;
 function show(route: RouteId, params: URLSearchParams): void {
   let page = pages.get(route);
   if (!page) {
-    page = ROUTES.find((r) => r.id === route)!.create();
+    page = (ROUTES.find((r) => r.id === route) ?? SUB_ROUTES.find((r) => r.id === route))!.create();
     pages.set(route, page);
     pagesHost.appendChild(page.el);
     if (events.snapshot) page.update(events.snapshot);
@@ -176,7 +183,8 @@ function show(route: RouteId, params: URLSearchParams): void {
     page.show?.();
   }
   page.params?.(params);
-  navItems.forEach((el, id) => el.classList.toggle('active', id === route));
+  const nav = SUB_ROUTES.find((r) => r.id === route)?.nav ?? route;
+  navItems.forEach((el, id) => el.classList.toggle('active', id === nav));
 }
 
 function onHash(): void {
@@ -197,7 +205,7 @@ function renderShell(s: Snapshot): void {
   // nav counts
   const openNotes = state.notes.filter((n) => n.open).length;
   const needsYou = state.notes.some((n) => n.open && (n.type === 'escalation' || n.type === 'review' || n.to === 'you'));
-  const setCount = (id: RouteId, n: number, badge = false) => {
+  const setCount = (id: NavId, n: number, badge = false) => {
     const el = navCounts.get(id)!;
     el.className = badge && n > 0 ? 'nav-badge' : 'nav-count';
     el.textContent = n ? String(n) : '';

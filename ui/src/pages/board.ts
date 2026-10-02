@@ -7,6 +7,8 @@ import { api } from '../api';
 import { approveAllMerges, approveMerge, approveRoadmap, approveTask, isRoadmapNote, mergeTask, run, sendBackApproval, sendBackRoadmap, showDiffModal } from '../actions';
 import { evidenceStrip } from '../evidence';
 import { NOTE_BADGE, ageShort, ago, displayName, initial, isEscalated, isNeedsYou, branchOwnerId, ms, noteLabel, roleOf, taskById } from '../util';
+import { isUsageNote, isWeeklyNote, weeklyThreshold } from '../usagealert';
+import { createWeeklyAlertView } from './usagealert';
 
 type Filter = 'open' | 'stuck' | 'question' | 'waiting' | 'review' | 'approval' | 'all' | 'needsYou';
 
@@ -15,8 +17,8 @@ const TYPE_ORDER: Partial<Record<string, number>> = { approval: 0, escalation: 0
 function sortNotes(notes: Note[]): Note[] {
   return [...notes].sort((a, b) => {
     if (a.open !== b.open) return a.open ? -1 : 1;
-    const ta = TYPE_ORDER[a.type] ?? 9;
-    const tb = TYPE_ORDER[b.type] ?? 9;
+    const ta = isUsageNote(a) ? 0 : TYPE_ORDER[a.type] ?? 9; // a usage alert is as urgent as an escalation
+    const tb = isUsageNote(b) ? 0 : TYPE_ORDER[b.type] ?? 9;
     if (ta !== tb) return ta - tb;
     return ms(b.createdAt) - ms(a.createdAt);
   });
@@ -49,6 +51,16 @@ function splitText(text: string): { title: string; rest: string } {
   return { title: text, rest: '' };
 }
 
+/** Dismissed notes stay in state for history; the board leaves them out. */
+function visibleState(state: MusterState): MusterState {
+  return state.notes.some((n) => n.dismissed) ? { ...state, notes: state.notes.filter((n) => !n.dismissed) } : state;
+}
+
+function badge(n: Note): HTMLElement {
+  if (isUsageNote(n)) return h('span.badge.b-warm', null, 'usage');
+  return h('span.badge', { class: NOTE_BADGE[n.type] }, noteLabel(n.type));
+}
+
 export function createBoard(): Page {
   let filter: Filter = 'open';
   let selected: string | null = null;
@@ -64,7 +76,17 @@ export function createBoard(): Page {
   const replyBtn = h('button.btn.lg.accent', null, 'Reply') as HTMLButtonElement;
   const composer = h('div.composer', null, replyInput, clearBtn, replyBtn);
   const thread = h('div.thread', null, head, replies, composer);
-  const el = h('div.page', null, h('div.split', null, left, thread));
+  const weekly = createWeeklyAlertView({ dismiss: (id) => dismiss(id) });
+  const el = h('div.page', null, h('div.split', null, left, thread, weekly.el));
+
+  async function dismiss(id: string): Promise<void> {
+    if (await run(api.dismissNote(id), `Dismissed ${id}`)) {
+      if (selected === id) selected = null;
+      // hide it right away; the next snapshot carries dismissed: true
+      if (snap) snap = { ...snap, state: { ...snap.state, notes: snap.state.notes.map((x) => (x.id === id ? { ...x, dismissed: true, open: false } : x)) } };
+      render();
+    }
+  }
   let lastThreadKey = '';
 
   const sendReply = async () => {
@@ -110,6 +132,7 @@ export function createBoard(): Page {
   }
 
   function metaLine(state: MusterState, n: Note): string {
+    if (isWeeklyNote(n) && snap) return `${displayName(n.from)} · alert at ${weeklyThreshold(state.usage, snap.config)}%`;
     const parts = [n.to ? `${displayName(n.from)} → ${displayName(n.to)}` : displayName(n.from)];
     if (n.taskId) parts.push(n.taskId);
     const br = n.branch ?? ((n.type as string) === 'approval' ? taskById(state, n.taskId)?.branch : undefined);
@@ -123,7 +146,7 @@ export function createBoard(): Page {
 
   function row(state: MusterState, n: Note): HTMLElement {
     const t = n.type;
-    const selColor = t === 'stuck' ? 'var(--color-stuck)' : t === 'question' ? 'var(--color-captain)' : t === 'waiting' ? 'var(--color-design)' : t === 'review' ? 'var(--color-crew)' : (t as string) === 'approval' ? 'var(--color-warm)' : t === 'escalation' ? 'var(--color-warm)' : 'var(--color-muted)';
+    const selColor = isUsageNote(n) ? 'var(--color-warm)' : t === 'stuck' ? 'var(--color-stuck)' : t === 'question' ? 'var(--color-captain)' : t === 'waiting' ? 'var(--color-design)' : t === 'review' ? 'var(--color-crew)' : (t as string) === 'approval' ? 'var(--color-warm)' : t === 'escalation' ? 'var(--color-warm)' : 'var(--color-muted)';
     const task = taskById(state, n.taskId);
     const side0 = n.type === 'review' && n.open && task?.status === 'ready_for_merge'
       ? task.mergeApproval
@@ -146,12 +169,21 @@ export function createBoard(): Page {
       style: { '--sel': selColor },
       onclick: () => { selected = n.id; render(); },
     },
-    h('div.type', null, h('span.badge', { class: NOTE_BADGE[t] }, noteLabel(t))),
+    h('div.type', null, badge(n)),
     h('div.body', null, h('div.text', null, n.text), h('div.meta', null, metaLine(state, n))),
-    h('div.side', null, h('span.muted', null, ageShort(n.createdAt)), side));
+    h('div.side', null, h('span.muted', null, ageShort(n.createdAt)), side,
+      n.type === 'system' ? h('span.note-x', {
+        role: 'button',
+        title: 'Dismiss: remove it from the board',
+        onclick: (e: MouseEvent) => { e.stopPropagation(); void dismiss(n.id); },
+      }, icon('x', 12)) : null));
   }
 
   function renderThread(state: MusterState, n: Note | undefined): void {
+    const weeklyOn = !!n && isWeeklyNote(n);
+    weekly.el.hidden = !weeklyOn;
+    thread.hidden = weeklyOn;
+    if (weeklyOn) { weekly.show(n!); lastThreadKey = ''; return; }
     const key = n ? `${n.id}:${n.replies.length}:${n.open}:${state.notes.length}:${taskById(state, n.taskId)?.status}:${!!taskById(state, n.taskId)?.mergeApproval}:${state.roadmap?.status}:${state.roadmap?.revision}` : '';
     composer.hidden = !n;
     if (!n) {
@@ -170,9 +202,10 @@ export function createBoard(): Page {
     const author = state.agents.find((a) => a.id === n.from);
     setChildren(head,
       h('div.row', null,
-        h('span.badge', { class: NOTE_BADGE[n.type] }, noteLabel(n.type)),
+        badge(n),
         h('span.ref', null, [n.id, n.to ? `${displayName(n.from)} → ${displayName(n.to)}` : displayName(n.from), task ? `${task.id} ${task.title}` : n.taskId].filter(Boolean).join(' · ')),
-        author ? h('button.btn.sm', { onclick: () => { location.hash = `#/dashboard?agent=${encodeURIComponent(author.id)}`; } }, 'Open terminal') : null),
+        author ? h('button.btn.sm', { onclick: () => { location.hash = `#/dashboard?agent=${encodeURIComponent(author.id)}`; } }, 'Open terminal') : null,
+        n.type === 'system' ? h('button.btn.sm', { onclick: () => void dismiss(n.id) }, icon('x', 12), 'Dismiss') : null),
       h('div.thread-title', null, title),
       rest ? h('div.thread-text', null, rest) : null,
     );
@@ -184,6 +217,8 @@ export function createBoard(): Page {
     if (!n.replies.length) items.push(h('div.faint', { style: 'font-size:13px' }, 'No replies yet.'));
     if (n.open && (n.type === 'stuck' || n.type === 'question' || n.type === 'waiting') && !isEscalated(state, n)) {
       items.push(h('div.banner', null, icon('users', 16), h('div.flex1', null, 'Being handled by the crew. This only reaches you if the Captain escalates it.')));
+    } else if (n.type === 'system') {
+      items.push(h('div.banner', null, icon('alert', 16), h('div.flex1', null, 'Posted by Muster. Nothing to answer: dismiss it once you have read it.')));
     } else if (isNeedsYou(n) || (n.open && isEscalated(state, n))) {
       const diffOwner = task ? branchOwnerId(state, task) : undefined;
       const isApproval = (n.type as string) === 'approval' && (task?.status as string) === 'awaiting_approval';
@@ -199,7 +234,9 @@ export function createBoard(): Page {
         ? 'You approved this. The Captain is merging it and pushing to GitHub.'
         : n.type === 'review'
         ? 'Ready for review: the Captain has checked this branch. Approve it and the Captain merges and pushes, merge it yourself, or reply to send it back.'
-        : 'Needs you: the Captain escalated this. Reply below; the answer goes to the agents involved.';
+        : n.type === 'escalation'
+        ? 'Needs you: the Captain escalated this. Reply below; the answer goes to the agents involved.'
+        : `Addressed to you. Reply below; the answer goes to ${displayName(n.from)}.`;
       const hint = isApproval && task?.line === 'new-app'
         ? h('div.faint', { style: 'font-size:12px;margin-top:4px' }, 'Pick the product name in Settings → Project, then back it up to GitHub from Settings → GitHub.') : null;
       const act = isRoadmap
@@ -226,7 +263,7 @@ export function createBoard(): Page {
 
   function render(): void {
     if (!snap) return;
-    const state = snap.state;
+    const state = visibleState(snap.state);
     renderFilters(state);
     const notes = sortNotes(state.notes.filter((n) => matches(n, filter)));
     if (!selected || !state.notes.some((n) => n.id === selected)) selected = notes[0]?.id ?? null;
@@ -238,12 +275,12 @@ export function createBoard(): Page {
 
   return {
     el,
-    update(s) { snap = s; replyInput.placeholder = `Reply as ${displayName('you')}…`; render(); },
+    update(s) { snap = s; weekly.update(s); replyInput.placeholder = `Reply as ${displayName('you')}…`; render(); },
     params(p) {
       const id = p.get('note');
       if (id) {
         selected = id;
-        const n = snap?.state.notes.find((x) => x.id === id);
+        const n = snap?.state.notes.find((x) => x.id === id && !x.dismissed);
         if (n && !matches(n, filter)) filter = 'all';
         render();
         history.replaceState(null, '', '#/board');
