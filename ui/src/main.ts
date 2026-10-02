@@ -8,6 +8,8 @@ import { api } from './api';
 import { agentStatusWord, agoLong, resetsIn, setUserName, sortedAgents } from './util';
 import type { Page } from './page';
 import { createDashboard } from './pages/dashboard';
+import { createRoadmap } from './pages/roadmap';
+import { currentStageId } from './roadmap';
 import { createBoard } from './pages/board';
 import { createChat } from './pages/chat';
 import { createTasks } from './pages/tasks';
@@ -15,9 +17,10 @@ import { createBranches } from './pages/branches';
 import { createVellum } from './pages/vellum';
 import { createSettings } from './pages/settings';
 
-type RouteId = 'dashboard' | 'board' | 'chat' | 'tasks' | 'branches' | 'vellum' | 'settings';
+type RouteId = 'dashboard' | 'roadmap' | 'board' | 'chat' | 'tasks' | 'branches' | 'vellum' | 'settings';
 const ROUTES: { id: RouteId; label: string; icon: string; create: () => Page }[] = [
   { id: 'dashboard', label: 'Dashboard', icon: 'grid', create: createDashboard },
+  { id: 'roadmap', label: 'Roadmap', icon: 'route', create: createRoadmap },
   { id: 'board', label: 'Bulletin board', icon: 'pin', create: createBoard },
   { id: 'chat', label: 'Crew chat', icon: 'chat', create: createChat },
   { id: 'tasks', label: 'Tasks', icon: 'tasks', create: createTasks },
@@ -29,8 +32,12 @@ const ROUTES: { id: RouteId; label: string; icon: string; create: () => Page }[]
 export function parseHash(): { route: RouteId; params: URLSearchParams } {
   const raw = location.hash.replace(/^#\/?/, '');
   const [path, query] = raw.split('?');
-  const route = (ROUTES.find((r) => r.id === path)?.id ?? 'dashboard') as RouteId;
-  return { route, params: new URLSearchParams(query ?? '') };
+  const [head, ...rest] = (path ?? '').split('/');
+  const route = (ROUTES.find((r) => r.id === head)?.id ?? 'dashboard') as RouteId;
+  const params = new URLSearchParams(query ?? '');
+  // #/roadmap/M3 → route "roadmap", params.stage = "M3"
+  if (route === 'roadmap' && rest[0]) params.set('stage', decodeURIComponent(rest[0]));
+  return { route, params };
 }
 
 // ---------- shell ----------
@@ -199,6 +206,11 @@ function renderShell(s: Snapshot): void {
   setCount('board', openNotes, true);
   setCount('chat', state.feed.length);
   setCount('tasks', state.tasks.filter((t) => t.status !== 'cancelled').length);
+  const rm = state.roadmap;
+  const rmEl = navCounts.get('roadmap')!;
+  rmEl.className = 'nav-count mono';
+  rmEl.textContent = !rm ? '' : rm.status === 'draft' && !rm.approvedAt ? 'draft' : currentStageId(rm) ?? '';
+  rmEl.title = rm?.status === 'draft' ? 'Roadmap draft waiting for your approval' : rm ? 'Current stage' : '';
 
   // agents
   const agents = sortedAgents(state);

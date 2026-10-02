@@ -6,7 +6,7 @@ import { z } from 'zod';
 import { musterFetch } from '../client.js';
 import { formatEvidence } from '../core/evidence.js';
 import { formatGuideline } from '../core/stations.js';
-import type { Agent, Evidence, FeedItem, InboxItem, MusterState, Note, Role, StationDef, Task } from '../types.js';
+import type { Agent, Evidence, FeedItem, InboxItem, MusterState, Note, Role, Roadmap, RoadmapProgress, StationDef, Task } from '../types.js';
 import {
   BOARD_FILTERS,
   boardQuery,
@@ -16,6 +16,7 @@ import {
   formatDiff,
   formatInbox,
   formatNoteLine,
+  formatRoadmap,
   formatTaskDetail,
   formatTaskLine,
   formatTasks,
@@ -45,10 +46,20 @@ const fail = (text: string): ToolResult => ({ content: [{ type: 'text', text }],
 const enc = encodeURIComponent;
 const sleep = (ms: number) => new Promise((r) => setTimeout(r, ms));
 
+type RoadmapView = { roadmap: Roadmap | null; progress: RoadmapProgress | null };
+const day = z.string().regex(/^\d{4}-\d{2}-\d{2}$/, 'Use YYYY-MM-DD');
+const upId = (s: string) => s.trim().toUpperCase();
+
+/** Trailer for roadmap writes: says when the change sent the plan back to the user for approval. */
+function draftNote(r: Roadmap | null | undefined): string {
+  return r?.status === 'draft' ? ` The roadmap is a draft (rev ${r.revision}) waiting for the user's approval; keep working on approved goals meanwhile.` : '';
+}
+
 export const CAPTAIN_TOOLS = [
   'spawn_crew', 'post_task', 'assign', 'list_agents', 'list_tasks', 'read_board', 'reply', 'message',
   'read_inbox', 'read_output', 'get_diff', 'run_tests', 'request_review', 'merge_task', 'send_back', 'cancel_task', 'close_crew', 'escalate',
   'add_evidence', 'get_evidence',
+  'roadmap', 'set_roadmap', 'update_stage', 'check_criterion', 'complete_stage', 'add_goal', 'update_goal',
 ] as const;
 export const CREW_TOOLS = [
   'claim_task', 'list_agents', 'list_tasks', 'post_note', 'read_board', 'reply', 'ask_captain',
@@ -179,7 +190,7 @@ export function createMusterServer(opts: MusterServerOptions): McpServer {
 
     tool(
       'post_task',
-      'Post a task to the board. Keep tasks small (one branch, one reviewable change). dependsOn = task ids that must be done first. stations = ordered stations, e.g. ["build","test","design"] ("review" is appended); or line = a line preset name (standard, tested, designed, planning, or a custom one) instead. assignee = agent id to hand it to directly.',
+      'Post a task to the board. Keep tasks small (one branch, one reviewable change). goal = the roadmap goal it belongs to (G3). dependsOn = task ids that must be done first. stations = ordered stations, e.g. ["build","test","design"] ("review" is appended); or line = a line preset name (standard, tested, designed, planning, or a custom one) instead. assignee = agent id to hand it to directly.',
       {
         title: z.string().min(1),
         description: z.string().min(1).describe('What to build, acceptance criteria, files/areas involved'),
@@ -187,9 +198,11 @@ export function createMusterServer(opts: MusterServerOptions): McpServer {
         stations: z.array(z.string()).optional(),
         line: z.string().optional().describe('Name of a line preset; used instead of stations'),
         assignee: z.string().optional(),
+        goal: z.string().optional().describe('Roadmap goal this task delivers, e.g. G3. Set it on every task once there is a roadmap'),
       },
-      async ({ title, description, dependsOn, stations, line, assignee }) => {
-        const t = await api<Task>('/api/tasks', { method: 'POST', body: { title, description, dependsOn, stations, line, assignee, actor: me } });
+      async ({ title, description, dependsOn, stations, line, assignee, goal }) => {
+        const goalId = goal?.trim() ? upId(goal) : undefined;
+        const t = await api<Task>('/api/tasks', { method: 'POST', body: { title, description, dependsOn, stations, line, assignee, goalId, actor: me } });
         return `Posted ${formatTaskLine(t)}`;
       },
     );
@@ -325,6 +338,140 @@ ${r.output}`;
       async ({ text, note }) => {
         const n = await api<Note>('/api/escalate', { method: 'POST', body: { actor: me, text, noteId: note?.trim().toUpperCase() } });
         return `Escalated as ${n.id}. The user was notified; carry on with other work meanwhile.`;
+      },
+    );
+
+    // ---- roadmap ----
+
+    tool(
+      'roadmap',
+      'Read the roadmap: stages with dates, status, progress and health, the current stage with its goals and unticked exit criteria. Read it every turn alongside the board.',
+      {},
+      async () => formatRoadmap(await api<RoadmapView>('/api/roadmap')),
+    );
+
+    const goalShape = z.object({
+      id: z.string().optional().describe('Existing goal id (G3) to keep it; omit for a new goal'),
+      title: z.string().min(1).max(120),
+      description: z.string(),
+      start: day.optional(),
+      due: day.optional(),
+    });
+    const stageShape = z.object({
+      id: z.string().optional().describe('Existing stage id (M2) to keep it; omit for a new stage'),
+      title: z.string().min(1).max(120),
+      description: z.string(),
+      start: day.optional(),
+      due: day.optional(),
+      exitCriteria: z.array(z.string().min(1)).describe('Checkable conditions that prove the stage is done'),
+      goals: z.array(goalShape).max(12),
+    });
+
+    tool(
+      'set_roadmap',
+      'Draft or replan the whole roadmap: 1-12 stages in order, each with dates, exit criteria and up to 12 goals. Replaces the plan; pass the existing ids (M2, G3) of stages and goals you keep. Saving sends it to the user for approval; adding/removing stages or goals or changing dates on an approved roadmap makes it a draft again.',
+      {
+        title: z.string().min(1).max(120).describe('e.g. "wall-education v1.0"'),
+        summary: z.string().min(1).describe('What the product is, one paragraph'),
+        launchDate: day.optional(),
+        stages: z.array(stageShape).min(1).max(12),
+      },
+      async ({ title, summary, launchDate, stages }) => {
+        const body = {
+          actor: me,
+          title,
+          summary,
+          launchDate,
+          stages: stages.map((s) => ({ ...s, id: s.id ? upId(s.id) : undefined, goals: s.goals.map((g) => ({ ...g, id: g.id ? upId(g.id) : undefined })) })),
+        };
+        const v = await api<RoadmapView>('/api/roadmap', { method: 'PUT', body });
+        const r = v?.roadmap;
+        const head =
+          r?.status === 'draft'
+            ? `Saved roadmap draft rev ${r.revision}. The user has been asked to approve it; post no build tasks for new goals until then.`
+            : 'Saved the roadmap.';
+        return `${head}\n${formatRoadmap(v)}`;
+      },
+    );
+
+    tool(
+      'update_stage',
+      'Edit one stage: title, description, dates or status. Changing dates on an approved roadmap sends it back for approval.',
+      {
+        stage: z.string().describe('Stage id, e.g. M2'),
+        title: z.string().min(1).max(120).optional(),
+        description: z.string().optional(),
+        start: day.optional(),
+        due: day.optional(),
+        status: z.enum(['planned', 'active', 'done']).optional(),
+      },
+      async ({ stage, ...patch }) => {
+        const id = upId(stage);
+        const v = await api<RoadmapView>(`/api/roadmap/stages/${enc(id)}`, { method: 'PATCH', body: { actor: me, ...patch } });
+        const s = v?.roadmap?.stages.find((x) => x.id === id);
+        return `Updated ${id}${s ? ` ${clip(s.title, 60)} [${s.status}]` : ''}.${draftNote(v?.roadmap)}`;
+      },
+    );
+
+    tool(
+      'check_criterion',
+      "Tick (or untick with done=false) one exit criterion of a stage. index is 1-based, as numbered in roadmap(). Tick only with evidence: merged tasks, test output, the user's sign-off.",
+      { stage: z.string().describe('Stage id, e.g. M2'), index: z.number().int().min(1), done: z.boolean().optional() },
+      async ({ stage, index, done }) => {
+        const id = upId(stage);
+        const v = await api<RoadmapView>(`/api/roadmap/stages/${enc(id)}/criteria/${index - 1}`, { method: 'POST', body: { actor: me, done: done ?? true } });
+        const s = v?.roadmap?.stages.find((x) => x.id === id);
+        const c = s?.exitCriteria[index - 1];
+        if (!s || !c) return `${done === false ? 'Unticked' : 'Ticked'} ${id} criterion ${index}.`;
+        const n = s.exitCriteria.filter((x) => x.done).length;
+        const all = n === s.exitCriteria.length && s.status !== 'done' ? ` All ticked: complete_stage(${id}).` : '';
+        return `${c.done ? 'Ticked' : 'Unticked'} ${id} criterion ${index} (${n}/${s.exitCriteria.length}): ${clip(c.text, 120)}.${all}`;
+      },
+    );
+
+    tool(
+      'complete_stage',
+      'Mark a stage done once every exit criterion is ticked. The next stage and its first goal become active. Refused while criteria are open.',
+      { stage: z.string().describe('Stage id, e.g. M2') },
+      async ({ stage }) => {
+        const id = upId(stage);
+        const v = await api<RoadmapView>(`/api/roadmap/stages/${enc(id)}/complete`, { method: 'POST', body: { actor: me } });
+        const r = v?.roadmap;
+        const next = r?.stages.find((s) => s.status === 'active');
+        const goal = next && r?.goals.find((g) => g.stageId === next.id && g.status === 'active');
+        if (!next) return `Completed ${id}.${r ? ' Every stage is done.' : ''}`;
+        return `Completed ${id}. Now ${next.id} ${clip(next.title, 60)}${goal ? `: break ${goal.id} ${clip(goal.title, 60)} into tasks (post_task with goal: "${goal.id}")` : ''}.`;
+      },
+    );
+
+    tool(
+      'add_goal',
+      "Add a goal at the end of a stage, e.g. a goal the user gave that isn't on the roadmap yet. It is a plan change: an approved roadmap goes back to the user for approval.",
+      { stage: z.string().describe('Stage id, e.g. M2'), title: z.string().min(1).max(120), description: z.string().min(1), start: day.optional(), due: day.optional() },
+      async ({ stage, title, description, start, due }) => {
+        const id = upId(stage);
+        const v = await api<RoadmapView>('/api/roadmap/goals', { method: 'POST', body: { actor: me, stageId: id, title, description, start, due } });
+        const g = v?.roadmap?.goals.filter((x) => x.stageId === id && x.title === title).at(-1);
+        return `Added ${g ? `${g.id} ` : 'goal '}${clip(title, 60)} to ${id}.${draftNote(v?.roadmap)}`;
+      },
+    );
+
+    tool(
+      'update_goal',
+      'Edit one goal: title, description, dates or status (planned, active, done, cancelled). Goals normally finish on their own when all their tasks are merged.',
+      {
+        goal: z.string().describe('Goal id, e.g. G3'),
+        title: z.string().min(1).max(120).optional(),
+        description: z.string().optional(),
+        status: z.enum(['planned', 'active', 'done', 'cancelled']).optional(),
+        start: day.optional(),
+        due: day.optional(),
+      },
+      async ({ goal, ...patch }) => {
+        const id = upId(goal);
+        const v = await api<RoadmapView>(`/api/roadmap/goals/${enc(id)}`, { method: 'PATCH', body: { actor: me, ...patch } });
+        const g = v?.roadmap?.goals.find((x) => x.id === id);
+        return `Updated ${id}${g ? ` ${clip(g.title, 60)} [${g.status}]` : ''}.${draftNote(v?.roadmap)}`;
       },
     );
   }

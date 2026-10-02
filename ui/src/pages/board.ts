@@ -4,7 +4,7 @@ import { h, icon, setChildren } from '../dom';
 import type { Snapshot } from '../events';
 import type { Page } from '../page';
 import { api } from '../api';
-import { approveAllMerges, approveMerge, approveTask, mergeTask, run, sendBackApproval, showDiffModal } from '../actions';
+import { approveAllMerges, approveMerge, approveRoadmap, approveTask, isRoadmapNote, mergeTask, run, sendBackApproval, sendBackRoadmap, showDiffModal } from '../actions';
 import { evidenceStrip } from '../evidence';
 import { NOTE_BADGE, ageShort, ago, displayName, initial, isEscalated, isNeedsYou, branchOwnerId, ms, noteLabel, roleOf, taskById } from '../util';
 
@@ -136,7 +136,10 @@ export function createBoard(): Page {
       : (n.open || n.replies.length) && n.type !== 'progress' && n.type !== 'system'
         ? h('span.faint', null, `${n.replies.length} ${n.replies.length === 1 ? 'reply' : 'replies'}`) : null;
     const isApproval = (n.type as string) === 'approval' && n.open && (task?.status as string) === 'awaiting_approval';
-    const approveSide = isApproval ? h('span.merge', { role: 'button', onclick: (e: MouseEvent) => { e.stopPropagation(); void approveTask(task!); } }, 'Approve') : null;
+    const roadmapDraft = n.open && isRoadmapNote(state, n) && state.roadmap?.status === 'draft';
+    const approveSide = isApproval ? h('span.merge', { role: 'button', onclick: (e: MouseEvent) => { e.stopPropagation(); void approveTask(task!); } }, 'Approve')
+      : roadmapDraft ? h('span.merge', { role: 'button', title: 'Approve the roadmap draft', onclick: (e: MouseEvent) => { e.stopPropagation(); void approveRoadmap(); } }, 'Approve')
+      : null;
     const side = approveSide ?? side0;
     return h('button.note-row', {
       class: [n.id === selected && 'sel', !n.open && 'closed'],
@@ -149,7 +152,7 @@ export function createBoard(): Page {
   }
 
   function renderThread(state: MusterState, n: Note | undefined): void {
-    const key = n ? `${n.id}:${n.replies.length}:${n.open}:${state.notes.length}:${taskById(state, n.taskId)?.status}:${!!taskById(state, n.taskId)?.mergeApproval}` : '';
+    const key = n ? `${n.id}:${n.replies.length}:${n.open}:${state.notes.length}:${taskById(state, n.taskId)?.status}:${!!taskById(state, n.taskId)?.mergeApproval}:${state.roadmap?.status}:${state.roadmap?.revision}` : '';
     composer.hidden = !n;
     if (!n) {
       setChildren(head, h('div.thread-text', null, 'Nothing selected.'));
@@ -184,7 +187,13 @@ export function createBoard(): Page {
     } else if (isNeedsYou(n) || (n.open && isEscalated(state, n))) {
       const diffOwner = task ? branchOwnerId(state, task) : undefined;
       const isApproval = (n.type as string) === 'approval' && (task?.status as string) === 'awaiting_approval';
-      const msg = isApproval
+      const isRoadmap = isRoadmapNote(state, n);
+      const roadmapDraft = isRoadmap && state.roadmap?.status === 'draft';
+      const msg = isRoadmap
+        ? roadmapDraft
+          ? 'The Captain drafted a roadmap and waits for your approval. Look it over, then approve it or send it back with what should change.'
+          : 'This roadmap note is settled. The roadmap page shows the current plan.'
+        : isApproval
         ? 'Waiting for your approval. Approve to move the task on, or send it back with what needs to change.'
         : n.type === 'review' && task?.mergeApproval
         ? 'You approved this. The Captain is merging it and pushing to GitHub.'
@@ -193,7 +202,12 @@ export function createBoard(): Page {
         : 'Needs you: the Captain escalated this. Reply below; the answer goes to the agents involved.';
       const hint = isApproval && task?.line === 'new-app'
         ? h('div.faint', { style: 'font-size:12px;margin-top:4px' }, 'Pick the product name in Settings → Project, then back it up to GitHub from Settings → GitHub.') : null;
-      const act = isApproval
+      const act = isRoadmap
+        ? h('span.flex', { style: 'display:flex;gap:6px' },
+            h('button.btn.sm', { onclick: () => { location.hash = '#/roadmap'; } }, 'Open roadmap'),
+            roadmapDraft ? h('button.btn.sm', { onclick: () => void sendBackRoadmap() }, 'Send back') : null,
+            roadmapDraft ? h('button.btn.sm.merge', { onclick: () => void approveRoadmap() }, 'Approve') : null)
+        : isApproval
         ? h('span.flex', { style: 'display:flex;gap:6px' },
             diffOwner ? h('button.btn.sm', { onclick: () => void showDiffModal(diffOwner, task!.branch) }, 'View diff') : null,
             h('button.btn.sm', { onclick: () => void sendBackApproval(task!) }, 'Send back'),

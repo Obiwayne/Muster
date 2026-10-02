@@ -1,6 +1,6 @@
 // Actions shared by several pages: add agent, diff modal, merge, role changes, caches.
 import type { Agent, MusterState, Role, Task } from '../../src/types';
-import { api, type DiffResult, type ProjectInfo } from './api';
+import { api, type DiffResult, type ProjectInfo, type RoadmapResponse } from './api';
 import { confirmDialog, promptDialog, h, icon, showModal, showPopover, toast, select } from './dom';
 import { events } from './events';
 import { branchOwnerId, summarizeTests } from './util';
@@ -151,6 +151,32 @@ export async function sendBackApproval(task: Task): Promise<void> {
   const note = await promptDialog(`Send ${task.id} back?`, 'Say what needs to change. The note goes to the agent who did the work.', 'Send back', 'What needs to change?');
   if (!note) return;
   await run(api.reject(task.id, note), `Sent ${task.id} back`);
+}
+
+// ---- roadmap approval (the Captain drafts it; the approval note has no taskId) ----
+/** An open approval note about the roadmap draft rather than a task. */
+export function isRoadmapNote(state: MusterState, n: { id: string; type: string; taskId?: string; text: string }): boolean {
+  if (n.type !== 'approval' || n.taskId) return false;
+  return state.roadmap?.noteId === n.id || /\broadmap\b/i.test(n.text);
+}
+
+export async function approveRoadmap(): Promise<RoadmapResponse | undefined> {
+  const ok = await confirmDialog('Approve the roadmap?', 'The Captain starts the first open stage and breaks its first goal into tasks.', 'Approve');
+  if (!ok) return undefined;
+  return run(api.approveRoadmap(), 'Roadmap approved');
+}
+
+export async function sendBackRoadmap(): Promise<RoadmapResponse | undefined> {
+  const note = await promptDialog('Send the roadmap back?', 'Say what should change. The Captain revises the draft and asks you again.', 'Send back', 'What should change?');
+  if (!note) return undefined;
+  return run(api.rejectRoadmap(note), 'Sent the roadmap back to the Captain');
+}
+
+/** Ask the Captain something about the plan (POST /api/ask). `prefix` frames the request. */
+export async function askCaptain(title: string, text: string, placeholder: string, prefix: string): Promise<void> {
+  const answer = await promptDialog(title, text, 'Send to Captain', placeholder);
+  if (!answer) return;
+  await run(api.ask(`${prefix}${answer}`), 'Sent to the Captain');
 }
 
 // ---- roles and closing ----

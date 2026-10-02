@@ -10,6 +10,7 @@ import * as gitOps from '../core/git.js';
 import type { MusterPaths } from '../core/paths.js';
 import type { Store } from '../core/store.js';
 import * as lines from '../core/lines.js';
+import * as roadmap from '../core/roadmap.js';
 import * as stations from '../core/stations.js';
 import * as tasks from '../core/tasks.js';
 import { readPartial } from '../core/config.js';
@@ -432,6 +433,7 @@ ${pushed ? `Pushed ${base} to origin.` : `Push to origin failed: ${(r.stderr || 
         dependsOn: body.dependsOn,
         ...taskLine(body),
         assignee: body.assignee || undefined,
+        goalId: body.goalId || undefined,
         actor: str(body.actor, 'actor'),
       }, stations.stationRoles(ctx.paths)),
     );
@@ -510,6 +512,55 @@ ${pushed ? `Pushed ${base} to origin.` : `Push to origin failed: ${(r.stderr || 
     return task;
   });
 
+  // ------------------------------------------------------------------ roadmap (core/roadmap.ts)
+  const roadmapReply = () => ({ roadmap: state().roadmap ?? null, progress: roadmap.computeProgress(state(), roadmap.localDate()) });
+  /** A draft waiting for you: toast, and notify when the approval note is new (re-saving a draft only updates it). */
+  const announceRoadmap = (c: roadmap.RoadmapChange) => {
+    if (!c.note) return;
+    if (c.noteOpened) ctx.notify('Muster: roadmap needs your approval', c.note.text);
+    ctx.toast('info', c.noteOpened ? c.note.text : `Roadmap draft updated: ${c.roadmap.title}`);
+  };
+  const roadmapWrite = (fn: () => roadmap.RoadmapChange) => {
+    announceRoadmap(mutate(fn));
+    return roadmapReply();
+  };
+  route('GET', '/api/roadmap', roadmapReply);
+  route('PUT', '/api/roadmap', ({ body }) =>
+    roadmapWrite(() => roadmap.setRoadmap(state(), { title: body.title, summary: body.summary, launchDate: body.launchDate, stages: body.stages }, str(body.actor, 'actor'))),
+  );
+  route('POST', '/api/roadmap/approve', ({ body }) => {
+    const r = mutate(() => roadmap.approveRoadmap(state(), str(body.actor, 'actor')));
+    ctx.toast('info', `Roadmap approved (revision ${r.revision})`);
+    return roadmapReply();
+  });
+  route('POST', '/api/roadmap/reject', ({ body }) => {
+    mutate(() => roadmap.rejectRoadmap(state(), str(body.actor, 'actor'), body.note));
+    return roadmapReply();
+  });
+  route('PATCH', '/api/roadmap/stages/:id', ({ params, body }) => {
+    const before = state().roadmap?.stages.find((s) => s.id === params.id.toUpperCase())?.status;
+    const c = mutate(() => roadmap.patchStage(state(), params.id, body, str(body.actor, 'actor')));
+    announceRoadmap(c);
+    if (before !== 'done' && c.stage.status === 'done') ctx.toast('info', `Stage ${c.stage.id} ${c.stage.title} complete`);
+    return roadmapReply();
+  });
+  route('POST', '/api/roadmap/stages/:id/criteria/:index', ({ params, body }) => {
+    if (!/^\d+$/.test(params.index)) throw badRequest('index must be a whole number from 0');
+    mutate(() => roadmap.tickCriterion(state(), params.id, Number(params.index), body.done, str(body.actor, 'actor')));
+    return roadmapReply();
+  });
+  route('POST', '/api/roadmap/stages/:id/complete', ({ params, body }) => {
+    const { stage, next } = mutate(() => roadmap.completeStage(state(), params.id, str(body.actor, 'actor'), body.force === true));
+    ctx.toast('info', `Stage ${stage.id} ${stage.title} complete${next ? `; ${next.id} ${next.title} is next` : '; the roadmap is done'}`);
+    return roadmapReply();
+  });
+  route('POST', '/api/roadmap/goals', ({ body }) => {
+    const c = mutate(() => roadmap.addGoal(state(), { stageId: body.stageId, title: body.title, description: body.description, start: body.start, due: body.due }, str(body.actor, 'actor')));
+    announceRoadmap(c);
+    return { ...roadmapReply(), goal: c.goal };
+  });
+  route('PATCH', '/api/roadmap/goals/:id', ({ params, body }) => roadmapWrite(() => roadmap.patchGoal(state(), params.id, body, str(body.actor, 'actor'))));
+
   // ------------------------------------------------------------------ board, chat, inbox
   route('GET', '/api/notes', ({ query }) =>
     board.listNotes(state(), {
@@ -570,6 +621,7 @@ ${pushed ? `Pushed ${base} to origin.` : `Push to origin failed: ${(r.stderr || 
       if (denied) throw forbidden(denied);
       const body = req.method === 'GET' || req.method === 'HEAD' ? {} : await readBody(req);
       if (req.method !== 'GET' && req.method !== 'HEAD') applyIdentity(caller, path, body);
+      if (!caller.human) agents.touch(caller.actor);
       const result = await r.handler({ params, query: url.searchParams, body });
       if (result instanceof FileReply) return sendFile(res, result);
       sendJson(res, 200, result ?? null);

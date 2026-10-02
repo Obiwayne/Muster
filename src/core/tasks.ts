@@ -3,6 +3,7 @@
 import { STATION_ROLE, type Agent, type MusterConfig, type MusterState, type Note, type Role, type Task, type TaskBranchInput, type TaskEvent } from '../types.js';
 import { addFeed, addInbox, captainOf, closeNoteIfOpen, findAgent, HUMAN, idNum, isCaptain, nowIso, postNote, replyNote, requireActor, requireAgent, SYSTEM } from './board.js';
 import { badRequest, conflict, forbidden, notFound } from './errors.js';
+import { activateGoal, advanceRoadmap, goalForTask } from './roadmap.js';
 import { nextId } from './store.js';
 import { assertNotPaused } from './usage.js';
 
@@ -74,6 +75,7 @@ export interface TaskInput {
   stations?: string[];
   line?: string; // the line the stations came from, recorded on the task
   assignee?: string;
+  goalId?: string; // roadmap goal the task delivers (404 unknown; a planned goal becomes active)
   actor: string;
 }
 
@@ -81,6 +83,7 @@ export function createTask(state: MusterState, config: MusterConfig, input: Task
   const actor = requireActor(state, input.actor);
   if (!input.title?.trim()) throw badRequest('Task title is empty');
   const dependsOn = (input.dependsOn ?? []).map((d) => requireTask(state, d).id);
+  const goal = input.goalId ? goalForTask(state, input.goalId) : undefined;
   // Everything that can refuse happens before the task exists, so a 409 leaves nothing half-created.
   if (input.assignee) {
     requireCaptainOrYou(state, actor, 'assign tasks');
@@ -95,6 +98,7 @@ export function createTask(state: MusterState, config: MusterConfig, input: Task
     description: input.description?.trim() ?? '',
     dependsOn,
     ...(input.line ? { line: input.line } : {}),
+    ...(goal ? { goalId: goal.id } : {}),
     stations: [...stations, 'review'],
     stationIndex: 0,
     status: 'ready',
@@ -105,7 +109,8 @@ export function createTask(state: MusterState, config: MusterConfig, input: Task
   };
   event(task, actor, 'created');
   state.tasks.push(task);
-  addFeed(state, { kind: 'event', from: actor, taskId: task.id, text: `posted ${task.id} ${task.title}` });
+  addFeed(state, { kind: 'event', from: actor, taskId: task.id, text: `posted ${task.id} ${task.title}${goal ? ` (goal ${goal.id})` : ''}` });
+  if (goal?.status === 'planned') activateGoal(goal);
   if (stationRole(currentStation(task), roles) === 'human') awaitApproval(state, task, actor, 'the task starts at an approval station');
   else if (input.assignee) assignTask(state, task.id, input.assignee, actor);
   recomputeReadiness(state);
@@ -483,6 +488,7 @@ export function cancelTask(state: MusterState, taskId: string, actor: string, re
   }
   addFeed(state, { kind: 'event', from: actor, taskId: task.id, text: `cancelled ${task.id} ${task.title}: ${why}` });
   recomputeReadiness(state);
+  advanceRoadmap(state); // the goal's other tasks may all be merged now
   return task;
 }
 
@@ -526,6 +532,7 @@ export function markMerged(state: MusterState, task: Task, actor: string): void 
   for (const n of state.notes) if (n.type === 'review' && n.taskId === task.id) closeNoteIfOpen(n);
   addFeed(state, { kind: 'event', from: actor, taskId: task.id, text: `merged ${task.id} ${task.title}${task.branch ? ` (${task.branch})` : ''}` });
   recomputeReadiness(state);
+  advanceRoadmap(state);
 }
 
 /** True when the agent's latest task action was finishing or handing on, and it holds nothing now. */

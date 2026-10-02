@@ -5,6 +5,7 @@
 //   PORT=47801 MOCK_TOKEN=abc node ui/dev/mock-server.mjs
 //   MOCK_EMPTY=1 node ui/dev/mock-server.mjs   → no agents (empty-state dashboard)
 //   MOCK_STRICT_DIFF=1 …                         → /diff ignores ?branch= (today's contract)
+//   MOCK_ROADMAP=none|draft …                    → no roadmap / a draft waiting for approval (default: approved, M3 active)
 //
 // With `npx vite ui` (dev), set VITE_MUSTER_TOKEN=dev-token; vite proxies /api and /ws here.
 // Implements the HTTP API and WebSockets from docs/ARCHITECTURE.md with in-memory state.
@@ -110,8 +111,94 @@ const state = {
     updatedAt: iso(0.2), perAgentCostUsd: {}, paused: false, weeklyWarned: false,
   },
   goal: EMPTY ? undefined : { text: 'Build the invite-link sharing flow', at: iso(42) },
-  nextIds: { agent: 6, task: 9, note: 21, feed: 1, inbox: 1 },
+  nextIds: { agent: 6, task: 9, note: 22, feed: 1, inbox: 1, stage: 6, goal: 13 },
 };
+
+// ---------------------------------------------------------------- roadmap (dates relative to today)
+const ROADMAP_MODE = process.env.MOCK_ROADMAP ?? 'approved';
+const dayStr = (offset) => { const d = new Date(now); d.setDate(d.getDate() + offset); return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`; };
+function seedRoadmap() {
+  if (EMPTY || ROADMAP_MODE === 'none') return;
+  const draft = ROADMAP_MODE === 'draft';
+  const stage = (id, title, description, start, due, status, goalIds, exitCriteria, completedAt) => ({ id, title, description, start: dayStr(start), due: dayStr(due), status: draft ? 'planned' : status, goalIds, exitCriteria, ...(completedAt !== undefined && !draft ? { completedAt: dayStr(completedAt) } : {}) });
+  const goal = (id, stageId, title, description, status, start, due) => ({ id, stageId, title, description, status: draft ? 'planned' : status, ...(start !== undefined ? { start: dayStr(start), due: dayStr(due) } : {}) });
+  const crit = (text, done) => ({ text, done: draft ? false : done });
+  state.roadmap = {
+    title: 'wall-education v1.0', summary: 'A shared class wall: teachers post, students react, everyone sees it live.',
+    launchDate: dayStr(43), status: draft ? 'draft' : 'approved', revision: draft ? 0 : 1, ...(draft ? { noteId: 'N21' } : { approvedAt: iso(60 * 24 * 20) }),
+    createdBy: 'captain', updatedAt: iso(30),
+    stages: [
+      stage('M1', 'Foundations', 'Repo, CI, design tokens and the app shell.', -24, -13, 'done', ['G1', 'G2'], [crit('CI runs on every push', true)], -13),
+      stage('M2', 'Accounts & classes', 'Sign-in, roles and classes with join codes.', -17, -1, 'done', ['G3', 'G4', 'G5'], [crit('A teacher can create a class', true)], -1),
+      stage('M3', 'Sharing & invites', 'Teachers share a wall with a link, set who can post, and pull in a class roster.', -3, 15, 'active', ['G7', 'G8', 'G9'],
+        [crit('A teacher shares a wall by link', false), crit('Roles are enforced on every API route', false), crit('A 30-student roster imports cleanly', false)]),
+      stage('M4', 'Wall editor', 'The wall canvas: posts, layout and live presence.', 11, 36, 'planned', ['G10', 'G11', 'G12'], [crit('Posts sync between two browsers in under a second', false)]),
+      stage('M5', 'Launch v1.0', 'Hardening, load test and the launch checklist.', 33, 42, 'planned', ['G6'], [crit('Load test: 500 concurrent students', false)]),
+    ],
+    goals: [
+      goal('G1', 'M1', 'Repo and CI', '', 'done'), goal('G2', 'M1', 'Design tokens', '', 'done'),
+      goal('G3', 'M2', 'Email sign-in + magic links', '', 'done'), goal('G4', 'M2', 'Teacher / student roles', '', 'done'), goal('G5', 'M2', 'Class join codes', '', 'done'),
+      goal('G7', 'M3', 'Invite-link sharing flow', 'Share a wall by link; revoke it; email the invite.', 'active', -3, 6),
+      goal('G8', 'M3', 'Share permissions & roles', 'starts when invite flow merges', 'planned', 3, 9),
+      goal('G9', 'M3', 'Class roster import', 'CSV + Google Classroom', 'planned', 6, 15),
+      goal('G10', 'M4', 'Wall canvas & layout', '', 'planned'), goal('G11', 'M4', 'Post types: text, image, link', '', 'planned'), goal('G12', 'M4', 'Realtime presence', '', 'planned'),
+      goal('G6', 'M5', 'Hardening', '', 'planned'),
+    ],
+  };
+  if (draft) {
+    state.notes.push({ id: 'N21', type: 'approval', from: 'captain', text: `Roadmap ready for your approval\nwall-education v1.0 · 5 stages · launch ${dayStr(43)}`, createdAt: iso(5), open: true, replies: [] });
+    return;
+  }
+  for (const t of state.tasks) t.goalId = t.id === 'T8' ? 'G5' : 'G7';
+  // merged history so the panels have data
+  const merged = [['T90', 'Class join codes', 'G5', 1], ['T91', 'Teacher / student roles', 'G4', 2], ['T92', 'Email sign-in + magic links', 'G3', 3], ['T93', 'Roles middleware', 'G4', 3], ['T94', 'Design tokens', 'G2', 6], ['T95', 'CI pipeline', 'G1', 8], ['T96', 'App shell', 'G2', 9]];
+  for (const [id, title, goalId, daysAgo] of merged) state.tasks.push({ ...task(id, title, 'merged', ['build', 'review'], 1, { created: daysAgo * 1440 + 300, updated: daysAgo * 1440 }), goalId });
+}
+seedRoadmap();
+
+function roadmapProgress() {
+  const r = state.roadmap;
+  if (!r) return null;
+  const today = dayStr(0);
+  const goals = {};
+  for (const g of r.goals) {
+    const ts = state.tasks.filter((t) => t.goalId === g.id && t.status !== 'cancelled');
+    const done = ts.filter((t) => t.status === 'merged').length;
+    const agents = [...new Set(ts.filter((t) => t.status !== 'merged' && t.assignee).map((t) => t.assignee))];
+    goals[g.id] = { done, total: ts.length, percent: ts.length ? Math.round((done / ts.length) * 100) : 0, agents };
+  }
+  const stages = {};
+  const rank = { late: 3, at_risk: 2, on_track: 1, not_started: 0 };
+  let worst = null;
+  for (const s of r.stages) {
+    const gs = r.goals.filter((g) => g.stageId === s.id && g.status !== 'cancelled');
+    const done = gs.reduce((n, g) => n + goals[g.id].done, 0);
+    const total = gs.reduce((n, g) => n + goals[g.id].total, 0);
+    const percent = total ? Math.round((done / total) * 100) : 0;
+    let health = 'on_track';
+    if (s.status === 'done') health = 'done';
+    else if (s.status === 'planned' && (!s.start || s.start > today)) health = 'not_started';
+    else if (s.due && today > s.due) health = 'late';
+    else if (s.start && s.due) {
+      const expected = (Date.parse(today) - Date.parse(s.start)) / Math.max(1, Date.parse(s.due) - Date.parse(s.start));
+      if (percent / 100 < expected - 0.15) health = 'at_risk';
+    }
+    if (health !== 'done' && (worst === null || rank[health] > rank[worst])) worst = health;
+    stages[s.id] = { done, total, percent, health, criteriaDone: s.exitCriteria.filter((c) => c.done).length, criteriaTotal: s.exitCriteria.length };
+  }
+  const all = r.goals.filter((g) => g.status !== 'cancelled').map((g) => goals[g.id]);
+  const done = all.reduce((n, g) => n + g.done, 0);
+  const total = all.reduce((n, g) => n + g.total, 0);
+  const cur = r.stages.find((s) => s.status !== 'done');
+  const curGoal = cur && r.goals.find((g) => g.stageId === cur.id && g.status === 'active');
+  return {
+    overall: { done, total, percent: total ? Math.round((done / total) * 100) : 0 },
+    health: worst ?? 'done',
+    daysToLaunch: r.launchDate ? Math.round((Date.parse(r.launchDate) - Date.parse(today)) / 86400000) : undefined,
+    currentStageId: cur?.id, currentGoalId: curGoal?.id, stages, goals,
+  };
+}
+const roadmapOut = () => ({ roadmap: state.roadmap ?? null, progress: roadmapProgress() });
 
 function nextMonday() {
   const d = new Date(now);
@@ -447,6 +534,48 @@ async function api(req, url) {
     if (cap) cap.status = 'working';
     broadcast();
     return { ok: true };
+  }
+  if (m === 'GET' && p === '/api/roadmap') return roadmapOut();
+  if (m === 'POST' && p === '/api/roadmap/approve') {
+    const r = state.roadmap;
+    need(r && r.status === 'draft', 409, 'The roadmap is not a draft');
+    r.status = 'approved'; r.revision++; r.approvedAt = new Date().toISOString();
+    for (const n of state.notes) if (n.id === r.noteId) n.open = false;
+    delete r.noteId;
+    const first = r.stages.find((s) => s.status !== 'done');
+    if (first) { first.status = 'active'; const g = r.goals.find((x) => x.id === first.goalIds[0]); if (g) g.status = 'active'; }
+    addFeed('event', 'you', undefined, `you approved the roadmap (revision ${r.revision})`);
+    broadcast();
+    return roadmapOut();
+  }
+  if (m === 'POST' && p === '/api/roadmap/reject') {
+    const b = await body(req);
+    need(b.note, 400, 'note is required');
+    need(state.roadmap?.status === 'draft', 409, 'The roadmap is not a draft');
+    addFeed('message', 'you', 'captain', `Roadmap sent back: ${b.note}`);
+    broadcast();
+    return roadmapOut();
+  }
+  let rmm;
+  if (m === 'POST' && (rmm = /^\/api\/roadmap\/stages\/([^/]+)\/criteria\/(\d+)$/.exec(p))) {
+    const b = await body(req);
+    const s = state.roadmap?.stages.find((x) => x.id === decodeURIComponent(rmm[1]));
+    need(s, 404, 'No such stage');
+    const c = s.exitCriteria[Number(rmm[2])];
+    need(c, 404, 'No such criterion');
+    c.done = !!b.done;
+    if (c.done) { c.doneAt = new Date().toISOString(); c.by = 'you'; } else { delete c.doneAt; delete c.by; }
+    broadcast();
+    return roadmapOut();
+  }
+  if (m === 'POST' && (rmm = /^\/api\/roadmap\/stages\/([^/]+)\/complete$/.exec(p))) {
+    const r = state.roadmap;
+    const i = r ? r.stages.findIndex((x) => x.id === decodeURIComponent(rmm[1])) : -1;
+    need(i >= 0, 404, 'No such stage');
+    r.stages[i].status = 'done'; r.stages[i].completedAt = new Date().toISOString();
+    if (r.stages[i + 1]) r.stages[i + 1].status = 'active';
+    broadcast();
+    return roadmapOut();
   }
   if (m === 'GET' && p === '/api/tasks') return state.tasks;
   if (m === 'POST' && p === '/api/tasks') {
