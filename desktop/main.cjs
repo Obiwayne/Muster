@@ -129,7 +129,9 @@ function showPicker() {
   buildMenu();
 }
 
-// Ask the CLI whether the folder is ready; if not, offer to set it up (local git only, nothing is uploaded).
+// Ask the CLI whether the folder is ready. If not, Muster sets it up on its own: a local git repo is how the crew
+// gets separate copies to work in, and it stays on this PC (GitHub is offered later, from the dashboard, once
+// work is merged). Only an unusually large folder asks first, since that is often the wrong folder.
 async function confirmSetup(dir) {
   const r = await cli(['init', '--inspect'], dir);
   let info;
@@ -139,17 +141,14 @@ async function confirmSetup(dir) {
     return { ok: false, error: r.out || `Could not look at ${dir}.` };
   }
   if (info.state === 'ready') return { ok: true, root: info.root, create: false };
+  if (!info.large) return { ok: true, root: info.root, create: true };
   const name = path.basename(info.root);
-  let detail = `${name} isn't set up for Muster yet. Muster will make it a local git repo and commit the files that are there now. Nothing is uploaded to GitHub.`;
-  if (info.large) detail += `
-
-Heads up: that is ${info.files.toLocaleString()} files (${Math.round(info.bytes / 1048576).toLocaleString()} MB), more than usual. The first commit may take a while.`;
   const { response } = await dialog.showMessageBox(win, {
     type: 'question',
-    title: 'Set up this folder?',
-    message: `Set up ${name} for Muster?`,
-    detail,
-    buttons: ['Set up and open', 'Cancel'],
+    title: 'Open a large folder?',
+    message: `${name} is a big folder`,
+    detail: `It has ${info.files.toLocaleString()} files (${Math.round(info.bytes / 1048576).toLocaleString()} MB), more than a project usually does. Muster keeps a history of the folder on this PC so the crew can work on it, and the first time may take a while. Nothing is uploaded.`,
+    buttons: ['Open it', 'Cancel'],
     defaultId: 0,
     cancelId: 1,
   });

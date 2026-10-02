@@ -1,10 +1,12 @@
 // muster-mcp: the tools each Muster agent uses to talk to the orchestrator.
 // Built as a factory so tests can inject a fake API and use an in-memory transport.
+import { readFileSync } from 'node:fs';
 import { McpServer } from '@modelcontextprotocol/sdk/server/mcp.js';
 import { z } from 'zod';
 import { musterFetch } from '../client.js';
+import { formatEvidence } from '../core/evidence.js';
 import { formatGuideline } from '../core/stations.js';
-import type { Agent, FeedItem, InboxItem, MusterState, Note, Role, StationDef, Task } from '../types.js';
+import type { Agent, Evidence, FeedItem, InboxItem, MusterState, Note, Role, StationDef, Task } from '../types.js';
 import {
   BOARD_FILTERS,
   boardQuery,
@@ -20,6 +22,7 @@ import {
   formatTests,
   isTaskId,
   stationLabel,
+  truncateHead,
   truncateTail,
 } from './format.js';
 
@@ -45,10 +48,11 @@ const sleep = (ms: number) => new Promise((r) => setTimeout(r, ms));
 export const CAPTAIN_TOOLS = [
   'spawn_crew', 'post_task', 'assign', 'list_agents', 'list_tasks', 'read_board', 'reply', 'message',
   'read_inbox', 'read_output', 'get_diff', 'run_tests', 'request_review', 'send_back', 'cancel_task', 'close_crew', 'escalate',
+  'add_evidence', 'get_evidence',
 ] as const;
 export const CREW_TOOLS = [
   'claim_task', 'list_agents', 'list_tasks', 'post_note', 'read_board', 'reply', 'ask_captain',
-  'message_crew', 'handoff', 'report_done', 'read_inbox',
+  'message_crew', 'handoff', 'report_done', 'read_inbox', 'add_evidence',
 ] as const;
 
 export function createMusterServer(opts: MusterServerOptions): McpServer {
@@ -132,6 +136,22 @@ export function createMusterServer(opts: MusterServerOptions): McpServer {
     return formatInbox(items, now());
   });
 
+  tool(
+    'add_evidence',
+    'Attach proof that a task works, so the Captain and the user can see it: files in your worktree (screenshots, test output, assertions.md; a folder adds every file in it) and/or text (saved as notes.md). The Captain cannot flag a task ready for merge without evidence. task defaults to the task you hold.',
+    {
+      files: z.array(z.string()).optional().describe('Paths relative to your worktree, e.g. [".muster-evidence/T3"]'),
+      text: z.string().optional().describe('Inline evidence, e.g. test output or a checklist'),
+      summary: z.string().min(1).describe('What the evidence shows, in a line or two'),
+      task: z.string().optional(),
+    },
+    async ({ files, text, summary, task }) => {
+      const t = task ? await findTask(task) : await myTask();
+      const e = await api<Evidence>(`/api/tasks/${enc(t.id)}/evidence`, { method: 'POST', body: { actor: me, files: files ?? [], text, summary } });
+      return `Attached ${e.id} to ${t.id}: ${e.files.map((f) => f.name).join(', ')}.`;
+    },
+  );
+
   if (role === 'captain') registerCaptain();
   else registerCrew();
   return server;
@@ -193,6 +213,40 @@ export function createMusterServer(opts: MusterServerOptions): McpServer {
       const r = await api<{ text: string }>(`/api/agents/${enc(agent)}/output?lines=${lines ?? 80}`);
       return truncateTail((r.text ?? '').trimEnd(), 20000) || '(no output)';
     });
+
+    tool(
+      'get_evidence',
+      "Show a task's evidence: each add_evidence entry, the text files inline, and the absolute path of every image or video so you can open it with Read. Check it before request_review.",
+      { task: z.string() },
+      async ({ task }) => {
+        const state = await getState();
+        const t = state.tasks.find((x) => x.id.toUpperCase() === task.trim().toUpperCase());
+        if (!t) throw new Error(`No task ${task}.`);
+        if (!t.evidence?.length) return `${t.id} has no evidence yet. Its last working station attaches it with add_evidence; or test it yourself and call add_evidence(task: "${t.id}", text, summary).`;
+        const root = state.repoRoot.replace(/\\/g, '/');
+        const out: string[] = [formatEvidence(t)];
+        let budget = 12_000;
+        for (const e of t.evidence) {
+          for (const f of e.files) {
+            const path = `${root}/.muster/evidence/${t.id}/${e.id}/${f.name}`;
+            if (f.kind !== 'text' || budget <= 0) {
+              out.push(`${e.id} ${f.kind}: ${path}`);
+              continue;
+            }
+            let body = '';
+            try {
+              body = readFileSync(path, 'utf8');
+            } catch {
+              body = '(missing on disk)';
+            }
+            const text = truncateHead(body.trim(), Math.min(budget, 4000));
+            budget -= text.length;
+            out.push(`--- ${e.id} ${f.name} (${path})`, text);
+          }
+        }
+        return out.join('\n');
+      },
+    );
 
     tool(
       'get_diff',
@@ -268,8 +322,10 @@ export function createMusterServer(opts: MusterServerOptions): McpServer {
     tool('claim_task', 'Claim the next ready task for your role (oldest first). Returns the task, or nothing if none is ready.', {}, async () => {
       const t = await api<Task | null>('/api/tasks/claim', { method: 'POST', body: { actor: me } });
       if (!t) return 'No ready task for you right now. Check read_board for questions you can answer, or wait for an assignment.';
-      const st = await api<StationDef | null>(`/api/stations/${enc(t.stations[t.stationIndex] ?? 'build')}`).catch(() => null);
-      const guide = typeof st?.guideline === 'string' ? formatGuideline(st.name, st.guideline) : '';
+      // The brief carries the guideline, the station's skills and (at the last working station) the evidence ask.
+      const brief = await api<{ text: string }>(`/api/tasks/${enc(t.id)}/brief`).then((b) => b?.text ?? '').catch(() => null);
+      const st = brief === null ? await api<StationDef | null>(`/api/stations/${enc(t.stations[t.stationIndex] ?? 'build')}`).catch(() => null) : null;
+      const guide = brief ?? (typeof st?.guideline === 'string' ? formatGuideline(st.name, st.guideline, st.skills ?? []) : '');
       return `Claimed ${formatTaskDetail(t)}${guide ? `\n\n${guide}` : ''}`;
     });
 

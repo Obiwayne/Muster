@@ -1,4 +1,5 @@
 // The orchestrator process: HTTP API, WebSockets, static dashboard, and wiring of store + agents.
+import { execFileSync } from 'node:child_process';
 import { existsSync, readFileSync, rmSync, statSync, writeFileSync } from 'node:fs';
 import { createServer, type IncomingMessage, type Server, type ServerResponse } from 'node:http';
 import { extname, join, resolve, sep } from 'node:path';
@@ -8,6 +9,7 @@ import { resolveClaudePath } from '../core/claude.js';
 import { loadConfig, saveConfig, type ConfigPatch } from '../core/config.js';
 import { notify } from '../core/notify.js';
 import { seedStations } from '../core/stations.js';
+import { ensureEvidenceIgnored, EVIDENCE_DIR } from '../core/evidence.js';
 import { ensureDirs, MUSTER_HOME, musterPaths } from '../core/paths.js';
 import { Store } from '../core/store.js';
 import { newSecret, removeHumanToken, writeHumanToken } from '../core/tokens.js';
@@ -282,6 +284,12 @@ export async function startOrchestrator(opts: OrchestratorOptions): Promise<Orch
     if (r.action !== 'current') log(`git ref guard ${r.action}: ${r.file}${r.chained ? ` (chains ${r.chained})` : ''}`);
   } catch (e) {
     log(`could not install the git ref guard: ${e instanceof Error ? e.message : e}`);
+  }
+  try {
+    const common = execFileSync('git', ['rev-parse', '--path-format=absolute', '--git-common-dir'], { cwd: paths.root, encoding: 'utf8', windowsHide: true }).trim();
+    if (ensureEvidenceIgnored(common)) log(`added ${EVIDENCE_DIR}/ to ${join(common, 'info', 'exclude')}`);
+  } catch (e) {
+    log(`could not ignore ${EVIDENCE_DIR}/ in git: ${e instanceof Error ? e.message : e}`);
   }
   log(`listening on http://127.0.0.1:${port} for ${paths.root}`);
 

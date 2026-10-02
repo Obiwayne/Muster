@@ -5,6 +5,8 @@ import { fileURLToPath } from 'node:url';
 
 // src/core/paths.ts and dist/core/paths.js both sit two levels below the package root.
 export const MUSTER_HOME = resolve(dirname(fileURLToPath(import.meta.url)), '..', '..');
+/** Muster's Claude Code plugin (its skills reach agents as muster:<name> through --plugin-dir). */
+export const PLUGIN_DIR = join(MUSTER_HOME, 'plugin');
 
 export interface MusterPaths {
   root: string;

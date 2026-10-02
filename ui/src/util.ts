@@ -182,8 +182,10 @@ export function agentStatusLong(state: MusterState, a: Agent): { text: string; s
   return { text: a.status, stuck: false };
 }
 
+/** Captain first, then the agents that are running, then stopped ones (so they don't take the first dashboard page). */
 export function sortedAgents(state: MusterState): Agent[] {
-  return [...state.agents].sort((a, b) => (a.role === 'captain' ? -1 : b.role === 'captain' ? 1 : 0));
+  const rank = (a: Agent) => (a.role === 'captain' ? 0 : a.status === 'stopped' ? 2 : 1);
+  return [...state.agents].sort((a, b) => rank(a) - rank(b));
 }
 
 export function idNum(id: string): number {
