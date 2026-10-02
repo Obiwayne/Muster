@@ -172,7 +172,7 @@ export function createBoard(): Page {
         ? 'Ready for review: the Captain has checked this branch. Merge it from Tasks or Branches, or reply to send it back.'
         : 'Needs you: the Captain escalated this. Reply below; the answer goes to the agents involved.';
       const hint = isApproval && task?.line === 'new-app'
-        ? h('div.faint', { style: 'font-size:12px;margin-top:4px' }, 'Pick the product name in Settings → Project, then Create GitHub repo.') : null;
+        ? h('div.faint', { style: 'font-size:12px;margin-top:4px' }, 'Pick the product name in Settings → Project, then back it up to GitHub from Settings → GitHub.') : null;
       const act = isApproval
         ? h('span.flex', { style: 'display:flex;gap:6px' },
             diffOwner ? h('button.btn.sm', { onclick: () => void showDiffModal(diffOwner, task!.branch) }, 'View diff') : null,
