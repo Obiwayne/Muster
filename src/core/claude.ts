@@ -1,5 +1,6 @@
 // Everything needed to launch `claude` for an agent: executable path, config files and argv.
 import { existsSync, mkdirSync, readFileSync, writeFileSync } from 'node:fs';
+import { homedir } from 'node:os';
 import { delimiter, dirname, join } from 'node:path';
 import { defaultLineName, listLines } from './lines.js';
 import { listStations } from './stations.js';
@@ -112,11 +113,25 @@ export function agentEnv(agent: Agent, ctx: LaunchContext): Record<string, strin
 // would make it a "child session" (e.g. transcript saving off, which breaks --resume).
 const PARENT_SESSION_ENV = /^(CLAUDECODE|CLAUDE_PID|CLAUDE_CODE_(ENTRYPOINT|CHILD_SESSION|SESSION_ID|SESSION_ATTENDED|EXECPATH|MESSAGING_SOCKET|MESSAGING_TOKEN))$/;
 
+/** Agent Reach's own Python environment (yt-dlp, feedparser), used by the muster:web-research skill when installed. */
+export const RESEARCH_VENV = join(homedir(), '.agent-reach', 'venv');
+
+/** The research tools' folder, appended (never prepended: a project's own python stays first) to PATH, plus their python. */
+export function researchEnv(env: Record<string, string>, venv = RESEARCH_VENV): Record<string, string> {
+  const bin = join(venv, process.platform === 'win32' ? 'Scripts' : 'bin');
+  const py = join(bin, process.platform === 'win32' ? 'python.exe' : 'python');
+  if (!existsSync(py)) return {};
+  const key = Object.keys(env).find((k) => k.toUpperCase() === 'PATH') ?? 'PATH';
+  const path = env[key] ?? '';
+  if (path.split(delimiter).some((p) => p.toLowerCase() === bin.toLowerCase())) return { AGENT_REACH_PYTHON: py };
+  return { [key]: path ? `${path}${delimiter}${bin}` : bin, AGENT_REACH_PYTHON: py };
+}
+
 /** The full PTY environment: the orchestrator's own env minus Muster and parent-session vars, plus the agent's identity. */
 export function ptyEnv(agent: Agent, ctx: LaunchContext, base: NodeJS.ProcessEnv = process.env): Record<string, string> {
   const env: Record<string, string> = {};
   for (const [k, v] of Object.entries(base)) if (v !== undefined && !k.startsWith('MUSTER_') && !PARENT_SESSION_ENV.test(k)) env[k] = v;
-  return { ...env, ...agentEnv(agent, ctx), FORCE_COLOR: '1' };
+  return { ...env, ...researchEnv(env), ...agentEnv(agent, ctx), FORCE_COLOR: '1' };
 }
 
 export function rolePrompt(agent: Agent, ctx: LaunchContext): string {

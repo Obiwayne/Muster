@@ -29,6 +29,8 @@ const DEFAULT_GUIDELINE: Record<string, string> = {
 
 /** Skills a station uses until its file says otherwise (folder names in plugin/skills). */
 export const DEFAULT_SKILLS: Record<string, string[]> = {
+  discover: ['web-research'],
+  concept: ['web-research'],
   plan: ['code-structure'],
   build: ['code-structure'],
   fix: ['code-structure'],
