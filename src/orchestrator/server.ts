@@ -15,6 +15,8 @@ import { Store } from '../core/store.js';
 import { newSecret, removeHumanToken, writeHumanToken } from '../core/tokens.js';
 import { installRefGuard } from '../core/refguard.js';
 import { refreshGuard } from '../core/usage.js';
+import { buildStamp, isStale, staleText } from '../core/build.js';
+import { postNote, HUMAN, SYSTEM } from '../core/board.js';
 import { AgentManager, type Timings } from './agents.js';
 import type { GhRunner } from '../core/github.js';
 import { createApi, sendJson } from './api.js';
@@ -40,6 +42,10 @@ export interface OrchestratorOptions {
   log?: (msg: string) => void;
   /** Called after a shutdown requested through the API has finished. */
   onShutdown?: () => void;
+  /** Test seam: replaces the dist/ mtime scan behind the stale-build warning. */
+  buildStamp?: () => number;
+  /** How often to look for a newer build (default 60 s). */
+  buildCheckMs?: number;
 }
 
 export interface Orchestrator {
@@ -106,6 +112,9 @@ export async function startOrchestrator(opts: OrchestratorOptions): Promise<Orch
   const agentSecret = newSecret();
   const tokens = new TokenBook(token, agentSecret);
   const uiDir = resolve(opts.uiDir ?? join(MUSTER_HOME, 'dist', 'ui'));
+  const stamp = opts.buildStamp ?? (() => buildStamp());
+  const startedBuild = stamp();
+  let staleWarned = false;
   let port = 0;
   let claudePath: string | undefined;
 
@@ -142,6 +151,7 @@ export async function startOrchestrator(opts: OrchestratorOptions): Promise<Orch
     (shuttingDown ??= (async () => {
       log(`shutting down${clean ? ' (clean)' : ''}`);
       clearInterval(guardTimer);
+      clearInterval(buildTimer);
       agents.dispose();
       await agents.stopAll();
       if (clean) {
@@ -161,6 +171,7 @@ export async function startOrchestrator(opts: OrchestratorOptions): Promise<Orch
     paths,
     agents,
     version: packageVersion(),
+    build: startedBuild,
     config: () => config,
     updateConfig: (patch: ConfigPatch) => {
       config = saveConfig(paths, patch);
@@ -293,12 +304,27 @@ export async function startOrchestrator(opts: OrchestratorOptions): Promise<Orch
   }
   log(`listening on http://127.0.0.1:${port} for ${paths.root}`);
 
+  // Rebuilding Muster doesn't reach a running server: Node keeps the modules it loaded at start. Warn once.
+  const checkBuild = () => {
+    if (staleWarned) return clearInterval(buildTimer);
+    const current = stamp();
+    if (!isStale(startedBuild, current)) return;
+    staleWarned = true;
+    const text = staleText(startedBuild, current);
+    log(`stale build: ${text}`);
+    postNote(store.state, { actor: SYSTEM, type: 'system', text, to: HUMAN }).open = true; // stays on "Needs you" until cleared
+    store.commit();
+    notify(config, 'Muster: restart needed', text);
+    broadcast({ type: 'toast', level: 'warn', text: 'Muster was rebuilt: restart the server to load the new code' });
+  };
+
   // A usage window whose reset time passes un-pauses without waiting for the next status line report.
   const guardTimer = setInterval(() => {
     const before = store.state.usage.paused;
     refreshGuard(store.state, config);
     if (store.state.usage.paused !== before) store.commit();
   }, 60_000).unref();
+  const buildTimer = setInterval(checkBuild, opts.buildCheckMs ?? 60_000).unref();
 
   if (opts.autoStart !== false) await agents.resumeAll().catch((e) => log(`could not start agents: ${e instanceof Error ? e.message : e}`));
 

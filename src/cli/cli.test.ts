@@ -255,9 +255,11 @@ describe('command wiring (fake orchestrator)', () => {
   it('status GETs /api/state with the token and prints a table', async () => {
     respond = () => ({ body: { state: fakeState, config: DEFAULT_CONFIG, paused: false } });
     expect(await run(['status'])).toBe(0);
-    expect(reqs).toEqual([{ method: 'GET', url: '/api/state', token: TOKEN, body: undefined }]);
+    expect(reqs[0]).toEqual({ method: 'GET', url: '/api/state', token: TOKEN, body: undefined });
+    expect(reqs[1]).toMatchObject({ method: 'GET', url: '/api/health' }); // the stale-build check
     const text = out.join('\n');
     expect(text).toMatch(/AGENT\s+ROLE\s+STATUS/);
+    expect(text).not.toMatch(/older build/);
     expect(text).toMatch(/crew-2\s+crew\s+stuck/);
   });
 

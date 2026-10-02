@@ -112,7 +112,7 @@ export async function musterFetch<T>(path: string, opts?: { method?: string; bod
 ### State
 | Method | Path | Body | Returns |
 |---|---|---|---|
-| GET | /api/health | – | `{ ok: true, version }` (no token) |
+| GET | /api/health | – | `{ ok: true, version, build }` (no token). `build` is the newest mtime (ms) of the dist/ server .js files this process loaded (core/build.ts). Every 60 s the server compares it with dist/ and, after a rebuild, posts one open system note to "you" ("Needs you") plus a Windows notification; `muster up` (already running) and `muster status` print the same warning. |
 | GET | /api/state | – | `{ state: MusterState, config: MusterConfig, paused: boolean }` |
 | GET | /api/config | – | `MusterConfig` |
 | PATCH | /api/config | partial MusterConfig | `MusterConfig` (saved to config.json) |

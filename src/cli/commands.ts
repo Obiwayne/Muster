@@ -1,6 +1,6 @@
 // HTTP-backed commands: agents, goal, status, diff, merge, board, tasks, usage, chat, say.
 import type { Agent, FeedItem, MusterConfig, MusterState, Note, Role, Task, UsageState } from '../types.js';
-import { api, CliError, type Ctx } from './context.js';
+import { api, CliError, requireServer, staleServer, type Ctx } from './context.js';
 import { formatFeedItem, formatNotes, formatStatus, formatTasks, formatUsage, roleColor } from './format.js';
 
 const ROLES: Role[] = ['captain', 'crew', 'design'];
@@ -46,6 +46,8 @@ export async function ask(ctx: Ctx, goal: string): Promise<void> {
 export async function status(ctx: Ctx): Promise<void> {
   const data = await api<{ state: MusterState; config: MusterConfig; paused: boolean }>(ctx, '/api/state');
   ctx.out(formatStatus(data, ctx.c, ctx.now()));
+  const stale = await staleServer(requireServer(ctx).url);
+  if (stale) ctx.out(ctx.c.amber(stale));
 }
 
 export async function diff(ctx: Ctx, agent: string, opts: { stat?: boolean }): Promise<void> {

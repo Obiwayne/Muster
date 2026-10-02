@@ -24,6 +24,8 @@ export interface ApiContext {
   paths: MusterPaths;
   agents: AgentManager;
   version: string;
+  /** Build stamp (ms) of the code this server loaded; see core/build.ts. */
+  build?: number;
   config(): MusterConfig;
   updateConfig(patch: ConfigPatch): MusterConfig;
   notify(title: string, text: string): void;
@@ -170,7 +172,7 @@ ${block}`;
     const config = ctx.updateConfig({ lines: edits, ...(!lines.BUILT_IN_LINES[name] && ctx.config().defaultLine === name ? { defaultLine: null } : {}) });
     return { lines: lines.listLines(config), defaultLine: lines.defaultLineName(config) };
   });
-  route('GET', '/api/health', () => ({ ok: true, version: ctx.version }));
+  route('GET', '/api/health', () => ({ ok: true, version: ctx.version, build: ctx.build }));
   route('GET', '/api/state', () => ({ state: state(), config: ctx.config(), paused: state().usage.paused }));
   route('GET', '/api/config', () => ctx.config());
   route('PATCH', '/api/config', ({ body }) => {

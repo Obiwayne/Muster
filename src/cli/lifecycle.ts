@@ -4,7 +4,7 @@ import { closeSync, existsSync, openSync, rmSync } from 'node:fs';
 import { join } from 'node:path';
 import { serverInfo } from '../client.js';
 import type { Agent, MusterConfig, MusterState } from '../types.js';
-import { api, CliError, dashboardUrl, healthy, musterHome, NOT_RUNNING, readServerFile, repoRoot, requireServer, type Ctx } from './context.js';
+import { api, CliError, dashboardUrl, healthy, staleServer, musterHome, NOT_RUNNING, readServerFile, repoRoot, requireServer, type Ctx } from './context.js';
 import { roleColor } from './format.js';
 import { initMuster } from './init.js';
 
@@ -31,6 +31,8 @@ export async function up(ctx: Ctx, opts: { port?: number; ui?: boolean; create?:
   if (existing && (await healthy(`http://127.0.0.1:${existing.port}`))) {
     url = `http://127.0.0.1:${existing.port}`;
     ctx.out(`Muster is already running in this repo (pid ${existing.pid}).`);
+    const stale = await staleServer(url);
+    if (stale) ctx.out(c.amber(stale));
   } else {
     const entry = opts.entry ?? join(musterHome(), 'dist', 'orchestrator', 'index.js'); // entry: tests only
     if (!existsSync(entry)) throw new CliError(`Orchestrator not built (${entry} missing) — run \`npm run build\` in the Muster folder.`);
