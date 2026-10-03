@@ -1,0 +1,22 @@
+{
+  "kind": "search#companies",
+  "total_results": 2,
+  "items": [
+    {
+      "company_number": "08181561",
+      "title": "BOARDLY LEARNING LTD",
+      "company_status": "active",
+      "date_of_creation": "2012-08-16",
+      "address_snippet": "38 Oakleigh Avenue, Edgware, Middlesex, HA8 5DR",
+      "company_type": "ltd"
+    },
+    {
+      "company_number": "11111111",
+      "title": "BOARDLY HOLDINGS LIMITED",
+      "company_status": "dissolved",
+      "date_of_creation": "2019-01-02",
+      "address_snippet": "1 High Street, London",
+      "company_type": "ltd"
+    }
+  ]
+}
