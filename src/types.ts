@@ -124,6 +124,25 @@ export interface Note {
   dismissed?: boolean; // you removed it from the board (POST /api/notes/:id/dismiss); kept in state for history, hidden by default
   closedAt?: string;
   replies: NoteReply[];
+  intel?: IntelJobNote; // topic 'intel': the "research is ready" / "stopped early" note of a finished intel job (the board shows its chips and actions)
+}
+
+/** What a finished (or stopped) competitor / sweep / watch job found, carried by its Bulletin board note. Counts are taken when it ended. */
+export interface IntelJobNote {
+  jobId: string; // "IJ3"
+  kind: IntelJobKind;
+  outcome: 'ready' | 'stopped'; // done → ready; failed, or cancelled by the Captain → stopped
+  competitorIds: string[];
+  names: string[]; // their names, for the title
+  sources: number; // sourcesRead, else pages browsed
+  durationMs: number; // startedAt → finishedAt
+  claims: number; // records this job wrote
+  areas: number; // research areas it covered (with at least one claim)
+  gaps: number; // feature-matrix verdicts vs these competitors
+  edges: number;
+  open: number;
+  ideas: number; // intel ideas (opportunities) this job raised
+  reasons?: string[]; // stopped: honest reasons ("g2.com blocked the research browser; read its public page instead", "Reddit not signed in")
 }
 
 // One line in the Crew chat log. Appended by the orchestrator for every message,
@@ -829,6 +848,18 @@ export interface IntelJob {
   sourcesRead?: number;
   pagesBrowsed: number; // research browser calls so far (capped by researchBrowser.maxPagesPerJob)
   error?: string;
+  progress?: IntelJobProgress; // what this job has written and read so far (the Intel page's research-in-progress overlay)
+}
+
+/** Per-job progress counters, kept by the server as scout records and browses (cheap: counts, the latest claim, the last page). */
+export interface IntelJobProgress {
+  claims: number; // record_intel / add_opportunity calls during this job
+  areas: Partial<Record<IntelArea, number>>; // claims per research area (capability → features, theme → reviews, plan → roadmap, …)
+  current?: IntelArea; // the area of the latest claim: the "current" chip
+  latest?: { text: string; label: IntelLabel; at: string }; // "Latest: “Figma Dev Mode moved to paid seats” · fact"
+  reading?: { url: string; site: string; at: string }; // the last page browsed ("App Store")
+  blocked?: string[]; // domains that answered with a bot check during this job
+  notSignedIn?: string[]; // known login sites (labels) read without a login during this job
 }
 
 /** .muster/intel.json */
@@ -866,8 +897,21 @@ export interface IntelSummary {
   open: number;
   newIdeas: number; // intel ideas still 'new'
   alerts: number; // unseen changes with planImpact 'respond' + re-checks whose verdict changed since you looked: the nav badge
-  runningJob?: { id: string; kind: IntelJobKind; label: string; startedAt: string };
+  runningJob?: { id: string; kind: IntelJobKind; label: string; startedAt: string } & IntelJobView;
   queuedJobs: number;
+  queue?: ({ id: string; kind: IntelJobKind; label: string; queuedAt: string } & IntelJobView)[]; // queued jobs, oldest first
+  waitingOn?: string; // why queued jobs wait: "IJ3 Sweep of 3 competitors", "research run RR2", "paused by the 5-hour limit"
+}
+
+/** The parts of a job the research-in-progress overlay needs (summary.runningJob / summary.queue). */
+export interface IntelJobView {
+  competitorIds: string[];
+  names: string[];
+  areas: IntelArea[];
+  depth: 'quick' | 'thorough';
+  by: string;
+  pages: number;
+  progress?: IntelJobProgress;
 }
 
 // ---- Research browser (src/browser/*) ----

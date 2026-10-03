@@ -133,7 +133,7 @@ export async function startOrchestrator(opts: OrchestratorOptions): Promise<Orch
   let port = 0;
   let claudePath: string | undefined;
   const browser = opts.browser ?? new ResearchBrowser({ config: () => config.researchBrowser });
-  const intel = new IntelRuntime({ store, file: new IntelFile(intelFile(paths), config.projectName ?? 'Our app', { log }), paths, config: () => config, log });
+  const intel = new IntelRuntime({ store, file: new IntelFile(intelFile(paths), config.projectName ?? 'Our app', { log }), paths, config: () => config, log, notify: (title, text) => notify(config, title, text) });
 
   const agents = new AgentManager({
     store,
