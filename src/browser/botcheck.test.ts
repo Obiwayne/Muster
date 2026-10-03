@@ -59,4 +59,12 @@ describe('readPublic', () => {
       u.startsWith('https://r.jina.ai/') ? res(200, 'Title: Just a moment...\n\nMarkdown Content:\nChecking if the site connection is secure') : res(403, fixture('cf-just-a-moment.html'));
     await expect(readPublic('https://padlet.com/', { fetch: walled })).rejects.toThrow(/public reader: bot check.*plain request: bot check \(Cloudflare\)/);
   });
+
+  it('does not count an app shell with almost no text as a read (live: Reddit answers "Reddit")', async () => {
+    const shell: FetchLike = async (u) =>
+      u.startsWith('https://r.jina.ai/')
+        ? res(200, "Title: \n\nWarning: Target URL returned error 403: Forbidden\n\nMarkdown Content:\nYou've been blocked by network security.")
+        : res(200, '<html><head><title>Reddit</title></head><body><shreddit-app>Reddit</shreddit-app><script>boot()</script></body></html>', u);
+    await expect(readPublic('https://www.reddit.com/r/Teachers/', { fetch: shell })).rejects.toThrow(/plain request: almost empty page \(\d+ characters: it needs JavaScript or a login\)/);
+  });
 });

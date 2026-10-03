@@ -62,6 +62,7 @@ export interface PublicRead {
 export type FetchLike = (url: string, init?: { headers?: Record<string, string>; signal?: AbortSignal; redirect?: 'follow' }) => Promise<{ ok: boolean; status: number; text(): Promise<string>; url?: string }>;
 
 const TEXT_MAX = 40_000;
+const MIN_PLAIN_TEXT = 100;
 const clip = (s: string) => (s.length > TEXT_MAX ? s.slice(0, TEXT_MAX) + '\n[… truncated]' : s);
 
 /**
@@ -93,7 +94,8 @@ export async function readPublic(url: string, opts: { fetch?: FetchLike; timeout
     if (blocked) throw new Error(blocked);
     if (!res.ok) throw new Error(`HTTP ${res.status}`);
     const text = visible(html);
-    if (!text) throw new Error('empty page');
+    // A JavaScript app shell (Reddit answers a cookie-less request with just "Reddit") is not a read.
+    if (text.length < MIN_PLAIN_TEXT) throw new Error(text ? `almost empty page (${text.length} characters: it needs JavaScript or a login)` : 'empty page');
     return { url: res.url || url, title: titleOf(html), text: clip(text), reader: 'fetch' };
   } catch (e) {
     problems.push(`plain request: ${e instanceof Error ? e.message : e}`);
