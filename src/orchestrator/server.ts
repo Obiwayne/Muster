@@ -26,6 +26,8 @@ import { nodePtyLauncher, type PtyLauncher } from './terminal.js';
 import { Coalescer } from '../core/coalesce.js';
 import { IntelFile, intelFile, intelSummary } from '../core/intel.js';
 import { IntelRuntime } from './intelapi.js';
+import { ResearchBrowser } from '../browser/researchbrowser.js';
+import type { BrowserRouteDeps } from './browserapi.js';
 
 import type { VellumCall } from '../core/vellum.js';
 
@@ -51,6 +53,12 @@ export interface OrchestratorOptions {
   buildCheckMs?: number;
   /** How often due intel watches queue their jobs (default 10 min). */
   intelTickMs?: number;
+  /** Test seam: replaces the research browser (a real one only launches Chrome when scout browses). */
+  browser?: BrowserRouteDeps['browser'] & { close(): Promise<void> };
+  /** Test seam: replaces the site probe behind POST /api/intel/probe. */
+  probe?: BrowserRouteDeps['probe'];
+  /** Test seam: replaces the public reader used when a site blocks the research browser. */
+  publicRead?: BrowserRouteDeps['publicRead'];
 }
 
 export interface Orchestrator {
@@ -124,6 +132,7 @@ export async function startOrchestrator(opts: OrchestratorOptions): Promise<Orch
   let staleWarned = false;
   let port = 0;
   let claudePath: string | undefined;
+  const browser = opts.browser ?? new ResearchBrowser({ config: () => config.researchBrowser });
   const intel = new IntelRuntime({ store, file: new IntelFile(intelFile(paths), config.projectName ?? 'Our app', { log }), paths, config: () => config, log });
 
   const agents = new AgentManager({
@@ -184,6 +193,7 @@ export async function startOrchestrator(opts: OrchestratorOptions): Promise<Orch
       agents.dispose();
       intel.dispose();
       await agents.stopAll();
+      await browser.close().catch((e) => log(`research browser close failed: ${e instanceof Error ? e.message : e}`));
       if (clean) {
         const removed = await agents.cleanMerged().catch((e) => (log(`clean failed: ${e}`), [] as string[]));
         if (removed.length) log(`removed merged worktrees: ${removed.join(', ')}`);
@@ -202,6 +212,9 @@ export async function startOrchestrator(opts: OrchestratorOptions): Promise<Orch
     paths,
     agents,
     intel,
+    browser,
+    probe: opts.probe,
+    publicRead: opts.publicRead,
     version: packageVersion(),
     build: startedBuild,
     config: () => config,

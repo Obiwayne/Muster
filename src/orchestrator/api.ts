@@ -21,6 +21,7 @@ import { applyUsage, refreshGuard, setWeeklyAlert, type RawUsage } from '../core
 import type { AgentManager } from './agents.js';
 import { applyIdentity, forbiddenReason, type Caller } from './auth.js';
 import { registerIntelRoutes, type IntelRuntime } from './intelapi.js';
+import { registerBrowserRoutes, type BrowserRouteDeps } from './browserapi.js';
 import * as intel from '../core/intel.js';
 import * as intelcheck from '../core/intelcheck.js';
 
@@ -30,6 +31,12 @@ export interface ApiContext {
   agents: AgentManager;
   /** The intel store's runtime (core/intel.ts + dispatcher); see intelapi.ts. */
   intel: IntelRuntime;
+  /** The research browser (src/browser/researchbrowser.ts), or a fake in tests. */
+  browser: BrowserRouteDeps['browser'];
+  /** Test seam: replaces the real site probe behind POST /api/intel/probe. */
+  probe?: BrowserRouteDeps['probe'];
+  /** Test seam: replaces the public reader used when a site blocks the research browser. */
+  publicRead?: BrowserRouteDeps['publicRead'];
   version: string;
   /** Build stamp (ms) of the code this server loaded; see core/build.ts. */
   build?: number;
@@ -696,6 +703,18 @@ ${pushed ? `Pushed ${base} to origin.` : `Push to origin failed: ${(r.stderr || 
     notify: ctx.notify,
     toast: ctx.toast,
     markdown: (text, filename) => new TextReply(text, 'text/markdown; charset=utf-8', filename),
+  });
+  // The research browser (/api/browser/*) and the add-competitor probe (POST /api/intel/probe).
+  registerBrowserRoutes(route, {
+    browser: ctx.browser,
+    config: ctx.config,
+    isHuman: (a) => a === board.HUMAN,
+    isResearcher: (a) => research.isResearcher(state(), a),
+    currentWork: () => ctx.intel.currentWork(),
+    countPage: (id) => ctx.intel.countPage(id),
+    shotsDir: (id) => ctx.intel.shotsDir(id),
+    probe: ctx.probe,
+    publicRead: ctx.publicRead,
   });
 
   // ------------------------------------------------------------------ board, chat, inbox
