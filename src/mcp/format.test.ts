@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
-import type { Agent, InboxItem, Note, ResearchIdea, Task } from '../types.js';
-import { boardQuery, clip, formatAgentLine, formatBoard, formatDiff, formatIdeaDetail, formatIdeaLine, formatIdeas, formatInbox, formatNoteLine, formatRoadmap, formatTaskLine, formatTests, isTaskId, NO_ROADMAP, relTime } from './format.js';
+import type { Agent, InboxItem, IntelCheck, Note, ResearchIdea, Task } from '../types.js';
+import { boardQuery, clip, formatAgentLine, formatBoard, formatCheck, formatDiff, formatJobLine, formatIdeaDetail, formatIdeaLine, formatIdeas, formatInbox, formatNoteLine, formatRoadmap, formatTaskLine, formatTests, isTaskId, NO_ROADMAP, relTime } from './format.js';
 import { PROGRESS, ROADMAP } from './roadmap.fixture.js';
 
 const NOW = Date.parse('2026-09-30T12:00:00Z');
@@ -156,5 +156,37 @@ describe('research ideas', () => {
     expect(text).toContain('- [competitor] Wakelet public roadmap');
     expect(text).toContain('- you · 5m ago: How big is it?');
     expect(text.slice(-2)).toEqual(['Plan on approval:', '- + Add goal Moderation queue to M3']);
+  });
+});
+
+describe('intel formats', () => {
+  const src = { kind: 'site' as const, title: 'Padlet help', url: 'https://padlet.com/help', seenAt: '2026-10-01' };
+  const base: IntelCheck = {
+    id: 'IC4', ideaId: 'R12', revision: 2, status: 'done', verdict: 'gap', verdictText: 'Close it in M5.', confidence: 'high', sourceCount: 4, capabilityIds: ['F3'], createdAt: '', doneAt: '2026-10-02T09:00:00Z',
+    rows: [{ area: 'features', finding: 'Padlet has it', signal: 'supports', label: 'fact', confidence: 'high', sources: [src], asOf: '2026-10-02', changed: true }],
+    history: [{ revision: 1, verdict: 'open', confidence: 'medium', doneAt: '2026-09-25T09:00:00Z', changedAreas: [] }],
+  };
+
+  it('formatCheck: done with rows, history and coverage; skipped, queued and failed say what to do', () => {
+    const text = formatCheck({ ...base, watchFor: 'Wakelet ships it', goalId: 'G4' });
+    expect(text.split('\n')).toEqual([
+      'IC4 for R12 · rev 2 · done',
+      'Verdict: gap (high confidence, 4 sources, coverage 1 of 7) · checked 2026-10-02',
+      'Close it in M5.',
+      'Capabilities: F3',
+      '- features: Padlet has it [supports, fact, high] (changed)',
+      'Watch for: Wakelet ships it',
+      'Goal: G4',
+      'History: rev 1 open (medium, 2026-09-25)',
+    ]);
+    expect(formatCheck({ ...base, status: 'skipped', skippedReason: 'no competitors tracked' })).toBe('IC4 for R12 · rev 2 · skipped (no competitors tracked). Approval may go ahead.');
+    expect(formatCheck({ ...base, status: 'running', jobId: 'IJ3' })).toBe('IC4 for R12 · rev 2 · running. Scout is on it (IJ3); approval waits for it.');
+    expect(formatCheck({ ...base, status: 'failed' })).toMatch(/request_intel_check/);
+  });
+
+  it('formatJobLine and an intel idea line', () => {
+    expect(formatJobLine({ id: 'IJ3', kind: 'recheck', status: 'running', competitorIds: ['padlet'], areas: [], ideaId: 'R12', browse: 'profile', depth: 'quick', by: 'schedule', queuedAt: '', pagesBrowsed: 12 })).toBe('IJ3 [running] recheck · R12 · padlet · by schedule · 12 pages');
+    const i = { id: 'R12', title: 'Approval queue', impact: 'high', effort: 'S', evidence: [], status: 'new', thread: [], origin: 'intel', checkId: 'IC4', opportunity: { kind: 'gap', valueScore: 5, effortScore: 3 } } as unknown as ResearchIdea;
+    expect(formatIdeaLine(i)).toBe('R12 [new] Approval queue · impact high · effort S · intel gap (value 5/5, effort 3/5) · check IC4 · 0 evidence');
   });
 });

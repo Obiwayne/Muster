@@ -7,14 +7,17 @@ import { musterFetch } from '../client.js';
 import { formatEvidence } from '../core/evidence.js';
 import { formatGuideline } from '../core/stations.js';
 import { REACTION_EMOJI } from '../types.js';
-import type { Agent, Evidence, FeedItem, InboxItem, MusterState, Note, ResearchIdea, ResearchRun, ResearchState, Role, Roadmap, RoadmapProgress, StationDef, Task } from '../types.js';
+import type { Agent, BrowseResult, Evidence, FeedItem, InboxItem, IntelChange, IntelCheck, IntelJob, IntelStore, MusterState, Note, ResearchIdea, ResearchRun, ResearchState, Role, Roadmap, RoadmapProgress, StationDef, Task } from '../types.js';
 import {
   BOARD_FILTERS,
   boardQuery,
   clip,
   formatAgents,
   formatBoard,
+  formatCheck,
   formatDiff,
+  formatIntelOverview,
+  formatJobLine,
   formatIdeaDetail,
   formatIdeaLine,
   formatIdeas,
@@ -65,13 +68,65 @@ export const CAPTAIN_TOOLS = [
   'add_evidence', 'get_evidence',
   'roadmap', 'set_roadmap', 'update_stage', 'check_criterion', 'complete_stage', 'add_goal', 'update_goal', 'link_tasks',
   'list_ideas', 'get_idea', 'advise_idea', 'react',
+  'intel_overview', 'intel_check_status', 'request_intel_check', 'intel_reply', 'intel_suggest', 'run_sweep',
 ] as const;
 export const CREW_TOOLS = [
   'claim_task', 'list_agents', 'list_tasks', 'post_note', 'read_board', 'reply', 'ask_captain',
   'message_crew', 'handoff', 'report_done', 'read_inbox', 'add_evidence', 'react',
 ] as const;
-/** The research agent (scout): reads public pages and posts ideas; no board, task or code tools. */
-export const RESEARCH_TOOLS = ['research_brief', 'add_idea', 'finish_research', 'read_inbox'] as const;
+/** The research agent (scout): research runs and intel jobs; no board, task or code tools. */
+export const RESEARCH_TOOLS = [
+  'research_brief', 'add_idea', 'finish_research', 'read_inbox',
+  'intel_brief', 'browse', 'record_intel', 'add_opportunity', 'intel_check', 'finish_intel_job',
+] as const;
+
+// ---- intel shapes (the server validates everything again and names the field on a 400) ----
+const sourceShape = z
+  .object({
+    kind: z.enum(['site', 'pricing', 'roadmap', 'changelog', 'help', 'app_store', 'google_play', 'g2', 'capterra', 'reddit', 'forum', 'linkedin', 'youtube', 'tiktok', 'instagram', 'x', 'facebook', 'companies_house', 'jobs', 'press', 'rss', 'own_app', 'other']),
+    title: z.string().min(1).describe('e.g. "App Store · Padlet · 2★", "Wakelet public roadmap"'),
+    url: z.string().optional().describe('Required unless kind is own_app'),
+    publishedAt: day.optional().describe('The date the source itself carries (review/post date)'),
+    seenAt: day.optional().describe('Defaults to today'),
+    via: z.enum(['profile', 'public', 'opera']).optional().describe('profile/opera = read behind a login'),
+  })
+  .passthrough();
+const claimShape = {
+  label: z.enum(['fact', 'opinion', 'prediction']).describe('fact = seen on a primary source; opinion = what customers say; prediction = your inference'),
+  confidence: z.enum(['high', 'medium', 'low']),
+  sources: z.array(sourceShape).min(1).max(12),
+  asOf: day.optional().describe('The date the claim holds for (default today)'),
+  implication: z.string().optional().describe('What it means for us (required on insights, changes, opportunities)'),
+  prediction: z
+    .object({ signals: z.array(z.string().min(1)).min(1), timeframe: z.string().min(1), wouldChange: z.string().min(1) })
+    .optional()
+    .describe('Required when label is prediction'),
+};
+const claimObject = z.object(claimShape).passthrough();
+const opt = <T extends z.ZodRawShape>(shape: T) => z.object(shape).partial().passthrough();
+/** One item schema per record_intel kind (documentation for the model; unknown extra fields pass through). */
+const RECORD_ITEMS = {
+  profile: opt({ competitorId: z.string(), name: z.string(), tagline: z.string(), url: z.string(), identity: z.record(z.unknown()), sources: z.array(z.record(z.unknown())) }),
+  capability: z.object({ id: z.string().optional(), name: z.string().min(1).describe('Feature-matrix row, e.g. "Approve posts before live"'), group: z.string().optional(), cells: z.record(z.object({ status: z.enum(['yes', 'partial', 'paid', 'none', 'planned', 'missing']), note: z.string().optional(), stageId: z.string().optional(), planNote: z.string().optional(), ...claimShape }).passthrough()).describe('competitor id → cell; "us" = our app') }).passthrough(),
+  theme: z.object({ id: z.string().optional(), title: z.string().min(1), mentions: z.number().int(), sampleSize: z.number().int().optional(), independentSources: z.number().int(), byCompetitor: z.record(z.number().int()), severity: z.enum(['severe', 'high', 'medium', 'low']), trend: z.enum(['rising', 'steady', 'easing', 'new']), quotes: z.array(z.object({ text: z.string().max(300), source: sourceShape })).max(6).optional(), ...claimShape, label: z.literal('opinion').optional() }).passthrough(),
+  sample: z.object({ window: z.string(), counts: z.array(z.object({ kind: z.string(), label: z.string(), n: z.number().int() })), total: z.number().int().optional(), asOf: day.optional() }).passthrough(),
+  social: z.object({ competitorId: z.string(), channel: z.enum(['youtube', 'tiktok', 'instagram', 'linkedin', 'reddit', 'x', 'facebook']), presence: z.enum(['active', 'dormant', 'absent']), ...claimShape }).passthrough(),
+  social_insight: z.object({ id: z.string().optional(), kind: z.enum(['engagement', 'comment_complaint', 'win']), text: z.string().min(1), competitorId: z.string().optional(), metric: z.string().optional(), ...claimShape }).passthrough(),
+  plan: z.object({ id: z.string().optional(), competitorId: z.string(), title: z.string().min(1), kind: z.enum(['commitment', 'prediction']), status: z.enum(['planned', 'in_progress', 'shipped', 'dropped']).optional(), timeframe: z.string().optional(), capabilityIds: z.array(z.string()).optional(), ...claimShape, label: z.enum(['fact', 'prediction']).optional() }).passthrough(),
+  finding: z.object({ id: z.string().optional(), area: z.enum(['features', 'roadmap', 'reviews', 'gaps', 'audience', 'pricing', 'marketing', 'team', 'ai', 'financials', 'org']), title: z.string().min(1), competitorId: z.string().optional(), detail: z.string().optional(), facts: z.record(z.string()).optional(), aiStatus: z.enum(['verified', 'claimed']).optional(), ...claimShape }).passthrough(),
+  scenario: z.object({ id: z.string().optional(), name: z.string().min(1), assumptions: z.array(z.string()).min(1), costs: z.record(z.object({ amount: z.number().optional(), currency: z.string(), period: z.enum(['month', 'year', 'once']), note: z.string().optional() })), ...claimShape }).passthrough(),
+  filing: z.object({ competitorId: z.string(), companyNumber: z.string(), status: z.string(), limits: z.string().describe('What this data cannot tell you'), ...claimShape }).passthrough(),
+  positioning: z.object({ title: z.string(), x: z.record(z.string()), y: z.record(z.string()), points: z.array(z.object({ competitorId: z.string(), x: z.number(), y: z.number() }).passthrough()).min(1), assumptions: z.array(z.string()).min(1), ...claimShape }).passthrough(),
+  insight: z.object({ id: z.string().optional(), kind: z.enum(['match', 'advantage', 'audience', 'test']), title: z.string(), detail: z.string(), ideaId: z.string().optional(), ...claimShape, implication: z.string().min(1) }).passthrough(),
+  change: z.object({ id: z.string().optional(), competitorId: z.string(), area: z.string(), title: z.string(), planImpact: z.enum(['none', 'watch', 'respond']), at: day.optional(), ...claimShape, implication: z.string().min(1) }).passthrough(),
+} as const;
+const RECORD_KIND_NAMES = Object.keys(RECORD_ITEMS) as [keyof typeof RECORD_ITEMS, ...(keyof typeof RECORD_ITEMS)[]];
+const checkRowShape = z.object({
+  area: z.enum(['features', 'complaints', 'social', 'plans', 'pricing', 'audience', 'ai']),
+  finding: z.string().min(1).max(300).describe('e.g. "Padlet partial · Linoit none", "#1 theme · 22% · rising"'),
+  signal: z.enum(['supports', 'against', 'neutral', 'threat']).describe('threat = a competitor is heading there'),
+  ...claimShape,
+}).passthrough();
 
 const IDEA_STATUSES = ['new', 'approved', 'rejected'] as const;
 const evidenceShape = z.object({
@@ -96,7 +151,7 @@ export function createMusterServer(opts: MusterServerOptions): McpServer {
         role === 'captain'
           ? `You are ${me}, the Muster Captain. Check read_board first every turn. Never write code; merge only tasks the user approved, with merge_task.`
           : role === 'research'
-            ? `You are ${me}, the Muster research agent. Start with research_brief; post each idea with add_idea; end with finish_research. Public pages only; never change code.`
+            ? `You are ${me}, the Muster research agent. In a research run: research_brief, add_idea (then intel_check when competitors are tracked), finish_research. In an intel job: intel_brief, record_intel, add_opportunity + intel_check, finish_intel_job. Read-only; never sign in yourself; never change code.`
             : `You are ${me}, Muster ${role === 'design' ? 'design crew' : 'crew'}. Work only in your worktree; ask crew before the Captain.`,
     },
   );
@@ -198,8 +253,10 @@ export function createMusterServer(opts: MusterServerOptions): McpServer {
     },
   );
 
-  if (role === 'captain') registerCaptain();
-  else registerCrew();
+  if (role === 'captain') {
+    registerCaptain();
+    registerCaptainIntel();
+  } else registerCrew();
   return server;
 
   // ---- captain ----------------------------------------------------------------
@@ -557,13 +614,82 @@ ${r.output}`;
 
     tool(
       'advise_idea',
-      'Answer the user about a research idea: honest cost, where it fits on the roadmap, what it moves. plan = the roadmap changes you will make if they approve, one per item, e.g. ["+ Add goal Moderation queue to M3 (Oct 13-17)", "~ Move M3 due Oct 17 -> 20"].',
-      { idea: z.string().describe('Idea id, e.g. R7'), text: z.string().min(1), plan: z.array(z.string().min(1)).optional() },
-      async ({ idea, text, plan }) => {
+      'Answer the user about a research idea: honest cost, where it fits on the roadmap, what it moves. plan = the roadmap changes you will make if they approve, one per item, e.g. ["+ Add goal Moderation queue to M3 (Oct 13-17)", "~ Move M3 due Oct 17 -> 20", "Re-check weekly; alert if Wakelet ships approval"]. effort = your honest effort 1-5 for an intel idea (sets its place on the value-vs-effort matrix).',
+      { idea: z.string().describe('Idea id, e.g. R7'), text: z.string().min(1), plan: z.array(z.string().min(1)).optional(), effort: z.number().int().min(1).max(5).optional() },
+      async ({ idea, text, plan, effort }) => {
         const body: Record<string, unknown> = { actor: me, text };
         if (plan) body.plan = plan;
+        if (effort !== undefined) body.effort = effort;
         const i = await api<ResearchIdea>(`/api/research/ideas/${enc(upId(idea))}/advice`, { method: 'POST', body });
         return `Advised on ${i?.id ?? upId(idea)}${i?.title ? ` ${clip(i.title, 60)}` : ''}${plan?.length ? ` with a ${plan.length}-step plan` : ''}. The user sees it on the Research page.`;
+      },
+    );
+  }
+
+  // ---- competitive intelligence (Captain) ----
+
+  function registerCaptainIntel() {
+    tool(
+      'intel_overview',
+      'Competitive intelligence at a glance: tracked competitors, gaps / edges / open spaces with their idea ids (R12), intel ideas waiting for a decision, unseen changes, the running job, and whether the user asked about the gaps.',
+      {},
+      async () => {
+        const [store, research] = await Promise.all([api<IntelStore>('/api/intel'), getResearch()]);
+        return formatIntelOverview(store, research.ideas, now());
+      },
+    );
+
+    tool(
+      'intel_check_status',
+      "Read an idea's intel check: verdict, confidence, sources, coverage, each area's finding and what would change it. Approval needs a fresh done (or skipped) check.",
+      { idea: z.string().describe('Idea id, e.g. R12') },
+      async ({ idea }) => {
+        const i = await findIdea(idea);
+        if (!i.checkId) return `${i.id} has no intel check yet. request_intel_check(${i.id}) queues one.`;
+        const check = (await api<IntelStore>('/api/intel')).checks.find((c) => c.id === i.checkId);
+        return check ? formatCheck(check, i) : `${i.id}'s check ${i.checkId} is missing.`;
+      },
+    );
+
+    tool(
+      'request_intel_check',
+      'Queue an intel check of an idea (scout runs it when free). With no competitors tracked the check is skipped at once.',
+      { idea: z.string().describe('Idea id, e.g. R12') },
+      async ({ idea }) => {
+        const c = await api<IntelCheck>('/api/intel/checks', { method: 'POST', body: { actor: me, ideaId: upId(idea) } });
+        return formatCheck(c);
+      },
+    );
+
+    tool(
+      'intel_reply',
+      'Answer the user on the "Talk to Captain" thread about the gaps in general ("You asked about the gaps …"). Per-gap answers go through advise_idea.',
+      { text: z.string().min(1) },
+      async ({ text }) => {
+        await api('/api/intel/reply', { method: 'POST', body: { actor: me, text } });
+        return 'Replied on the intel thread. The user sees it on Intel → Opportunities.';
+      },
+    );
+
+    tool(
+      'intel_suggest',
+      'Say how the plan should respond to a change (IX5), e.g. after a re-check alert: "Pull G4 into M2 and ship before Wakelet", or "No change: our edge holds because …".',
+      { change: z.string().describe('Change id, e.g. IX5'), text: z.string().min(1) },
+      async ({ change, text }) => {
+        const c = await api<IntelChange>(`/api/intel/changes/${enc(upId(change))}/suggest`, { method: 'POST', body: { actor: me, text } });
+        return `Suggestion saved on ${c?.id ?? upId(change)}${c?.title ? ` ${clip(c.title, 80)}` : ''}.`;
+      },
+    );
+
+    tool(
+      'run_sweep',
+      'Queue a sweep: scout re-researches every tracked competitor (or the ones named) for their ticked areas. Runs when scout is free.',
+      { competitors: z.array(z.string()).optional().describe('Competitor ids, e.g. ["padlet"]; default all') },
+      async ({ competitors }) => {
+        const body: Record<string, unknown> = { actor: me, kind: 'sweep' };
+        if (competitors?.length) body.competitorIds = competitors.map((c) => c.trim().toLowerCase());
+        const j = await api<IntelJob>('/api/intel/jobs', { method: 'POST', body });
+        return `Queued ${formatJobLine(j)}.`;
       },
     );
   }
@@ -624,6 +750,125 @@ ${r.output}`;
         const r = await api<ResearchRun>(`/api/research/runs/${enc(run.id)}/finish`, { method: 'POST', body });
         const n = (r ?? run).ideaIds?.length ?? 0;
         return `Finished ${r?.id ?? run.id}: ${n} idea${n === 1 ? '' : 's'}. The user has been told. You are done; stop here.`;
+      },
+    );
+
+    // ---- intel jobs ----
+
+    tool(
+      'intel_brief',
+      'Read the brief for the running intel job: the competitors with their sources and areas, the idea for a check (and the previous revision on a re-check), what the store already holds (update, never duplicate), the browse mode and page budget, the rules. Call it first.',
+      {},
+      async () => (await api<{ text: string }>('/api/intel/brief'))?.text?.trim() || 'No brief: no intel job is running.',
+    );
+
+    tool(
+      'browse',
+      "Read one page through Muster's research browser (read-only, rate-limited): action read (visible text, links: true for links), screenshot (PNG path; open it with Read) or scroll (by pixels). Pages you are signed in to through the research profile work here; never sign in yourself. Prefer official feeds and the web-research tools for public pages.",
+      { url: z.string().min(1), action: z.enum(['read', 'screenshot', 'scroll']).optional(), links: z.boolean().optional(), by: z.number().int().optional() },
+      async ({ url, action, links, by }) => {
+        const body: Record<string, unknown> = { actor: me, url, action: action ?? 'read' };
+        if (links !== undefined) body.links = links;
+        if (by !== undefined) body.by = by;
+        let r: BrowseResult;
+        try {
+          r = await api<BrowseResult>('/api/browser/read', { method: 'POST', body });
+        } catch (e) {
+          const msg = e instanceof Error ? e.message : String(e);
+          if (/No route|\b404\b/.test(msg)) return "The research browser isn't available yet; use the web-research tools.";
+          throw e;
+        }
+        const head = `${r.title || r.url} (${r.status}, via ${r.via}${r.loggedIn ? ', signed in' : ''}) · ${r.pagesLeft} pages left`;
+        if (r.screenshot) return `${head}\nScreenshot: ${r.screenshot}`;
+        if (r.scrolled) return `${head}\nScrolled to ${r.scrolled.y} of ${r.scrolled.height}px.`;
+        const linkLines = r.links?.length ? `\n\nLinks:\n${r.links.map((l) => `- ${clip(l.text, 80)} ${l.url}`).join('\n')}` : '';
+        return `${head}\n${r.url}\n\n${r.text ?? ''}${linkLines}`;
+      },
+    );
+
+    tool(
+      'record_intel',
+      'Record one finding, one claim per call: kind = profile, capability (a feature-matrix row with cells per competitor, "us" included), theme (customer opinion; count within the sample), sample, social, social_insight, plan (commitment = fact; prediction needs prediction{signals,timeframe,wouldChange}), finding (audience, pricing, team, ai, financials, marketing, org), scenario (with assumptions), filing, positioning, insight, change. Every claim has label, confidence, 1-12 sources (title, url, publishedAt) and asOf. A known id, capability name, theme title or plan title updates instead of adding.',
+      { kind: z.enum(RECORD_KIND_NAMES), item: z.union([RECORD_ITEMS.capability, RECORD_ITEMS.theme, RECORD_ITEMS.plan, RECORD_ITEMS.finding, RECORD_ITEMS.change, RECORD_ITEMS.insight, RECORD_ITEMS.scenario, RECORD_ITEMS.social, RECORD_ITEMS.social_insight, RECORD_ITEMS.filing, RECORD_ITEMS.positioning, RECORD_ITEMS.sample, RECORD_ITEMS.profile]) },
+      async ({ kind, item }) => {
+        const r = await api<Record<string, unknown>>('/api/intel/record', { method: 'POST', body: { actor: me, kind, item } });
+        const id = (r?.id as string | undefined) ?? (kind === 'social' || kind === 'filing' ? `${r?.competitorId} ${kind}` : kind);
+        const label = (r?.name ?? r?.title ?? r?.text ?? '') as string;
+        const verdict = kind === 'capability' && r?.verdict ? ` → ${String(r.verdict)}${(r.verdictVs as string[] | undefined)?.length ? ` vs ${(r.verdictVs as string[]).join(', ')}` : ''}` : '';
+        return `Recorded ${kind} ${id}${label ? ` ${clip(label, 80)}` : ''}${verdict}.`;
+      },
+    );
+
+    tool(
+      'add_opportunity',
+      'Raise a gap (they have it, we don\'t), open space (nobody does it) or edge (where we win; atRisk when someone is heading there) as an idea for the user. One call per opportunity, linked to its capabilities (record them first). Then write intel_check for it.',
+      {
+        title: z.string().min(1).max(120),
+        summary: z.string().min(1),
+        impact: z.enum(['high', 'medium', 'low', 'business']),
+        effort: z.enum(['S', 'M', 'L']),
+        evidence: z.array(evidenceShape).min(1).max(8),
+        opportunity: z
+          .object({
+            kind: z.enum(['gap', 'open', 'edge']),
+            capabilityIds: z.array(z.string()).describe('e.g. ["F3"]'),
+            problem: z.string().min(1),
+            alternatives: z.string().min(1).describe('What customers do today'),
+            proposal: z.string().min(1),
+            value: z.string().min(1),
+            effortNote: z.string().min(1).describe('"Medium · ~5 tasks · needs Google OAuth review"'),
+            priority: z.enum(['now', 'next', 'later', 'parked']),
+            validation: z.string().min(1).describe('How we would validate before or while building'),
+            valueScore: z.number().int().min(1).max(5),
+            effortScore: z.number().int().min(1).max(5),
+            testFirst: z.boolean().optional(),
+            atRisk: z.string().optional().describe('Edge only: who threatens it'),
+            claim: claimObject.describe('label, confidence, sources, implication of the opportunity as a whole'),
+          })
+          .passthrough(),
+        stage: z.string().optional(),
+        overlaps: z.string().optional(),
+      },
+      async ({ title, summary, impact, effort, evidence, opportunity, stage, overlaps }) => {
+        const body: Record<string, unknown> = { actor: me, title, summary, impact, effort, evidence, opportunity: { ...opportunity, capabilityIds: opportunity.capabilityIds.map(upId) } };
+        if (stage?.trim()) body.stageId = upId(stage);
+        if (overlaps?.trim()) body.overlapsGoalId = upId(overlaps);
+        const i = await api<ResearchIdea>('/api/intel/opportunities', { method: 'POST', body });
+        return `Added ${formatIdeaLine(i)}. Now write intel_check(${i.id}, …).`;
+      },
+    );
+
+    tool(
+      'intel_check',
+      'Write the intel check of an idea: one row per area you covered (features, complaints, social, plans, pricing, audience, ai), each with finding, signal, label, confidence and sources; verdictText = what it means for us; capabilities = the feature-matrix rows it is about (the verdict is then computed); verdict only without capabilities (gap, edge, edge_at_risk, open, parity, unclear); watchFor = what would change the verdict.',
+      {
+        idea: z.string().describe('Idea id, e.g. R12'),
+        rows: z.array(checkRowShape).min(1).max(7),
+        verdictText: z.string().min(1).describe('"Build before Wakelet ships, or lose the edge."'),
+        confidence: z.enum(['high', 'medium', 'low']),
+        capabilities: z.array(z.string()).optional(),
+        verdict: z.enum(['gap', 'edge', 'edge_at_risk', 'open', 'parity', 'unclear']).optional(),
+        watchFor: z.string().optional(),
+      },
+      async ({ idea, rows, verdictText, confidence, capabilities, verdict, watchFor }) => {
+        const body: Record<string, unknown> = { actor: me, rows, verdictText, confidence };
+        if (capabilities?.length) body.capabilityIds = capabilities.map(upId);
+        if (verdict) body.verdict = verdict;
+        if (watchFor?.trim()) body.watchFor = watchFor;
+        const c = await api<IntelCheck>(`/api/intel/checks/${enc(upId(idea))}`, { method: 'POST', body });
+        return formatCheck(c);
+      },
+    );
+
+    tool(
+      'finish_intel_job',
+      'End the running intel job once everything is recorded. summary = one paragraph: what you read, what stood out, what you could not reach (pages that need a login the profile does not have); sourcesRead = pages read.',
+      { summary: z.string().min(1), sourcesRead: z.number().int().min(0).optional() },
+      async ({ summary, sourcesRead }) => {
+        const body: Record<string, unknown> = { actor: me, summary };
+        if (sourcesRead !== undefined) body.sourcesRead = sourcesRead;
+        const j = await api<IntelJob>('/api/intel/finish', { method: 'POST', body });
+        return `Finished ${j?.id ?? 'the job'}. If another job is queued it arrives as a [muster] line; otherwise you are done; stop here.`;
       },
     );
   }
