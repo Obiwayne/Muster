@@ -9,6 +9,7 @@
 //   MOCK_RESEARCH=none|running …                 → no research yet / scout still researching (default: a finished run, 4 new ideas)
 //   MOCK_INTEL=none|running …                    → no competitors yet / an intel sweep running (default: Padlet, Wakelet, Linoit swept)
 //   MOCK_BROWSER=off …                           → GET /api/browser: playwright-core missing
+//   MOCK_SANDBOX=<dir> …                       → research, roadmap, intel store and intel config read from <dir>/.muster (a live run's data; read only)
 //   MOCK_WEEKLY=84 …                             → weekly usage % (default 38; at 75+ an open weekly usage alert note)
 //
 // With `npx vite ui` (dev), set VITE_MUSTER_TOKEN=dev-token; vite proxies /api and /ws here.
@@ -16,7 +17,7 @@
 
 import http from 'node:http';
 import { readFile } from 'node:fs/promises';
-import { existsSync } from 'node:fs';
+import { existsSync, readFileSync } from 'node:fs';
 import { dirname, extname, join, normalize } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { WebSocketServer } from 'ws';
@@ -482,6 +483,21 @@ const intel = createIntelMock({
   state, config, now, need, HttpError, toastAll, readBody: (req) => body(req), broadcast: () => broadcast(),
   send: (msg) => { const t = JSON.stringify(msg); for (const ws of eventClients) if (ws.readyState === 1) ws.send(t); },
 });
+// MOCK_SANDBOX: replay a live run's research, roadmap and intel store (the files are only read).
+if (process.env.MOCK_SANDBOX) {
+  const dir = join(process.env.MOCK_SANDBOX, '.muster');
+  const read = (f) => JSON.parse(readFileSync(join(dir, f), 'utf8'));
+  const live = read('state.json');
+  if (live.research) state.research = live.research;
+  state.roadmap = live.roadmap ?? null;
+  const store = read('intel.json');
+  for (const k of Object.keys(intel.store)) delete intel.store[k];
+  Object.assign(intel.store, store);
+  const cfg = existsSync(join(dir, 'config.json')) ? read('config.json') : {};
+  if (cfg.projectName) config.projectName = cfg.projectName;
+  if (cfg.intel) config.intel = { ...config.intel, ...cfg.intel };
+  if (cfg.researchBrowser) config.researchBrowser = { ...config.researchBrowser, ...cfg.researchBrowser };
+}
 const paused = () => state.usage.fiveHour && state.usage.fiveHour.usedPercentage >= config.pauseAtFiveHourPct;
 
 function fakeDiff(a) {
