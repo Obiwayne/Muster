@@ -283,6 +283,14 @@ function renderShell(s: Snapshot): void {
 function renderIntelBadge(): void {
   const el = navCounts.get('intel')!;
   const n = events.intel?.alerts ?? 0;
+  const live = events.intel?.runningJob;
+  if (live) {
+    // scout is working on an intel job: a pulsing blue "live" badge on every page (alerts move to the tooltip)
+    el.className = 'nav-live';
+    setChildren(el, h('span.nav-live-dot'), 'live');
+    el.title = `scout: ${live.label}${n > 0 ? ` · ${n} intel alert${n === 1 ? '' : 's'}` : ''}`;
+    return;
+  }
   el.className = n > 0 ? 'nav-badge intel' : 'nav-count';
   el.textContent = n > 0 ? String(n) : '';
   el.title = n > 0 ? `${n} intel alert${n === 1 ? '' : 's'}: changes that may need the plan to respond` : '';

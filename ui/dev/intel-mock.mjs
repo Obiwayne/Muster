@@ -3,6 +3,9 @@
 //
 //   MOCK_INTEL=none     → no competitors yet (empty Intel page)
 //   MOCK_INTEL=running  → a sweep is running
+//   MOCK_INTEL=researching → Figma was just added and scout is researching it: the job advances every few seconds
+//                         (areas, pages, latest claim) and posts its "research is ready" note when done; the board also
+//                         has an earlier ready note and a "stopped early" note (MOCK_INTEL_NOTES=1 adds those to any mode)
 //   MOCK_BROWSER=off    → GET /api/browser says playwright-core is missing
 //
 // Package D adds: intel checks on the ideas (R7 edge at risk, R9 edge, R10 gap, R8 approved, R12 stale, R13 open;
@@ -19,6 +22,23 @@ export function createIntelMock(deps) {
   const ymd = (daysAgo) => new Date(now - daysAgo * 86_400_000).toISOString().slice(0, 10);
   const iso = (minAgo) => new Date(now - minAgo * 60_000).toISOString();
   const today = ymd(0);
+  const FIGMA_AREAS = ['features', 'pricing', 'roadmap', 'ai', 'reviews', 'marketing', 'audience', 'team', 'financials'];
+  const FAKE_CLAIMS = {
+    features: [['Dev Mode inspects any frame', 'fact'], ['Branching on Organization only', 'fact']],
+    pricing: [['Figma Dev Mode moved to paid seats', 'fact'], ['Education plan free for verified teachers', 'fact']],
+    roadmap: [['Config 2026: AI first drafts', 'fact']],
+    ai: [['“Make designs” generates whole screens', 'fact']],
+    reviews: [['Slow on very large files', 'opinion'], ['Students lose work in shared drafts', 'opinion'], ['Pricing changes feel sudden', 'opinion']],
+    marketing: [['TikTok tutorials beat brand posts 8×', 'opinion']],
+    audience: [['Claims students; evidenced buyers are studios', 'fact']],
+    team: [['Hiring 12 ML engineers in London', 'prediction']],
+    financials: [['Figma UK Ltd files full accounts', 'fact']],
+  };
+  const READING = {
+    features: ['https://help.figma.com/hc/en-us', 'help.figma.com'], pricing: ['https://www.figma.com/pricing/', 'figma.com'], roadmap: ['https://config.figma.com/', 'config.figma.com'],
+    ai: ['https://www.figma.com/ai/', 'figma.com'], reviews: ['https://apps.apple.com/us/app/figma/id1152747299', 'App Store'], marketing: ['https://www.tiktok.com/@figma', 'TikTok'],
+    audience: ['https://www.linkedin.com/company/figma/', 'LinkedIn'], team: ['https://www.figma.com/careers/', 'figma.com'], financials: ['https://find-and-update.company-information.service.gov.uk/', 'Companies House'],
+  };
 
   config.researchBrowser ??= { mode: 'profile', channel: 'chrome', operaAllow: [], minDelayMs: 3000, maxPagesPerJob: 150, visibleSites: [] };
   config.researchBrowser.visibleSites ??= [];
@@ -367,6 +387,7 @@ export function createIntelMock(deps) {
     store.capabilities.forEach((c) => Object.values(c.cells).forEach(add));
     [store.themes, store.social, store.socialInsights, store.plans, store.findings, store.scenarios, store.filings, store.insights, store.changes].forEach((l) => l.forEach(add));
     const running = store.jobs.find((j) => j.status === 'running');
+    const queued = store.jobs.filter((j) => j.status === 'queued');
     return {
       rev: store.rev, competitors: live.length, lastSweptAt: live.map((c) => c.lastSweptAt).filter(Boolean).sort().pop(),
       sources: Math.max(urls.size, store.jobs.reduce((a, j) => a + (j.sourcesRead ?? 0), 0)),
@@ -374,10 +395,97 @@ export function createIntelMock(deps) {
       open: store.capabilities.filter((c) => c.verdict === 'open').length,
       newIdeas: state.research.ideas.filter((i) => i.origin === 'intel' && i.status === 'new').length,
       alerts: store.changes.filter((c) => !c.seen && c.planImpact === 'respond').length,
-      ...(running ? { runningJob: { id: running.id, kind: running.kind, label: `${running.kind} ${running.competitorIds.join(', ')}`, startedAt: running.startedAt } } : {}),
-      queuedJobs: store.jobs.filter((j) => j.status === 'queued').length,
+      ...(running ? { runningJob: { id: running.id, kind: running.kind, label: jobLabel(running), startedAt: running.startedAt, ...jobView(running) } } : {}),
+      queuedJobs: queued.length,
+      ...(queued.length ? { queue: queued.map((j) => ({ id: j.id, kind: j.kind, label: jobLabel(j), queuedAt: j.queuedAt, ...jobView(j) })) } : {}),
+      ...(queued.length && running ? { waitingOn: `${running.id} ${jobLabel(running)}` } : {}),
     };
   }
+  function nameOf(id) { return store.competitors.find((c) => c.id === id)?.name ?? id; }
+  function jobLabel(j) {
+    const names = j.competitorIds.map(nameOf);
+    return j.kind === 'competitor' ? `Researching ${names[0]}` : j.kind === 'sweep' ? `Sweep of ${names.length} competitors` : j.kind === 'watch' ? `Watching ${names.join(', ')} for changes` : `Intel check of ${j.ideaId}`;
+  }
+  function jobView(j) {
+    return { competitorIds: j.competitorIds, names: j.competitorIds.map(nameOf), areas: j.areas, depth: j.depth, by: j.by, pages: j.pagesBrowsed, ...(j.progress ? { progress: j.progress } : {}) };
+  }
+
+  // ---------------------------------------------------------------- research in progress (the overlay) and its board note
+  /** One step of a mock job: a page or two, and every other step a claim in the current area (claims per area from FAKE_CLAIMS, else 1). */
+  function advance(j) {
+    j.steps = (j.steps ?? 0) + 1;
+    j.pagesBrowsed += 1 + (j.steps % 3 === 0 ? 1 : 0);
+    const p = (j.progress ??= { claims: 0, areas: {} });
+    const area = j.areas.find((a) => (p.areas[a] ?? 0) < (FAKE_CLAIMS[a]?.length ?? 1));
+    if (!area) return true;
+    const [url, site] = READING[area] ?? ['https://example.com', 'their site'];
+    p.reading = { url, site, at: new Date().toISOString() };
+    p.current = area;
+    if (j.steps % 2 === 0) {
+      const n = p.areas[area] ?? 0;
+      const [text, label] = FAKE_CLAIMS[area]?.[n] ?? [`${nameOf(j.competitorIds[0])}: ${area} noted`, 'fact'];
+      p.areas[area] = n + 1;
+      p.claims++;
+      p.latest = { text, label, at: new Date().toISOString() };
+    }
+    return false;
+  }
+  function postJobNote(j, outcome, minAgo = 0) {
+    const names = j.competitorIds.map(nameOf);
+    const who = names.length === 1 ? names[0] : `${names.slice(0, -1).join(', ')} and ${names.at(-1)}`;
+    const p = j.progress ?? { claims: 0, areas: {} };
+    const areas = Object.values(p.areas).filter((n) => n > 0).length;
+    const ms = Date.parse(j.finishedAt) - Date.parse(j.startedAt);
+    const dur = ms < 60_000 ? `${Math.round(ms / 1000)}s` : `${Math.floor(ms / 60_000)}m ${Math.round(ms / 1000) % 60}s`;
+    const sources = j.sourcesRead ?? j.pagesBrowsed;
+    const caps = store.capabilities;
+    const vs = (c) => c.verdictVs.some((id) => j.competitorIds.includes(id));
+    const intel = {
+      jobId: j.id, kind: j.kind, outcome, competitorIds: j.competitorIds, names, sources, durationMs: ms, claims: p.claims, areas,
+      gaps: caps.filter((c) => c.verdict === 'gap' && vs(c)).length, edges: caps.filter((c) => c.verdict === 'edge' && vs(c)).length,
+      open: caps.filter((c) => c.verdict === 'open' && j.competitorIds.some((id) => c.cells[id])).length,
+      ideas: state.research.ideas.filter((i) => i.origin === 'intel' && i.runId === j.id).length,
+      ...(j.reasons ? { reasons: j.reasons } : {}),
+    };
+    const text = outcome === 'ready'
+      ? `${who} research is ready\nRead ${sources} sources in ${dur}. ${p.claims} claims across ${areas} areas.`
+      : `${who} research stopped early\nKept ${p.claims} claims. ${(j.reasons ?? []).join('. ')}.`;
+    const note = { id: `N${state.nextIds.note++}`, type: 'system', topic: 'intel', from: 'scout', to: 'you', text, createdAt: new Date(Date.now() - minAgo * 60_000).toISOString(), open: true, replies: [], intel };
+    state.notes.push(note);
+    if (minAgo === 0) broadcastState(); // seeded notes go out with the first snapshot
+    return note;
+  }
+  function finishJob(j) {
+    j.status = 'done';
+    j.finishedAt = new Date().toISOString();
+    j.sourcesRead ??= 12 + j.pagesBrowsed;
+    j.summary ??= 'mock: research finished';
+    for (const id of j.competitorIds) { const c = store.competitors.find((x) => x.id === id); if (c) c.lastSweptAt = j.finishedAt; }
+    if (j.kind === 'competitor' || j.kind === 'sweep' || j.kind === 'watch') postJobNote(j, 'ready');
+  }
+  function seedResearching() {
+    store.competitors.push({ id: 'figma', name: 'Figma', url: 'https://figma.com', colour: 3, tagline: 'Design together', sources: [], areas: FIGMA_AREAS, watch: 'weekly', browse: 'profile', addedAt: iso(4) });
+    const j = { id: 'IJ2', kind: 'competitor', status: 'running', competitorIds: ['figma'], areas: FIGMA_AREAS, browse: 'profile', depth: 'quick', by: 'you', queuedAt: iso(3.67), startedAt: iso(3.67), pagesBrowsed: 0 };
+    store.jobs.push(j);
+    store.nextIds.job = 3;
+    // where the design shows it: 4 of 9 areas done, reviews current, 23 pages
+    while ((j.progress?.claims ?? 0) < 7) advance(j);
+    j.pagesBrowsed = 23;
+    const step = Number(process.env.MOCK_INTEL_STEP_MS ?? 4000);
+    const timer = setInterval(() => {
+      if (j.status !== 'running') { clearInterval(timer); return; }
+      if (advance(j)) { clearInterval(timer); finishJob(j); dispatch(); }
+      saved();
+    }, step);
+  }
+  function seedNotes() {
+    const done = { id: 'IJ1', kind: 'sweep', competitorIds: ['padlet', 'wakelet', 'linoit'], startedAt: iso(7 * 60), finishedAt: iso(7 * 60 - 9.2), sourcesRead: 41, pagesBrowsed: 30, progress: { claims: 38, areas: { features: 9, roadmap: 4, reviews: 8, gaps: 4, audience: 3, pricing: 4, ai: 2, financials: 2, team: 2 } } };
+    const stopped = { id: 'IJ0', kind: 'competitor', competitorIds: [store.competitors.some((c) => c.id === 'figma') ? 'figma' : 'padlet'], startedAt: iso(60 * 26), finishedAt: iso(60 * 26 - 4), pagesBrowsed: 14, progress: { claims: 12, areas: { features: 8, pricing: 4 } }, reasons: ['g2.com blocked the research browser; read its public page instead', 'Reddit not signed in'] };
+    postJobNote(stopped, 'stopped', 60 * 26);
+    if (store.competitors.some((c) => c.id === 'padlet')) postJobNote(done, 'ready', 2);
+  }
+  if (MODE === 'researching') seedResearching();
+  if (MODE === 'researching' || process.env.MOCK_INTEL_NOTES) seedNotes();
   let saveTimer = null;
   function saved() {
     store.rev++;
@@ -393,20 +501,17 @@ export function createIntelMock(deps) {
     next.status = 'running';
     next.startedAt = new Date().toISOString();
     saved();
-    const tick = setInterval(() => { if (next.status !== 'running') { clearInterval(tick); return; } next.pagesBrowsed += 3; saved(); }, 1500);
+    const tick = setInterval(() => { if (next.status !== 'running') { clearInterval(tick); return; } if (next.kind !== 'check' && next.kind !== 'recheck') advance(next); else next.pagesBrowsed += 3; saved(); }, 1500);
     setTimeout(() => {
       clearInterval(tick);
       if (next.status !== 'running') return;
-      next.status = 'done';
-      next.finishedAt = new Date().toISOString();
-      next.sourcesRead = 12 + next.pagesBrowsed;
       next.summary = 'mock: nothing new recorded';
+      finishJob(next);
       if (next.kind === 'check' || next.kind === 'recheck') finishCheck(next);
-      for (const id of next.competitorIds) { const c = store.competitors.find((x) => x.id === id); if (c) c.lastSweptAt = next.finishedAt; }
       toastAll('info', `scout finished intel job ${next.id}`);
       saved();
       dispatch();
-    }, 6000);
+    }, Number(process.env.MOCK_INTEL_JOB_MS ?? 6000));
   }
   /** A finished check job writes a plausible check (the real one comes from scout's intel_check). */
   function finishCheck(job) {
