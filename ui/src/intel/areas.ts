@@ -42,6 +42,7 @@ function groupByCompany<T extends { competitorId?: string }>(store: IntelStore, 
 
 /** One finding card: title, detail, key/value facts, AI verified/claimed, partial-view note, and its claim line. */
 export function findingCard(f: IntelFinding): HTMLElement {
+  const claim = claimLine(f, f.title, f.id, { omit: ['implication', 'prediction'] });
   return h('div.it-card', null,
     h('div.it-card-head', null,
       h('div.it-card-t', null, f.title),
@@ -51,7 +52,8 @@ export function findingCard(f: IntelFinding): HTMLElement {
     f.label === 'prediction' && f.prediction ? predictionBlock(f.prediction) : null,
     f.implication ? h('div.it-card-impl', null, h('span.faint', null, 'For us: '), f.implication) : null,
     f.partial ? h('div.it-card-partial', null, 'Partial public view: LinkedIn, job posts and filings only show part of a team.') : null,
-    h('div.it-card-foot', null, claimLine(f, f.title)));
+    h('div.it-card-foot', null, claim.line),
+    claim.panel);
 }
 
 function findingsTab(host: HTMLElement, ctx: IntelCtx, areas: IntelArea[], title: string, sub: string, what: string, extra?: (store: IntelStore) => Child): void {
@@ -99,6 +101,7 @@ export function renderFeatures(host: HTMLElement, ctx: IntelCtx): void {
 
 function planCard(store: IntelStore, p: IntelPlan): HTMLElement {
   const caps = p.capabilityIds.map((id) => store.capabilities.find((c) => c.id === id)?.name ?? id);
+  const claim = claimLine(p, p.title, p.id, { omit: ['implication', 'prediction'] });
   const status = p.status ? { planned: 'Planned', in_progress: 'In progress', shipped: 'Shipped', dropped: 'Dropped' }[p.status] : null;
   return h('div.it-card', { class: p.kind === 'prediction' && 'pred' },
     h('div.it-card-head', null,
@@ -109,7 +112,8 @@ function planCard(store: IntelStore, p: IntelPlan): HTMLElement {
     caps.length ? h('div.it-card-d', null, h('span.faint', null, 'Touches: '), caps.join(', ')) : null,
     p.prediction ? predictionBlock(p.prediction) : null,
     p.implication ? h('div.it-card-impl', null, h('span.faint', null, 'For us: '), p.implication) : null,
-    h('div.it-card-foot', null, claimLine(p, p.title)));
+    h('div.it-card-foot', null, claim.line),
+    claim.panel);
 }
 
 export function renderRoadmaps(host: HTMLElement, ctx: IntelCtx): void {
@@ -135,7 +139,9 @@ export function renderPricing(host: HTMLElement, ctx: IntelCtx): void {
   findingsTab(host, ctx, ['pricing'], 'Pricing', 'Tiers from their public pricing pages and realistic cost scenarios', 'pricing', (store) => {
     if (!store.scenarios.length) return null;
     const comps = trackedCompanies(store);
-    return store.scenarios.map((s) => h('div.it-panel', null,
+    return store.scenarios.map((s) => {
+      const claim = claimLine(s, s.name, s.id, { omit: ['implication', 'prediction'] });
+      return h('div.it-panel', null,
       h('div.it-panel-head', null, h('div.it-panel-t', null, s.name), labelDot(s.label)),
       h('div.it-scn', null, comps.map((c) => {
         const cost = s.costs[c.id];
@@ -145,7 +151,9 @@ export function renderPricing(host: HTMLElement, ctx: IntelCtx): void {
           h('div.it-scn-s', null, cost ? [`per ${cost.period}`, cost.note].filter(Boolean).join(' · ') : 'not priced'));
       })),
       s.implication ? h('div.it-card-impl.pad', null, h('span.faint', null, 'For us: '), s.implication) : null,
-      h('div.it-panel-foot', null, caption(`Assumptions: ${s.assumptions.join('; ')}.`), h('div', null, claimLine(s, s.name)))));
+      h('div.it-panel-foot', null, caption(`Assumptions: ${s.assumptions.join('; ')}.`), h('div', null, claim.line)),
+      claim.panel);
+    });
   });
 }
 
@@ -154,7 +162,9 @@ export function renderPricing(host: HTMLElement, ctx: IntelCtx): void {
 export function renderFinancials(host: HTMLElement, ctx: IntelCtx): void {
   findingsTab(host, ctx, ['financials'], 'Financials', 'UK public filings from Companies House, with what they cannot tell you', 'filings', (store) => {
     if (!store.filings.length) return null;
-    return h('div.it-cards', null, store.filings.map((f) => h('div.it-card', { class: f.overdue && 'warn' },
+    return h('div.it-cards', null, store.filings.map((f) => {
+      const claim = claimLine(f, 'Filing', `${f.competitorId}:${f.companyNumber}`);
+      return h('div.it-card', { class: f.overdue && 'warn' },
       h('div.it-card-head', null,
         h('span.it-chip-dot', { style: { background: companyColour(store.competitors.find((c) => c.id === f.competitorId)) } }),
         h('div.it-card-t', null, `${companyName(store, f.competitorId)} · ${f.companyNumber}`),
@@ -166,7 +176,9 @@ export function renderFinancials(host: HTMLElement, ctx: IntelCtx): void {
         ...Object.entries(f.figures ?? {}),
       ] as [string, string | undefined][]).filter(([, v]) => v).map(([k, v]) => [h('div.it-kv-k', null, k), h('div.it-kv-v', null, v!)])),
       h('div.it-card-partial', null, `Limits: ${f.limits}`),
-      h('div.it-card-foot', null, claimLine(f, 'Filing')))));
+      h('div.it-card-foot', null, claim.line),
+      claim.panel);
+    }));
   });
 }
 

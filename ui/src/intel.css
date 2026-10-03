@@ -90,16 +90,6 @@
 .it-seg button:hover { color: var(--color-text); }
 .it-seg button.on { background: var(--color-surface-2); color: var(--color-text); font-weight: 550; }
 .it-seg-dot { width: 6px; height: 6px; border-radius: 3px; }
-.it-pop { display: flex; flex-direction: column; gap: 8px; font-size: 12px; line-height: 17px; }
-.popover:has(.it-pop) { width: 380px; max-height: 60vh; overflow-y: auto; gap: 8px; padding: 14px; }
-.it-pop-t { font-size: 13px; font-weight: 600; }
-.it-pop-meta { display: flex; align-items: center; gap: 6px; font-size: 11px; color: var(--color-muted); }
-.it-pop-impl { color: var(--color-text); }
-.it-pop-list { display: flex; flex-direction: column; gap: 6px; padding-top: 4px; border-top: 1px solid var(--color-line); }
-.it-pop-src { display: flex; flex-direction: column; gap: 1px; }
-.it-pop-src a { color: var(--color-research-text); }
-.it-pop-src a:hover { text-decoration: underline; }
-.it-pop-src .faint { font-size: 11px; }
 .it-pred { display: flex; flex-direction: column; gap: 3px; padding: 8px 10px; border-radius: 6px; background: color-mix(in oklab, var(--it-prediction) 10%, transparent); color: var(--color-text); font-size: 12px; line-height: 17px; }
 
 /* ---------- add competitor modal (5038-0) ---------- */
@@ -195,7 +185,7 @@
 .it-dec-head { display: flex; align-items: baseline; gap: 10px; }
 .it-dec-meta { font-family: var(--font-mono); font-size: 11px; color: var(--color-faint); }
 .it-dec-cards { display: flex; gap: 10px; }
-.it-dec { flex: 1 1 0; min-width: 0; display: flex; flex-direction: column; gap: 8px; padding: 14px; border-radius: var(--radius-md); background: var(--color-surface); border: 1px solid var(--color-line); text-align: left; }
+.it-dec { flex: 1 1 0; min-width: 0; display: flex; flex-direction: column; border-radius: var(--radius-md); background: var(--color-surface); border: 1px solid var(--color-line); text-align: left; }
 .it-dec:hover { border-color: color-mix(in oklab, var(--color-line) 60%, var(--color-muted)); }
 .it-dec.k-advantage { background: color-mix(in oklab, var(--color-success) 8%, var(--color-surface)); border-color: color-mix(in oklab, var(--color-success) 35%, transparent); }
 .it-dec-k { font-size: 11px; font-weight: 600; letter-spacing: 0.06em; color: var(--color-muted); }

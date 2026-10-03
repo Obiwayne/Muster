@@ -1,8 +1,9 @@
 // Shared bits for the Intel tabs: the tab context, label dots, claim meta lines, source lists, captions, empty states.
 import type { IntelClaim, IntelLabel, IntelSource, IntelStore, ResearchState } from '../../../src/types';
-import { h, showPopover, type Child } from '../dom';
+import { h, type Child } from '../dom';
+import { appendTo, details, type DetailsOpts } from './expand';
 import type { Snapshot } from '../events';
-import { LABEL_TEXT, claimMeta, labelDotClass, safeHref, sourceLine } from '../intelmodel';
+import { LABEL_TEXT, claimMeta, labelDotClass, sourceLine } from '../intelmodel';
 import type { IntelTab } from '../intelmodel';
 
 export interface IntelCtx {
@@ -22,21 +23,6 @@ export function labelDot(label: IntelLabel, size: 'sm' | 'md' = 'sm'): HTMLEleme
   return h('span.it-ld', { class: [labelDotClass(label), size], title: LABEL_TEXT[label] });
 }
 
-/** A source list popover anchored on `anchor`. */
-export function openSources(anchor: HTMLElement, title: string, sources: IntelSource[], claim?: IntelClaim): void {
-  showPopover(anchor, h('div.it-pop', null,
-    h('div.it-pop-t', null, title),
-    claim ? h('div.it-pop-meta', null, labelDot(claim.label), claimMeta(claim)) : null,
-    claim?.implication ? h('div.it-pop-impl', null, h('span.faint', null, 'For us: '), claim.implication) : null,
-    claim?.prediction ? predictionBlock(claim.prediction) : null,
-    h('div.it-pop-list', null, sources.map((s) => {
-      const href = safeHref(s.url);
-      return h('div.it-pop-src', null,
-        href ? h('a', { href, target: '_blank', rel: 'noreferrer' }, s.title) : h('span', null, s.title),
-        h('span.faint', null, [s.publishedAt ? `published ${s.publishedAt}` : '', `read ${s.seenAt}`, s.via && s.via !== 'public' ? 'signed in' : ''].filter(Boolean).join(' · ')));
-    }))), 'left');
-}
-
 /** Signals, timeframe and what would change a prediction. */
 export function predictionBlock(p: NonNullable<IntelClaim['prediction']>): HTMLElement {
   return h('div.it-pred', null,
@@ -45,11 +31,15 @@ export function predictionBlock(p: NonNullable<IntelClaim['prediction']>): HTMLE
     h('div', null, h('span.faint', null, 'Would change it: '), p.wouldChange));
 }
 
-/** "● Fact · high confidence · 3 sources · 2 Oct 2026" as a clickable line that lists the sources. */
-export function claimLine(claim: IntelClaim, title = 'Sources'): HTMLElement {
-  const el = h('button.it-claim', { title: 'Show sources' }, labelDot(claim.label), h('span', null, claimMeta(claim)));
-  el.onclick = (e: MouseEvent) => { e.stopPropagation(); openSources(el, title, claim.sources, claim); };
-  return el;
+/**
+ * "● Fact · high confidence · 3 sources · 2 Oct 2026" as a button that opens the claim's sources inline, at the bottom
+ * of the card it sits in, with `title` as their heading. Put `line` in the card's foot and `panel` (set when it is open
+ * on this render) last in the card.
+ */
+export function claimLine(claim: IntelClaim, title: string, key: string, opts: { group?: string; omit?: DetailsOpts['omit'] } = {}): { line: HTMLElement; panel: HTMLElement | null } {
+  const line = h('button.it-claim', null, labelDot(claim.label), h('span', null, claimMeta(claim)));
+  const panel = details(line, { group: opts.group ?? 'claim', key, heading: title, sources: claim.sources, claim, omit: opts.omit, cls: 'xp-card', place: appendTo('.it-card, .it-theme, .it-panel') });
+  return { line, panel };
 }
 
 /** The first source as text ("App Store · Padlet · 2★ · 14 Sep 2026"). */

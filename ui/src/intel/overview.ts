@@ -7,9 +7,15 @@ import {
   AREA_SHORT, SEVERITY_TEXT, cellPill, companyColour, companyName, complaintThemes, filterCapabilities, fmtDate, lastChecked, loveThemes,
   matrixCounts, matrixSummary, rivals, sampleLine, shareOfSample, storeSources, thinThemes, trackedCompanies, verdictChip, type MatrixFilter,
 } from '../intelmodel';
-import { caption, emptyState, labelDot, openSources, predictionBlock, segmented, type IntelCtx } from './common';
+import { caption, emptyState, labelDot, predictionBlock, segmented, type IntelCtx } from './common';
+import { after, appendTo, details } from './expand';
 
 let matrixFilter: MatrixFilter = 'all';
+
+/** A matrix row's left accent, carried on to a cell's details. */
+const VERDICT_ACCENT: Partial<Record<IntelCapability['verdict'], string>> = {
+  gap: 'var(--color-stuck)', edge: 'var(--color-success)', open: 'var(--color-research-text)',
+};
 const OVERVIEW_ROWS = 7;
 
 const INSIGHT_KIND: Record<IntelInsight['kind'], string> = {
@@ -58,12 +64,12 @@ function decisions(ctx: IntelCtx): HTMLElement {
       h('div.it-dec-meta', null, ['scout', lastJob?.finishedAt ? fmtDate(lastJob.finishedAt) : null, `${sources} sources`].filter(Boolean).join(' · '))),
     cards.length
       ? h('div.it-dec-cards', null, cards.map((i) => {
-          const card = h('button.it-dec', { class: `k-${i.kind}`, title: 'Show sources' },
+          const hit = h('button.it-dec-hit', null,
             h('div.it-dec-k', null, INSIGHT_KIND[i.kind]),
             h('div.it-dec-t', null, i.title),
             h('div.it-dec-m', null, labelDot(i.label), h('span', null, `${i.detail} · ${i.confidence}`)));
-          card.onclick = () => openSources(card, i.title, i.sources, i);
-          return card;
+          const panel = details(hit, { group: 'decisions', key: i.id, sources: i.sources, claim: i, cls: 'xp-card', accent: i.kind === 'advantage' ? 'var(--color-success)' : undefined, place: appendTo('.it-dec') });
+          return h('div.it-dec', { class: `k-${i.kind}` }, hit, panel);
         }))
       : h('div.it-dec-none', null, lastJob?.finishedAt
           ? `scout recorded no conclusions in ${lastJob.id}. They appear here once a job records "what it means for us" insights (Run sweep).`
@@ -118,17 +124,24 @@ export function matrixTable(ctx: IntelCtx, rows: IntelCapability[], companies: I
             chip.verdict === 'edge' ? h('span.it-vchip-up') : h('span.it-vchip-dot'),
             chip.text);
           if (cap.ideaId) chipEl.onclick = () => { location.hash = `#/intel/opportunities?idea=${encodeURIComponent(cap.ideaId!)}`; };
-          return h('div.it-mx-row', { class: `v-${cap.verdict}` },
+          let panel: HTMLElement | null = null;
+          const row = h('div.it-mx-row', { class: `v-${cap.verdict}` },
             h('div.it-mx-name', { title: cap.group ?? '' }, cap.name),
             companies.map((c) => {
               const isUs = !!(c.isUs || c.id === 'us');
               const cell = cap.cells[c.id];
               const pill = cellPill(cell, isUs);
               const el = h('button.it-pill', { class: [pill.cls, isUs && cap.verdict === 'edge' && cell?.status === 'yes' && 'ring'], title: cell ? `${c.name}: ${cell.status}${cell.planNote ? ` · ${cell.planNote}` : ''}` : `${c.name}: not checked` }, pill.text);
-              if (cell) el.onclick = (e: MouseEvent) => { e.stopPropagation(); openSources(el, `${cap.name} · ${c.name}`, cell.sources, cell); };
+              if (cell) {
+                panel = details(el, {
+                  group: 'matrix', key: `${cap.id}:${c.id}`, heading: `${isUs ? 'Us' : c.name} · ${cap.name}`, sources: cell.sources, claim: cell,
+                  cls: 'xp-wide', accent: VERDICT_ACCENT[cap.verdict], place: after('.it-mx-row'),
+                }) ?? panel;
+              }
               return h('div.it-mx-col', null, el);
             }),
             h('div.it-mx-verdict', null, chipEl));
+          return [row, panel];
         })
       : h('div.it-mx-empty', null, emptyText ?? (matrixFilter === 'all' ? 'No capabilities compared yet.' : `No ${matrixFilter === 'gap' ? 'gaps' : matrixFilter === 'edge' ? 'edges' : 'open spaces'} right now.`)));
 }
@@ -159,11 +172,11 @@ function positioning(store: IntelStore): HTMLElement {
       })),
     h('div.it-map-y1', null, p.y.max), h('div.it-map-y0', null, p.y.min),
     h('div.it-map-x0', null, p.x.min), h('div.it-map-x1', null, p.x.max));
-  const head = h('button.it-panel-head.col', { title: 'Show sources' },
+  const head = h('button.it-panel-head.col', null,
     h('div.it-panel-t', null, 'Positioning map', labelDot(p.label)),
     h('div.it-panel-s', null, p.title));
-  head.onclick = () => openSources(head, 'Positioning map', p.sources, p);
-  return h('div.it-panel.it-map', null, head, mapEl,
+  const panel = details(head, { group: 'positioning', key: 'map', sources: p.sources, claim: p, cls: 'xp-wide', place: after('.it-map-area') });
+  return h('div.it-panel.it-map', null, head, mapEl, panel,
     h('div.it-map-cap', null, caption(p.assumptions.join(' '), p.label === 'prediction' && p.prediction ? null : ` ${p.confidence} confidence.`)));
 }
 
@@ -236,11 +249,11 @@ function mostCommon<T>(xs: T[]): T {
 }
 
 /** One change-log row (overview and the Changes tab). */
-export function changeRow(store: IntelStore, c: IntelChange, compact = false): HTMLElement {
+export function changeRow(store: IntelStore, c: IntelChange, compact = false): Child[] {
   const comp = store.competitors.find((x) => x.id === c.competitorId);
   const respond = c.planImpact === 'respond';
   const text: Child[] = [c.implication ?? '', respond && c.suggestion ? ` ${c.suggestion}` : ''];
-  const row = h('button.it-chg', { class: [respond && 'respond', !c.seen && 'unseen', compact && 'compact'], title: 'Show sources' },
+  const row = h('button.it-chg', { class: [respond && 'respond', !c.seen && 'unseen', compact && 'compact'] },
     h('div.it-chg-date', null, fmtDate(c.at, true)),
     h('div.it-chg-body', null,
       h('div.it-chg-t', null, h('span.it-chg-dot', { style: { background: companyColour(comp) } }), h('span', null, c.title)),
@@ -248,6 +261,10 @@ export function changeRow(store: IntelStore, c: IntelChange, compact = false): H
       !compact && c.label === 'prediction' && c.prediction ? predictionBlock(c.prediction) : null,
       !compact ? h('div.it-chg-meta', null, labelDot(c.label), `${companyName(store, c.competitorId)} · ${c.confidence} confidence · ${c.sources.length} source${c.sources.length === 1 ? '' : 's'}${c.ideaId ? ` · ${c.ideaId}` : ''}${c.planImpact !== 'none' ? ` · ${c.planImpact === 'respond' ? 'plan should respond' : 'watch'}` : ''}`) : null),
     h('div.it-chg-area', null, compact ? labelDot(c.label) : null, AREA_SHORT[c.area]));
-  row.onclick = () => openSources(row, c.title, c.sources, c);
-  return row;
+  // The row already says what changed and what it means; the details add the label, prediction (compact rows) and sources.
+  const panel = details(row, {
+    group: compact ? 'changes-overview' : 'changes', key: c.id, sources: c.sources, claim: c,
+    omit: compact ? ['implication'] : ['implication', 'prediction'], accent: respond ? 'var(--color-warm)' : undefined,
+  });
+  return [row, panel];
 }

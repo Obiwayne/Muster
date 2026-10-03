@@ -1,0 +1,69 @@
+/* Inline details under an Intel row (intel/expand.ts): attached to the clicked row, pushing the rows below down. */
+.xp {
+  --xp-accent: var(--color-research-text);
+  --xp-tint: color-mix(in oklab, var(--color-glow-blue) 7%, transparent);
+  display: grid; grid-template-rows: 0fr; opacity: 0;
+  transition: grid-template-rows .2s cubic-bezier(.2, .7, .2, 1), opacity .16s ease;
+}
+.xp.shown { grid-template-rows: 1fr; opacity: 1; }
+.xp-clip { min-height: 0; overflow: hidden; }
+.xp-body {
+  display: flex; flex-direction: column; gap: 8px; margin: 0 12px 12px; padding: 11px 14px 12px 16px;
+  border-radius: var(--radius-sm); border: 1px solid var(--color-line);
+  background: color-mix(in oklab, var(--color-term) 70%, var(--color-surface));
+  box-shadow: inset 2px 0 0 var(--xp-accent);
+  font-size: 12px; line-height: 17px; color: var(--color-text); text-align: left; cursor: auto;
+}
+@media (prefers-reduced-motion: reduce) { .xp { transition: none; } }
+
+/* row (default) and wide (matrix / social rows, the positioning map): the open row and its details share a tint */
+.xp:not(.xp-attach, .xp-card, .xp-loose) { background: var(--xp-tint); }
+.xp.xp-wide .xp-body { margin: 0 16px 12px; }
+/* card: last thing in a card that has its own padding */
+.xp.xp-card .xp-body { margin: 0; }
+.it-panel > .xp.xp-card .xp-body { margin: 0 16px 14px; }
+.it-dec > .xp.xp-card .xp-body { margin: 0 10px 10px; }
+/* loose: rows without padding of their own (wins), or details under a row of cards (engagement) */
+.xp.xp-loose .xp-body { margin: 0; }
+/* attach: hangs off a bordered row (comments, quotes, what they love), closing the gap between them */
+.xp.xp-attach { margin-top: calc(-1 * var(--xp-gap, 0px)); }
+.xp.xp-attach .xp-body { margin: 0; border-top: 0; border-radius: 0 0 var(--radius-sm) var(--radius-sm); }
+.it-block { --xp-gap: 8px; }
+.it-theme { --xp-gap: 12px; }
+.it-col { --xp-gap: 14px; }
+.it-block > .xp.xp-loose { margin-top: 0; }
+
+.xp-h { font-size: 12px; font-weight: 600; color: var(--color-text); }
+.xp-meta { display: flex; align-items: center; gap: 6px; font-size: 11px; color: var(--color-muted); }
+.xp-impl { color: var(--color-text); }
+.xp-srcs { display: flex; flex-direction: column; gap: 7px; padding-top: 9px; border-top: 1px solid var(--color-line); }
+.xp-srcs-h { font-size: 10.5px; font-weight: 600; letter-spacing: 0.07em; color: var(--color-faint); }
+.xp-src { display: flex; flex-direction: column; gap: 1px; min-width: 0; }
+.xp-src-t { display: flex; align-items: baseline; gap: 6px; min-width: 0; color: var(--color-text); }
+.xp-src-t span:last-child { overflow-wrap: anywhere; }
+a.xp-src-t { color: var(--color-research-text); }
+a.xp-src-t:hover span:last-child { text-decoration: underline; }
+.xp-arrow { flex-shrink: 0; width: 10px; font-size: 11px; color: var(--color-faint); }
+a.xp-src-t .xp-arrow { color: var(--color-research-text); }
+.xp-src-m { padding-left: 16px; font-size: 11px; color: var(--color-faint); }
+
+/* the open row */
+:is(.it-chg, .ic-row, .it-win-r, .it-panel-head, .it-dec-hit).xp-open { background: color-mix(in oklab, var(--color-glow-blue) 7%, transparent); }
+.it-win-r.xp-open { border-radius: 6px; }
+:is(.it-cc, .it-quote, .it-love).xp-open { border-bottom-left-radius: 0; border-bottom-right-radius: 0; }
+.it-cc.xp-open, .it-love.xp-open { border-color: color-mix(in oklab, var(--color-line) 50%, var(--color-muted)); }
+.it-quote.xp-open { background: color-mix(in oklab, var(--color-surface-2) 80%, var(--color-glow-blue)); }
+.it-eng-c.xp-open { border-color: var(--color-research-text); }
+.it-claim.xp-open { color: var(--color-text); }
+.it-pill.xp-open { box-shadow: inset 0 0 0 1.5px var(--color-research-text); }
+.it-sg-c.xp-open { position: relative; }
+.it-sg-c.xp-open::before { content: ''; position: absolute; inset: -5px 0 -5px -7px; border-radius: 6px; pointer-events: none; box-shadow: inset 0 0 0 1.5px var(--color-research-text); }
+.it-mx-row:has(.xp-open), .it-sg-row:has(.xp-open) { background: color-mix(in oklab, var(--color-glow-blue) 7%, transparent); }
+
+/* rows divided by a bottom border: move the divider below the details */
+.ic-row.xp-open, .it-mx-row:has(.xp-open), .it-sg-row:has(.xp-open) { border-bottom-color: transparent; }
+:is(.ic-rows, .it-mx, .it-sg) > .xp:not(:last-child) { border-bottom: 1px solid var(--color-line); }
+
+/* decision cards: the card is a div, its body a button, so the details' links aren't inside a button */
+.it-dec-hit { flex: 1; display: flex; flex-direction: column; gap: 8px; padding: 14px; text-align: left; border-radius: inherit; }
+.it-dec-cards:has(.xp-open) { align-items: flex-start; }

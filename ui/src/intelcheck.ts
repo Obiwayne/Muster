@@ -12,7 +12,8 @@ import { h, icon, setChildren, toast } from './dom';
 import { ApiError, api } from './api';
 import { requestCheck } from './intelapi';
 import { LABEL_TEXT, claimMeta, companyName, fmtDate, rivals } from './intelmodel';
-import { labelDot, openSources } from './intel/common';
+import { labelDot } from './intel/common';
+import { details } from './intel/expand';
 
 // ---------------------------------------------------------------- pure: state of an idea's check
 
@@ -308,6 +309,10 @@ export function intelCheckPanel(o: IntelCheckPanelOpts): HTMLElement {
   return el;
 }
 
+const SIGNAL_ACCENT: Record<IntelCheckRow['signal'], string> = {
+  supports: 'var(--color-success)', against: 'var(--it-gap-text, #ff8c90)', neutral: 'var(--color-faint)', threat: 'var(--color-warm)',
+};
+
 export function fillIntelCheckPanel(el: HTMLElement, o: IntelCheckPanelOpts): void {
   const label = o.label ?? 'INTEL CHECK';
   if (!o.store) {
@@ -347,8 +352,10 @@ export function fillIntelCheckPanel(el: HTMLElement, o: IntelCheckPanelOpts): vo
         h('div.ic-area', null, CHECK_AREA_LABELS[area]),
         h('div.ic-find', null, row.finding, row.changed ? h('span.ic-changed', null, 'changed') : null),
         labelDot(row.label));
-        r.onclick = (e: MouseEvent) => { e.stopPropagation(); openSources(r, `${CHECK_AREA_LABELS[area]} · ${row.finding}`, row.sources, row); };
-        return r;
+        return [r, details(r, {
+          group: `ic:${o.idea.id}`, key: area, heading: `${CHECK_AREA_LABELS[area]} · ${o.idea.id}`, sources: row.sources, claim: row,
+          accent: SIGNAL_ACCENT[row.signal],
+        })];
       }))
     : null;
 
