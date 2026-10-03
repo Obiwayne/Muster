@@ -65,7 +65,9 @@ function decisions(ctx: IntelCtx): HTMLElement {
           card.onclick = () => openSources(card, i.title, i.sources, i);
           return card;
         }))
-      : h('div.it-dec-none', null, 'scout has not drawn conclusions yet. They appear here after the first research job finishes.'));
+      : h('div.it-dec-none', null, lastJob?.finishedAt
+          ? `scout recorded no conclusions in ${lastJob.id}. They appear here once a job records "what it means for us" insights (Run sweep).`
+          : 'scout has not drawn conclusions yet. They appear here after the first research job finishes.'));
 }
 
 // ---------------------------------------------------------------- feature matrix

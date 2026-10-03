@@ -35,6 +35,11 @@ describe('browser settings model', () => {
     expect(siteLine({ connected: true, via: 'login', checkedAt: minsAgo(30) }, NOW)).toBe('Signed in · checked 30 min ago');
     expect(siteLine({ connected: true, via: 'opera', checkedAt: minsAgo(120) }, NOW)).toBe('Signed in via Opera import · checked 2h ago');
     expect(siteLine({ connected: false, checkedAt: '' }, NOW)).toBe('Not signed in');
+    // Live run: the server sends a day; it read "checked 12h ago" at lunchtime
+    const day = (t: number) => { const d = new Date(t); return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`; };
+    expect(siteLine({ connected: true, via: 'opera', checkedAt: day(NOW) }, NOW)).toBe('Signed in via Opera import · checked today');
+    expect(siteLine({ connected: false, checkedAt: day(NOW - 86_400_000) }, NOW)).toBe('Not signed in · checked yesterday');
+    expect(siteLine({ connected: false, checkedAt: '2026-01-02' }, NOW)).toBe('Not signed in · checked on 2026-01-02');
   });
 
   it('availability', () => {

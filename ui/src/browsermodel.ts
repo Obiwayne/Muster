@@ -6,7 +6,14 @@ import { agoText } from './research';
 /** "Signed in · checked 30 min ago" / "Signed in via Opera · …" / "Not signed in · …". */
 export function siteLine(s: Pick<ResearchSiteStatus, 'connected' | 'via' | 'checkedAt'>, now = Date.now()): string {
   const state = s.connected ? (s.via === 'opera' ? 'Signed in via Opera import' : 'Signed in') : 'Not signed in';
-  return s.checkedAt ? `${state} · checked ${agoText(s.checkedAt, now)}` : state;
+  return s.checkedAt ? `${state} · checked ${checkedText(s.checkedAt, now)}` : state;
+}
+
+/** The server keeps a site's checkedAt as a day ("2026-10-03"): "today" / "yesterday" / the day, not "12h ago" (UTC midnight). */
+function checkedText(at: string, now: number): string {
+  if (!/^\d{4}-\d{2}-\d{2}$/.test(at)) return agoText(at, now);
+  const day = (t: number) => { const d = new Date(t); return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`; };
+  return at === day(now) ? 'today' : at === day(now - 86_400_000) ? 'yesterday' : `on ${at}`;
 }
 
 /**
