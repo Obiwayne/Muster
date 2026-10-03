@@ -1,7 +1,7 @@
 // Pure helpers for the research pages (src/core/research.ts on the server): filters and counts,
 // evidence chips, plan lines, the run strip and the "Captain updated it … ago" line. No DOM here.
 import type {
-  FeedItem, IdeaEvidence, IdeaStatus, ResearchIdea, ResearchRun, ResearchSources, ResearchState, Roadmap,
+  BrowseMode, FeedItem, IdeaEvidence, IdeaStatus, ResearchIdea, ResearchRun, ResearchSources, ResearchState, Roadmap,
 } from '../../src/types';
 
 export type IdeaFilter = 'new' | 'roadmap' | 'rejected';
@@ -9,6 +9,11 @@ export type IdeaFilter = 'new' | 'roadmap' | 'rejected';
 export const EMPTY_RESEARCH: ResearchState = { runs: [], ideas: [] };
 
 const FILTER_STATUS: Record<IdeaFilter, IdeaStatus> = { new: 'new', roadmap: 'approved', rejected: 'rejected' };
+
+/** Roadmap → Research lists scout's research ideas; intel ideas (gaps scout raised from competitors) live on Intel → Opportunities. */
+export function researchIdeas(ideas: ResearchIdea[]): ResearchIdea[] {
+  return ideas.filter((i) => i.origin !== 'intel');
+}
 
 export function ideaMatches(i: ResearchIdea, f: IdeaFilter): boolean {
   return i.status === FILTER_STATUS[f];
@@ -210,6 +215,7 @@ export interface ResearchDraft {
   focus: string;
   depth: 'quick' | 'thorough';
   fromLastRun: boolean; // competitor chips came from the last run (shown as "suggested by scout")
+  browse?: BrowseMode; // "How should scout browse?" (absent = the server's default, config.researchBrowser.mode)
 }
 
 export const DEPTH = {
@@ -240,8 +246,32 @@ export function addChip(list: string[], value: string): string[] {
   return [...list, v];
 }
 
+/** Ideas a run usually brings back, for the intel-check part of the estimate. */
+export const IDEAS_PER_RUN = { quick: 3, thorough: 5 } as const;
+const BASE_PCT = { quick: 3, thorough: 6 } as const;
+
+/**
+ * TODO(intel integration): package A added `estimateResearch(depth, competitorsTracked)` in src/core/intelestimate.ts
+ * (not on this branch). At integration, make this return `estimateResearch(depth, summary.competitors).text` as `usage`
+ * (and drop the local numbers below) so the dashboard and the server agree.
+ *
+ * The estimate line under Depth. With competitors tracked, scout writes an intel check after every idea, so the
+ * line includes them: about half a percent of the 5-hour window per competitor per check (at least 1%).
+ */
+export function researchEstimate(depth: 'quick' | 'thorough', competitors: number): { usage: string; checks: string } {
+  const base = BASE_PCT[depth];
+  if (competitors <= 0) return { usage: `≈ ${base}% of 5-hour window`, checks: 'No intel checks: no competitors tracked' };
+  const ideas = IDEAS_PER_RUN[depth];
+  const perCheck = Math.max(1, Math.round(competitors * 0.5));
+  const total = base + ideas * perCheck;
+  return {
+    usage: `≈ ${total}% of 5-hour window`,
+    checks: `includes an intel check per idea (~${ideas} × ${perCheck}% against ${competitors} competitor${competitors === 1 ? '' : 's'})`,
+  };
+}
+
 /** Body for POST /api/research/runs, or an error to show in the modal. */
-export function draftToRun(d: ResearchDraft): { body?: { sources: ResearchSources; focus?: string; depth: 'quick' | 'thorough' }; error?: string } {
+export function draftToRun(d: ResearchDraft): { body?: { sources: ResearchSources; focus?: string; depth: 'quick' | 'thorough'; browse?: BrowseMode }; error?: string } {
   if (d.useCompetitors && !d.competitors.length) return { error: 'Add at least one similar app, or untick that source.' };
   if (d.useForums && !d.forums.length) return { error: 'Add at least one subreddit or forum, or untick that source.' };
   const sources: ResearchSources = {
@@ -252,7 +282,7 @@ export function draftToRun(d: ResearchDraft): { body?: { sources: ResearchSource
   };
   if (!sources.competitors.length && !sources.reviews && !sources.forums.length && !sources.ownApp) return { error: 'Pick at least one source.' };
   const focus = d.focus.trim();
-  return { body: { sources, ...(focus ? { focus } : {}), depth: d.depth } };
+  return { body: { sources, ...(focus ? { focus } : {}), depth: d.depth, ...(d.browse ? { browse: d.browse } : {}) } };
 }
 
 // ---------------------------------------------------------------- "Captain updated it … ago"

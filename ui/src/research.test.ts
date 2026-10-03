@@ -155,3 +155,26 @@ describe('"Captain updated it" line', () => {
     expect(agoText('2026-10-02T11:59:50Z', now)).toBe('just now');
   });
 });
+
+describe('research ideas vs intel ideas, browse and the estimate', () => {
+  it('Roadmap → Research leaves intel ideas to Intel → Opportunities', async () => {
+    const { researchIdeas } = await import('./research');
+    const list = [idea('R1'), idea('R2', { origin: 'research' }), idea('R3', { origin: 'intel' })];
+    expect(researchIdeas(list).map((i) => i.id)).toEqual(['R1', 'R2']);
+  });
+
+  it('draftToRun sends the browse mode when one is picked', () => {
+    const d = { ...draftFromLastRun(run()), browse: 'public' as const };
+    expect(draftToRun(d).body?.browse).toBe('public');
+    expect('browse' in (draftToRun({ ...d, browse: undefined }).body ?? {})).toBe(false);
+  });
+
+  it('the estimate includes an intel check per idea when competitors are tracked', async () => {
+    const { researchEstimate } = await import('./research');
+    expect(researchEstimate('quick', 0)).toEqual({ usage: '≈ 3% of 5-hour window', checks: 'No intel checks: no competitors tracked' });
+    const t = researchEstimate('thorough', 3);
+    expect(t.usage).toBe('≈ 16% of 5-hour window');
+    expect(t.checks).toMatch(/intel check per idea \(~5 × 2% against 3 competitors\)/);
+    expect(researchEstimate('quick', 1).usage).toBe('≈ 6% of 5-hour window');
+  });
+});
