@@ -1,6 +1,8 @@
-// Settings: bound to GET/PATCH /api/config, saved on every change.
-import type { MusterConfig } from '../../../src/types';
-import { h, select, setChildren, toast, toggle } from '../dom';
+// Settings: bound to GET/PATCH /api/config, saved on every change. "Research browser" and "Intel" read
+// GET /api/browser and use the human browser writes in browserapi.ts (login window, Opera import, forget).
+import '../intelcheck.css';
+import type { BrowseMode, IntelConfig, MusterConfig, ResearchBrowserConfig, ResearchBrowserStatus, WatchCadence } from '../../../src/types';
+import { h, icon, select, setChildren, toast, toggle } from '../dom';
 import { events, type Snapshot } from '../events';
 import type { Page } from '../page';
 import { api, type ProjectInfo } from '../api';
@@ -8,6 +10,21 @@ import { errToast, openGithubBackup } from '../actions';
 import { stationRole } from '../util';
 import { showStationEditor } from '../stationeditor';
 import { weeklyStatus } from '../usagealert';
+import { getBrowserStatus } from '../intelapi';
+import { closeLogin, forgetSite, openLogin, operaImport } from '../browserapi';
+import { addAllowed, availabilityLine, honestLimits, operaSummary, siteLine } from '../browsermodel';
+
+const BROWSE_MODES = [
+  { value: 'profile', label: 'Research profile' },
+  { value: 'public', label: 'Public pages only' },
+  { value: 'opera', label: 'My Opera sign-ins' },
+];
+const RECHECK = [
+  { value: 'weekly', label: 'Weekly' },
+  { value: 'daily', label: 'Daily' },
+  { value: 'monthly', label: 'Monthly' },
+  { value: 'off', label: 'Off' },
+];
 
 const MODELS = [
   { value: 'opus', label: 'Opus' },
@@ -53,6 +70,10 @@ export function createSettings(): Page {
   let shownLabel = '';
   let project: ProjectInfo | null = null; // GET /api/project, when the server has it
   let lineLabel = ''; // label of the default line preset, when the server has presets
+  let browser: ResearchBrowserStatus | null = null; // GET /api/browser
+  let browserBusy = '';
+  let visible = false;
+  let pollTimer: number | undefined;
   const body = h('div.settings');
   const el = h('div.page', null, body);
 
@@ -215,6 +236,165 @@ export function createSettings(): Page {
         toggle(c.githubOffer !== 'never', (v) => save({ githubOffer: v ? 'ask' : 'never' }))));
   }
 
+  // ---------------------------------------------------------------- research browser + intel
+  const saveRB = (patch: Partial<ResearchBrowserConfig>) => save({ researchBrowser: patch } as unknown as Partial<MusterConfig>);
+  const saveIntel = (patch: Partial<IntelConfig>) => save({ intel: patch } as unknown as Partial<MusterConfig>);
+
+  async function loadBrowser(): Promise<void> {
+    try {
+      const next = await getBrowserStatus();
+      if (JSON.stringify(next) !== JSON.stringify(browser)) { browser = next; if (cfg) render(cfg); }
+    } catch { /* unreachable: keep what we had */ }
+    // while a login window is open, its status changes when you close it: look again every few seconds
+    clearTimeout(pollTimer);
+    if (visible && browser?.state === 'login_open') pollTimer = window.setTimeout(() => void loadBrowser(), 3000);
+  }
+
+  async function browserAct(key: string, p: Promise<ResearchBrowserStatus>, ok?: string): Promise<void> {
+    browserBusy = key;
+    if (cfg) render(cfg);
+    try {
+      browser = await p;
+      if (ok) toast(ok);
+    } catch (e) {
+      errToast(e);
+    } finally {
+      browserBusy = '';
+      if (cfg) render(cfg);
+      void loadBrowser();
+    }
+  }
+
+  function numInput(value: number, min: number, max: number, onSave: (v: number) => void, unit = ''): HTMLElement {
+    const input = h('input', { type: 'text', inputmode: 'numeric', value: String(value) }) as HTMLInputElement;
+    input.addEventListener('change', () => {
+      const v = Math.round(Number(input.value));
+      if (!Number.isFinite(v) || v < min || v > max) { toast(`Enter a number from ${min} to ${max}`, 'warn'); input.value = String(value); return; }
+      if (v !== value) { value = v; onSave(v); }
+    });
+    input.addEventListener('keydown', (e) => { if (e.key === 'Enter') input.blur(); });
+    return h('label.pct', null, input, unit ? h('span.u', null, unit) : null);
+  }
+
+  function allowlistEditor(c: MusterConfig): HTMLElement {
+    const list = [...(c.researchBrowser?.operaAllow ?? [])];
+    const wrap = h('div.rb-chips');
+    const saveList = (next: string[]) => saveRB({ operaAllow: next });
+    const draw = () => {
+      const add = h('button.rb-add', null, '+ Add site');
+      add.onclick = () => {
+        const input = h('input.rb-input', { placeholder: 'reddit.com' }) as HTMLInputElement;
+        let done = false;
+        const finish = (commit: boolean) => {
+          if (done) return;
+          done = true;
+          if (commit && input.value.trim()) {
+            const r = addAllowed(list, input.value);
+            if (r.error) toast(r.error, 'warn');
+            else if (r.list.length !== list.length) { list.splice(0, list.length, ...r.list); saveList(list); }
+          }
+          draw();
+        };
+        input.addEventListener('keydown', (e) => { if (e.key === 'Enter') finish(true); if (e.key === 'Escape') finish(false); });
+        input.addEventListener('blur', () => finish(true));
+        add.replaceWith(input);
+        input.focus();
+      };
+      setChildren(wrap,
+        list.length ? null : h('span.faint', { style: 'font-size:12px' }, 'No sites allowed. Opera mode imports nothing.'),
+        list.map((d, i) => h('span.rb-chip', null, d,
+          h('button.x', { title: `Remove ${d}`, onclick: () => { list.splice(i, 1); draw(); saveList(list); } }, '×'))),
+        add);
+    };
+    draw();
+    return wrap;
+  }
+
+  function researchBrowserPanel(c: MusterConfig): HTMLElement {
+    const rb = c.researchBrowser ?? { mode: 'profile', channel: 'chrome', operaAllow: [], minDelayMs: 3000, maxPagesPerJob: 150 };
+    const st = browser;
+    const avail = availabilityLine(st);
+    const loginOpen = st?.state === 'login_open';
+    const usable = !!st?.available;
+    const opera = st?.opera;
+    const allow = rb.operaAllow ?? [];
+
+    const sites = st?.sites ?? [];
+    const sitesEl = sites.length
+      ? h('div.rb-sites', null, sites.map((s) => h('div.rb-site', null,
+          h('span.rb-sdot', { class: s.connected ? 'on' : '' }),
+          h('div.rb-site-body', null,
+            h('div.rb-site-t', null, s.label, h('span.rb-dom', null, s.domain)),
+            h('div.rb-site-s', null, siteLine(s)),
+            s.warning ? h('div.rb-site-w', null, icon('alert', 11), s.warning) : null,
+            s.limits && !s.connected ? h('div.rb-site-l', null, s.limits) : null),
+          s.connected
+            ? h('button.btn.sm', { disabled: !!browserBusy, onclick: () => void browserAct(`forget:${s.site}`, forgetSite(s.site), `Forgot ${s.label}: its cookies are gone from the research profile`) }, 'Forget')
+            : h('button.btn.sm', { disabled: !usable || !!browserBusy || loginOpen, title: usable ? `Open ${s.label}'s login page in the research profile` : avail.text, onclick: () => void browserAct(`login:${s.site}`, openLogin({ site: s.site }), `Sign in to ${s.label} in the window that opened, then close it`) }, 'Connect'))))
+      : h('div.faint', { style: 'font-size:12px' }, st ? 'No known sites reported.' : 'Loading…');
+
+    const limits = honestLimits(st, c);
+    return panel('Research browser',
+      row('Status', h('div', null,
+          h('div.s', { class: avail.ok ? 'rb-ok' : 'rb-bad' }, avail.text),
+          st?.profileDir ? h('div.s.mono', { title: 'Muster\'s own Chrome profile, never your everyday one. Agents are not allowed to read it.' }, st.profileDir) : null),
+        loginOpen ? h('button.btn.sm', { disabled: !!browserBusy, onclick: () => void browserAct('close', closeLogin(), 'Login window closed') }, 'Close login window') : null),
+      row('Open login window', "Sign in to any site in Muster's research profile, then close the window. scout browses read-only with those sign-ins.",
+        h('button.btn.sm', {
+          disabled: !usable || !!browserBusy || loginOpen,
+          title: usable ? '' : avail.text,
+          onclick: () => void browserAct('login', openLogin({}), 'Sign in in the window that opened, then close it'),
+        }, loginOpen ? 'Window open…' : 'Open login window')),
+      row('Default browse mode', 'The answer pre-picked in "How should scout browse?"',
+        ctl(select(BROWSE_MODES, rb.mode, (v) => {
+          if (v === 'opera' && !allow.length) { toast('Add sites to the Opera allowlist first', 'warn'); render(c); return; }
+          void saveRB({ mode: v as BrowseMode });
+        }), 180)),
+      h('div.srow.col', null,
+        h('div.lbl', null, h('div.t', null, 'Connected sites'), h('div.s', null, 'A site counts as connected when its login cookie is in the research profile.')),
+        sitesEl),
+      h('div.srow.col', null,
+        h('div.lbl', null, h('div.t', null, 'Import sign-ins from Opera'),
+          h('div.s', null, opera ? (opera.found ? `Opera profile found${opera.profileDir ? ` · ${opera.profileDir}` : ''}` : 'Opera profile not found on this PC') : 'Checking…')),
+        h('div.rb-warn', null, icon('alert', 13), h('span', null,
+          'This copies your own Opera cookies for the sites you list (and only those) into the research profile. scout can only read, never post, but those sites see your account visit. Values are never shown, logged or sent anywhere else.')),
+        h('div.rb-sub', null, 'ALLOWED SITES'),
+        allowlistEditor(c),
+        h('div.rb-import', null,
+          h('span.rb-isum', null, operaSummary(opera)),
+          h('button.btn.sm', {
+            disabled: !allow.length || !opera?.found || !usable || !!browserBusy,
+            title: !allow.length ? 'Add a site first' : !opera?.found ? 'Opera profile not found' : '',
+            onclick: () => void browserAct('opera', operaImport(), 'Imported Opera sign-ins for the allowed sites'),
+          }, browserBusy === 'opera' ? 'Importing…' : 'Import now'))),
+      h('div.srow.col', null,
+        h('div.lbl', null, h('div.t', null, 'What scout can and can\'t read')),
+        h('div.rb-limits', null, limits.map((l) => h('div.rb-limit', { class: l.tone },
+          h('span.rb-ltag', null, l.tone === 'ok' ? 'on' : l.tone === 'off' ? 'off' : l.tone === 'warn' ? 'note' : 'info'),
+          h('span.rb-lt', null, l.title),
+          h('span.rb-lx', null, l.text)))),
+        st?.tools.length ? h('div.rb-tools', null, st.tools.map((t) => h('span.rb-tool', { class: t.ok ? 'ok' : 'bad', title: t.note ?? '' }, h('span.d'), t.name, t.note ? h('span.faint', null, ` · ${t.note}`) : null))) : null),
+      row('Pause between pages on one site', 'Waits, never fails. Keeps scout polite.',
+        ctl(numInput(Math.round((rb.minDelayMs ?? 3000) / 1000), 1, 60, (v) => void saveRB({ minDelayMs: v * 1000 }), 's'), 120)),
+      row('Page budget per job', 'Browse calls one intel job or research run may make',
+        ctl(numInput(rb.maxPagesPerJob ?? 150, 10, 1000, (v) => void saveRB({ maxPagesPerJob: v })), 120)));
+  }
+
+  function intelPanel(c: MusterConfig): HTMLElement {
+    const ic = c.intel ?? { recheck: 'weekly', checkMaxAgeDays: 14 };
+    return panel('Intel',
+      row('Re-check approved ideas', ic.recheck === 'off' ? 'Off: approved ideas are not watched' : 'scout re-runs the intel check and tells you when the verdict changes',
+        ctl(select(RECHECK, ic.recheck ?? 'weekly', (v) => void saveIntel({ recheck: v as WatchCadence }))),
+      ),
+      row('Intel check expires after', 'Approving an idea needs a check younger than this',
+        ctl(numInput(ic.checkMaxAgeDays ?? 14, 1, 90, (v) => void saveIntel({ checkMaxAgeDays: v }), 'days'), 120)),
+      row('Companies House API key', ic.companiesHouseKey ? 'Set: filings come from the official API' : 'Optional. Without it scout reads the public search pages',
+        ctl(textInput(ic.companiesHouseKey ? '••••••••' : '', (v) => {
+          if (v === '••••••••') return;
+          void saveIntel({ companiesHouseKey: v || (null as unknown as undefined) });
+        }, { mono: true, width: 200, placeholder: 'paste a key' }), 200)));
+  }
+
   let usageKey = ''; // the weekly alert state shown under "Weekly alerts"
   const usageOf = (s: Snapshot | null) => {
     const u = s?.state.usage;
@@ -252,7 +432,8 @@ export function createSettings(): Page {
             row('Vellum MCP for the design crew', c.vellum ? 'Starts the Vellum MCP server' : 'Not set: design crew runs without Vellum',
               ctl(vellumInput(c), 260)),
             row('Vellum design framework file', 'File id the design crew learns the framework from. Empty: it finds the file itself',
-              ctl(textInput(c.vellumFile ?? '', (v) => save({ vellumFile: v.trim() || (null as unknown as undefined) }), { mono: true, width: 260, placeholder: 'e.g. 28BUsqILtGqq' }), 260)))),
+              ctl(textInput(c.vellumFile ?? '', (v) => save({ vellumFile: v.trim() || (null as unknown as undefined) }), { mono: true, width: 260, placeholder: 'e.g. 28BUsqILtGqq' }), 260))),
+          intelPanel(c)),
         h('div.settings-col', null,
           panel('Usage guard · Max 5x',
             row('Pause new work at', '5-hour window. No spawning or assigning until it resets',
@@ -271,7 +452,8 @@ export function createSettings(): Page {
             row('Require evidence', c.requireEvidence === false ? 'Off: the Captain can pass a task without proof' : 'The last station attaches proof (screenshots, test output) before the Captain can pass a task',
               toggle(c.requireEvidence !== false, (v) => save({ requireEvidence: v }))),
             row('Notify me', 'Windows notification for escalations and branches ready to merge',
-              toggle(c.notify, (v) => save({ notify: v })))))),
+              toggle(c.notify, (v) => save({ notify: v })))),
+          researchBrowserPanel(c))),
     );
   }
 
@@ -289,6 +471,9 @@ export function createSettings(): Page {
       render(s.config);
       void loadRoles();
       void loadProject();
+      if (!browser) void loadBrowser();
     },
+    show() { visible = true; void loadBrowser(); },
+    hide() { visible = false; clearTimeout(pollTimer); },
   };
 }

@@ -4,12 +4,17 @@
 //   MOCK_INTEL=none     → no competitors yet (empty Intel page)
 //   MOCK_INTEL=running  → a sweep is running
 //   MOCK_BROWSER=off    → GET /api/browser says playwright-core is missing
+//
+// Package D adds: intel checks on the ideas (R7 edge at risk, R9 edge, R10 gap, R8 approved, R12 stale, R13 open;
+// R11/R14… none), full opportunity fields on the intel ideas, POST /api/intel/ask with an ideaId, the approve gate
+// (gate()), check jobs that fill a check, and the human browser writes (login, close, opera-import, forget).
 
 /**
  * @param {{ state: any, config: any, now: number, need: Function, HttpError: any, send: (msg: object) => void, toastAll: Function, readBody: (req: any) => Promise<any> }} deps
  */
 export function createIntelMock(deps) {
   const { state, config, now, need, send, toastAll } = deps;
+  const broadcastState = () => deps.broadcast?.();
   const MODE = process.env.MOCK_INTEL ?? 'done';
   const ymd = (daysAgo) => new Date(now - daysAgo * 86_400_000).toISOString().slice(0, 10);
   const iso = (minAgo) => new Date(now - minAgo * 60_000).toISOString();
@@ -230,13 +235,127 @@ export function createIntelMock(deps) {
     // intel ideas (gaps / open spaces) next to the research ideas
     const opp = (kind, capabilityIds, valueScore, effortScore, extra = {}) => ({
       kind, capabilityIds, problem: '', alternatives: '', proposal: '', value: '', effortNote: '', priority: 'next', validation: '', valueScore, effortScore,
-      claim: claim('opinion', 'medium', [S.asPadlet]), ...extra,
+      claim: claim('opinion', 'medium', [S.asPadlet], 1, { implication: '' }), ...extra,
     });
+    const intelIdea = (id, title, summary, impact, effort, o, extra = {}) => ({ id, runId: 'IJ1', origin: 'intel', title, summary, impact, effort, evidence: [], status: 'new', thread: [], createdAt: iso(6 * 60), opportunity: o, ...extra });
     state.research.ideas.push(
-      { id: 'R12', runId: 'IJ1', origin: 'intel', title: 'AI summary of a wall for parents', summary: 'Padlet sells AI content on credits; parents ask what happened in class.', impact: 'medium', effort: 'M', evidence: [], status: 'new', thread: [], createdAt: iso(6 * 60), opportunity: opp('gap', ['F5'], 3, 3, { testFirst: true }) },
-      { id: 'R13', runId: 'IJ1', origin: 'intel', title: 'AI flags unsafe posts before a teacher sees them', summary: 'Nobody does it; pairs with the moderation queue.', impact: 'high', effort: 'L', evidence: [], status: 'new', thread: [], createdAt: iso(6 * 60), opportunity: opp('open', ['F6'], 4, 4) },
-      { id: 'R14', runId: 'IJ1', origin: 'intel', title: 'One-screen share dialog', summary: '13% of reviews call sharing settings confusing.', impact: 'medium', effort: 'S', stageId: 'M3', evidence: [], status: 'new', thread: [], createdAt: iso(6 * 60), opportunity: opp('gap', [], 3, 2) },
+      intelIdea('R12', 'AI summary of a wall for parents', 'Padlet sells AI content on credits; parents ask what happened in class.', 'medium', 'M', opp('gap', ['F5'], 3, 3, {
+        testFirst: true, priority: 'later',
+        problem: "Parents can't see what happened in class; teachers write the weekly summary by hand.",
+        alternatives: 'A weekly email typed from the wall, or nothing.',
+        proposal: 'One-click "summary for parents" of a wall, reviewed by the teacher before it is sent.',
+        value: 'Saves 20–30 min a week for teachers who write parent updates.',
+        effortNote: 'Medium · ~5 tasks · needs an AI provider decision',
+        validation: 'Fake-door button on 3 schools\' walls; build if 1 in 5 teachers click it in two weeks.',
+        claim: claim('prediction', 'low', [S.padletBlog, S.linkedinPadlet], 9, { implication: 'Worth a test, not a goal, until parents ask for it.', prediction: { signals: ['Padlet "AI recipes" launch', 'Hiring 3 ML engineers'], timeframe: 'Q1 2027', wouldChange: 'Parents ask for it in reviews' } }),
+      })),
+      intelIdea('R13', 'AI flags unsafe posts before a teacher sees them', 'Nobody does it; pairs with the moderation queue.', 'high', 'L', opp('open', ['F6'], 4, 4, {
+        problem: 'A teacher with 30 students can\'t read every post live; unsafe posts slip through before review.',
+        alternatives: 'Turn posting off, or review every post by hand.',
+        proposal: 'Flag likely-unsafe posts in the moderation queue and hold them automatically.',
+        value: 'Safety parents and schools can see; nobody else offers it.',
+        effortNote: 'Large · ~8 tasks · needs the M3 moderation queue first',
+        validation: 'Run the classifier over 2,000 public test posts; ship if it catches 9 in 10 with few false alarms.',
+        claim: claim('opinion', 'medium', [S.rTeachers, S.asPadlet], 2, { implication: 'Be first: it builds on the moderation edge.' }),
+      })),
+      intelIdea('R14', 'One-screen share dialog', '13% of reviews call sharing settings confusing.', 'medium', 'S', opp('gap', [], 4, 2, {
+        priority: 'now',
+        problem: "Teachers can't tell who can see or post on a wall; 62 reviews call sharing settings confusing.",
+        alternatives: 'Share the link and hope, or lock the wall and reopen it by hand.',
+        proposal: 'One share screen: who can see, who can post, approve first, with a plain-language summary.',
+        value: 'Fewer accidental public walls and fewer "students can\'t post" emails.',
+        effortNote: 'Small · ~3 tasks · needs the M3 share dialog from crew-3',
+        validation: 'Watch 5 teachers set up a wall; ship if all get sharing right first time.',
+        claim: claim('opinion', 'high', [S.asPadlet, S.g2Padlet, S.playWakelet], 2, { implication: 'Padlet and Wakelet both confuse teachers here: a cheap way to win switchers.' }),
+      }), {
+        stageId: 'M3',
+        evidence: [{ kind: 'review', source: 'App Store review · Padlet · 2★', text: 'I never know if my wall is public or not.', count: 37 }, { kind: 'forum', source: 'r/edtech · 88 upvotes', url: 'https://www.reddit.com/r/edtech/', count: 2 }],
+        thread: [
+          { at: iso(50), from: 'you', text: 'Can we get the share screen in before launch?' },
+          { at: iso(44), from: 'captain', text: "Yes, if it goes in M3 next to sharing: it reuses the dialog crew-3 is building. About 3 tasks.\n\nM3 slips 1 day. Launch stays Nov 14." },
+          { at: iso(20), from: 'you', text: 'Good. Start the copy review today if it\'s cheap.' },
+          { at: iso(16), from: 'captain', text: "It's one task for crew-3 and fits inside the existing sharing goal. Here's the change:" },
+        ],
+        plan: ['+ Add goal One-screen share dialog to M3 (3 tasks)', 'Start "share copy review" today (crew-3)', '~ Move M3 due date (Oct 20 → 21)', 'Launch stays Nov 14 · evidence linked to each goal'],
+      }),
+      intelIdea('R15', 'Offline phone editor', 'Wakelet and Padlet both edit offline on phones; ours needs a connection.', 'medium', 'L', opp('gap', [], 3, 4, {
+        problem: 'Teachers on school Wi-Fi lose posts when the connection drops.', proposal: 'Queue edits on the phone and sync when back online.', value: 'Fewer lost posts on bad school Wi-Fi.',
+        effortNote: 'Large · ~7 tasks', validation: 'Count failed saves in our logs first.', claim: claim('opinion', 'medium', [S.playWakelet], 3, { implication: 'Real but not urgent.' }),
+      })),
+      intelIdea('R16', 'School-wide admin billing', 'Padlet sells to districts with one invoice; we bill per teacher.', 'business', 'L', opp('gap', [], 3, 5, {
+        priority: 'parked', problem: 'Schools want one invoice for every teacher.', proposal: 'An admin seat that pays for the school.', value: 'Bigger deals later.',
+        effortNote: 'Large · billing rework', validation: 'Ask the 3 pilot schools first.', claim: claim('fact', 'high', [S.padletPricing], 3, { implication: 'Later: after launch.' }),
+      })),
+      intelIdea('R17', 'UK school pricing in £', 'Everyone prices in $; UK schools pay by invoice in £.', 'business', 'S', opp('open', [], 3, 2, {
+        problem: 'UK schools need £ prices and invoices to buy.', proposal: '£ price list and invoice billing.', value: 'Easier sign-off for UK schools.',
+        effortNote: 'Small · pricing page and invoice template', validation: 'Ask 5 UK teachers what their bursar needs.', claim: claim('fact', 'medium', [S.padletPricing], 3, { implication: 'Nobody does it; cheap to try.' }),
+      })),
     );
+
+    // intel checks on the ideas (Roadmap → Research chips and the shared Intel check panel)
+    const row = (area, finding, signal, label, confidence, sources, extra = {}) => ({ ...claim(label, confidence, sources), area, finding, signal, ...extra });
+    const pred = (timeframe) => ({ prediction: { signals: ['On their public roadmap', 'Two job posts mention it'], timeframe, wouldChange: 'It leaves their roadmap' } });
+    const check = (id, ideaId, verdict, verdictText, confidence, sourceCount, capabilityIds, rows, doneDaysAgo, extra = {}) => ({
+      id, ideaId, revision: 1, status: 'done', rows, verdict, verdictText, confidence, sourceCount, capabilityIds,
+      createdAt: iso(doneDaysAgo * 1440 + 40), doneAt: iso(doneDaysAgo * 1440), history: [], ...extra,
+    });
+    store.checks.push(
+      check('IC1', 'R7', 'edge_at_risk', 'build before Wakelet ships, or lose the edge.', 'high', 214, ['F1'], [
+        row('features', 'Padlet partial · Linoit none', 'supports', 'fact', 'high', [S.padletHelp, S.linoitSite]),
+        row('complaints', '#1 theme · 22% · rising', 'supports', 'opinion', 'high', [S.asPadlet, S.g2Padlet]),
+        row('social', 'r/Teachers 412 ↑ · 9 TikTok comments', 'supports', 'opinion', 'medium', [S.rTeachers, S.tiktokPadlet]),
+        row('plans', 'Wakelet building it · likely Q1', 'threat', 'prediction', 'medium', [S.wakeletRoadmap], pred('Q1 2027')),
+        row('pricing', 'Free for us · Padlet: Pro only', 'supports', 'fact', 'high', [S.padletPricing]),
+        row('audience', 'Primary teachers · UK schools', 'neutral', 'fact', 'medium', [S.rTeachers]),
+        row('ai', 'None of them auto-flag posts yet', 'neutral', 'fact', 'medium', [S.trial]),
+      ], 0, { watchFor: 'Wakelet ships post approval', revision: 2, history: [{ revision: 1, verdict: 'edge', confidence: 'high', doneAt: iso(8 * 1440), changedAreas: ['plans'] }] }),
+      check('IC2', 'R9', 'edge', 'keep it free: it is why teachers switch from Padlet.', 'high', 61, ['F4'], [
+        row('features', 'Padlet: 3 free walls · others unlimited', 'supports', 'fact', 'high', [S.padletPricing]),
+        row('complaints', 'Most upvoted Padlet complaint this year', 'supports', 'opinion', 'high', [S.rTeachers, S.g2Padlet]),
+        row('social', '1.2k-like TikTok comment on the cap', 'supports', 'opinion', 'medium', [S.tiktokPadlet]),
+        row('plans', 'No sign Padlet lifts the cap', 'neutral', 'prediction', 'low', [S.padletBlog], pred('next 6 months')),
+        row('pricing', 'Free for us · Padlet Pro £8/mo', 'supports', 'fact', 'high', [S.padletPricing]),
+        row('audience', 'Teachers with 4+ classes', 'neutral', 'opinion', 'medium', [S.rTeachers]),
+      ], 2, { watchFor: 'Padlet changes its free plan' }),
+      check('IC3', 'R10', 'gap', 'match it before launch: switchers expect it.', 'high', 38, ['F2'], [
+        row('features', 'Padlet and Wakelet have it · Linoit none', 'against', 'fact', 'high', [S.padletHelp, S.wakeletHelp]),
+        row('complaints', '12 reviews + 3 Reddit threads ask for it', 'supports', 'opinion', 'medium', [S.playWakelet, S.rEdtech]),
+        row('social', 'Few posts: a quiet need', 'neutral', 'opinion', 'low', [S.rEdtech]),
+        row('plans', 'Both list deeper sync as coming', 'threat', 'fact', 'medium', [S.wakeletRoadmap]),
+        row('pricing', 'Free on Wakelet · Pro on Padlet', 'neutral', 'fact', 'high', [S.padletPricing]),
+        row('audience', 'Secondary teachers, 5+ classes', 'supports', 'opinion', 'medium', [S.rEdtech]),
+        row('ai', 'Not relevant', 'neutral', 'fact', 'low', [S.trial]),
+      ], 1, { watchFor: 'Padlet or Wakelet change their Classroom sync' }),
+      check('IC4', 'R8', 'gap', 'closing it in M5 as G14.', 'medium', 22, ['F3'], [
+        row('features', 'Padlet paid · Wakelet free', 'against', 'fact', 'high', [S.padletPricing]),
+        row('complaints', '21 reviews call paid PDF export unfair', 'supports', 'opinion', 'medium', [S.asPadlet]),
+        row('pricing', 'Padlet Pro only', 'supports', 'fact', 'high', [S.padletPricing]),
+      ], 3, { goalId: 'G14', watchFor: 'Padlet makes PDF export free' }),
+      check('IC5', 'R12', 'gap', 'test before building: AI content is paid on Padlet.', 'low', 9, ['F5'], [
+        row('features', 'Padlet credits · Wakelet partial', 'against', 'fact', 'high', [S.padletBlog]),
+        row('plans', 'Padlet likely ships more AI in Q1', 'threat', 'prediction', 'low', [S.linkedinPadlet], pred('Q1 2027')),
+        row('ai', 'Marketing claims, not seen working', 'neutral', 'opinion', 'low', [S.padletBlog]),
+      ], 20, { watchFor: 'Padlet ships an AI parent summary' }),
+      check('IC6', 'R13', 'open', 'be first: nobody flags unsafe posts.', 'medium', 17, ['F6'], [
+        row('features', 'None of the three', 'supports', 'fact', 'high', [S.padletHelp, S.trial, S.linoitSite]),
+        row('complaints', 'Unsafe posts are the #1 theme', 'supports', 'opinion', 'high', [S.asPadlet]),
+        row('ai', 'No one claims it', 'supports', 'fact', 'medium', [S.padletBlog]),
+        row('plans', 'No public plans', 'neutral', 'fact', 'medium', [S.wakeletRoadmap]),
+      ], 2, { watchFor: 'a competitor announces AI moderation' }),
+      check('IC7', 'R14', 'gap', 'close it in M3: cheap, and the #2 complaint about both rivals.', 'high', 46, [], [
+        row('features', 'Padlet and Wakelet split it over 3 screens', 'supports', 'fact', 'high', [S.padletHelp, S.wakeletHelp]),
+        row('complaints', '#3 theme · 13% · steady', 'supports', 'opinion', 'high', [S.asPadlet, S.g2Padlet]),
+        row('social', '“Is my wall public?” threads monthly', 'supports', 'opinion', 'medium', [S.rEdtech]),
+        row('plans', 'No public plans to fix it', 'neutral', 'fact', 'medium', [S.wakeletRoadmap]),
+        row('pricing', 'Free everywhere', 'neutral', 'fact', 'high', [S.padletPricing]),
+        row('audience', 'New teachers in their first week', 'supports', 'opinion', 'medium', [S.rTeachers]),
+        row('ai', 'Not relevant', 'neutral', 'fact', 'low', [S.trial]),
+      ], 1, { watchFor: 'Padlet redesigns its share dialog' }),
+    );
+    store.nextIds.check = 8;
+    for (const c of store.checks) { const i = state.research.ideas.find((x) => x.id === c.ideaId); if (i) i.checkId = c.id; }
+    const r8 = state.research.ideas.find((x) => x.id === 'R8');
+    if (r8) { r8.watchId = 'W3'; store.watches.push({ id: 'W3', subject: { kind: 'idea', ideaId: 'R8' }, cadence: 'weekly', alertOn: 'Padlet makes PDF export free', nextAt: iso(-3 * 1440), lastAt: iso(4 * 1440), active: true }); }
   }
 
   // ---------------------------------------------------------------- summary + events
@@ -281,12 +400,60 @@ export function createIntelMock(deps) {
       next.finishedAt = new Date().toISOString();
       next.sourcesRead = 12 + next.pagesBrowsed;
       next.summary = 'mock: nothing new recorded';
+      if (next.kind === 'check' || next.kind === 'recheck') finishCheck(next);
       for (const id of next.competitorIds) { const c = store.competitors.find((x) => x.id === id); if (c) c.lastSweptAt = next.finishedAt; }
       toastAll('info', `scout finished intel job ${next.id}`);
       saved();
       dispatch();
     }, 6000);
   }
+  /** A finished check job writes a plausible check (the real one comes from scout's intel_check). */
+  function finishCheck(job) {
+    const c = store.checks.find((x) => x.jobId === job.id);
+    if (!c) return;
+    const idea = state.research.ideas.find((i) => i.id === c.ideaId);
+    const s = { kind: 'site', title: 'Mock source', url: 'https://example.com/mock', seenAt: ymd(0) };
+    const r = (area, finding, signal, label = 'fact') => ({ label, confidence: 'medium', sources: [s], asOf: ymd(0), area, finding, signal });
+    Object.assign(c, {
+      status: 'done', doneAt: new Date().toISOString(), verdict: 'gap', confidence: 'medium', sourceCount: 12,
+      verdictText: 'worth closing: two of three competitors have it.', watchFor: 'a competitor changes it',
+      rows: [r('features', 'Padlet partial · Wakelet yes', 'against'), r('complaints', 'Mentioned in 9 reviews', 'supports', 'opinion'),
+        r('social', 'A few Reddit threads', 'neutral', 'opinion'), r('plans', 'No public plans', 'neutral'), r('pricing', 'Free on all three', 'neutral'),
+        r('audience', 'Primary teachers', 'neutral', 'opinion'), r('ai', 'Not relevant', 'neutral')],
+    });
+    if (idea) idea.checkId = c.id;
+    broadcastState();
+  }
+
+  /** The approve gate (contract: a done/skipped check younger than checkMaxAgeDays). Returns the 409 message or null. */
+  function gate(idea) {
+    const live = store.competitors.filter((c) => !c.isUs && !c.removed);
+    let c = store.checks.find((x) => x.id === idea.checkId) ?? [...store.checks].reverse().find((x) => x.ideaId === idea.id);
+    if (!c && !live.length) {
+      c = { id: `IC${store.nextIds.check++}`, ideaId: idea.id, revision: 1, status: 'skipped', rows: [], verdict: 'unclear', verdictText: '', confidence: 'low', sourceCount: 0, capabilityIds: [], skippedReason: 'no competitors tracked', createdAt: new Date().toISOString(), doneAt: new Date().toISOString(), history: [] };
+      store.checks.push(c); idea.checkId = c.id; saved();
+      return null;
+    }
+    if (!c) return `${idea.id} has no intel check yet. Run one (Run intel check), then approve.`;
+    if (c.status === 'queued' || c.status === 'running') return `The intel check ${c.id} for ${idea.id} is still ${c.status}. Approve when it is done.`;
+    if (c.status === 'failed') return `The intel check ${c.id} for ${idea.id} failed. Run it again, then approve.`;
+    const max = config.intel?.checkMaxAgeDays ?? 14;
+    const age = Date.now() - Date.parse(c.doneAt ?? c.createdAt);
+    if (age >= max * 86_400_000) return `The intel check ${c.id} for ${idea.id} is ${Math.floor(age / 86_400_000)} days old (max ${max}). Run a fresh one, then approve.`;
+    return null;
+  }
+
+  /** On approve: the re-check watch (contract). */
+  function approved(idea) {
+    const c = store.checks.find((x) => x.id === idea.checkId);
+    const cadence = config.intel?.recheck ?? 'weekly';
+    if (cadence === 'off') return;
+    const w = { id: `W${store.nextIds.watch++}`, subject: { kind: 'idea', ideaId: idea.id }, cadence, ...(c?.watchFor ? { alertOn: c.watchFor } : {}), nextAt: new Date(Date.now() + 7 * 86_400_000).toISOString(), active: true };
+    store.watches.push(w);
+    idea.watchId = w.id;
+    saved();
+  }
+
   function queueJob(body, by = 'you') {
     const id = `IJ${store.nextIds.job++}`;
     const live = store.competitors.filter((c) => !c.isUs && !c.removed);
@@ -343,17 +510,26 @@ export function createIntelMock(deps) {
     return lines.join('\n') + '\n';
   }
 
+  // research browser state the human writes change (login window, Opera import, forget)
+  const browser = {
+    state: 'idle', loginSite: undefined,
+    sites: [
+      { site: 'reddit', label: 'Reddit', domain: 'reddit.com', loginUrl: 'https://www.reddit.com/login', connected: true, via: 'login', checkedAt: iso(30), limits: "Reddit's anonymous JSON is blocked; reads need the login" },
+      { site: 'linkedin', label: 'LinkedIn', domain: 'linkedin.com', loginUrl: 'https://www.linkedin.com/login', connected: true, via: 'login', checkedAt: iso(30), warning: 'LinkedIn restricts automated accounts; use a separate account' },
+      { site: 'x', label: 'X', domain: 'x.com', loginUrl: 'https://x.com/login', connected: false, checkedAt: iso(30), limits: 'Not set up' },
+      { site: 'youtube', label: 'YouTube', domain: 'youtube.com', loginUrl: 'https://accounts.google.com/', connected: false, checkedAt: iso(30), limits: 'yt-dlp is not on PATH: Agent Reach\'s YouTube channel is off' },
+      { site: 'g2', label: 'G2', domain: 'g2.com', loginUrl: 'https://www.g2.com/login', connected: false, checkedAt: iso(30) },
+    ],
+    opera: { found: true, profileDir: 'C:/Users/alex/AppData/Roaming/Opera Software/Opera Stable', imported: undefined, lastImportAt: undefined },
+  };
   const browserStatus = () => (process.env.MOCK_BROWSER === 'off'
     ? { available: false, problem: 'playwright-core is not installed', channel: 'chrome', profileDir: 'C:/Users/alex/AppData/Local/muster/research-browser/profile', state: 'idle', sites: [], tools: [], opera: { found: true, allow: config.researchBrowser.operaAllow } }
     : {
-        available: true, channel: 'chrome', profileDir: 'C:/Users/alex/AppData/Local/muster/research-browser/profile', state: 'idle',
-        sites: [
-          { site: 'reddit', label: 'Reddit', domain: 'reddit.com', loginUrl: 'https://www.reddit.com/login', connected: true, via: 'login', checkedAt: iso(30), limits: "Reddit's anonymous JSON is blocked; reads need the login" },
-          { site: 'linkedin', label: 'LinkedIn', domain: 'linkedin.com', loginUrl: 'https://www.linkedin.com/login', connected: true, via: 'login', checkedAt: iso(30), warning: 'LinkedIn restricts automated accounts; use a separate account' },
-          { site: 'x', label: 'X', domain: 'x.com', loginUrl: 'https://x.com/login', connected: false, checkedAt: iso(30), limits: 'Not set up' },
-        ],
-        tools: [{ name: 'yt-dlp', ok: false, note: 'not on PATH' }],
-        opera: { found: true, allow: config.researchBrowser.operaAllow },
+        available: true, channel: 'chrome', profileDir: 'C:/Users/alex/AppData/Local/muster/research-browser/profile', state: browser.state,
+        ...(browser.loginSite ? { loginSite: browser.loginSite } : {}),
+        sites: browser.sites,
+        tools: [{ name: 'yt-dlp', ok: false, note: 'not on PATH' }, { name: 'Agent Reach python', ok: true }, { name: 'browser_cookie3', ok: true }, { name: 'Opera profile', ok: true }],
+        opera: { ...browser.opera, allow: config.researchBrowser.operaAllow },
       });
 
   // ---------------------------------------------------------------- routes
@@ -362,6 +538,43 @@ export function createIntelMock(deps) {
     let r;
     const body = () => deps.readBody(req);
     if (m === 'GET' && p === '/api/browser') return { body: browserStatus() };
+    if (m === 'POST' && p.startsWith('/api/browser/')) {
+      const b = await body();
+      need(b.actor === 'you', 403, 'Only you can use the research browser login and imports');
+      need(process.env.MOCK_BROWSER !== 'off', 409, 'playwright-core is not installed');
+      if (p === '/api/browser/login') {
+        need(browser.state !== 'login_open', 409, 'A login window is already open: close it first');
+        browser.state = 'login_open';
+        browser.loginSite = b.site ?? b.url ?? undefined;
+        // pretend you signed in and closed the window after a while
+        setTimeout(() => {
+          if (browser.state !== 'login_open') return;
+          const site = browser.sites.find((s) => s.site === browser.loginSite);
+          if (site) { site.connected = true; site.via = 'login'; site.checkedAt = new Date().toISOString(); }
+          browser.state = 'idle'; delete browser.loginSite;
+        }, 8000);
+        return { body: browserStatus() };
+      }
+      if (p === '/api/browser/login/close') { browser.state = 'idle'; delete browser.loginSite; return { body: browserStatus() }; }
+      if (p === '/api/browser/forget') {
+        const site = browser.sites.find((s) => s.site === b.site);
+        need(site, 400, `Unknown site ${b.site}`);
+        site.connected = false; delete site.via; site.checkedAt = new Date().toISOString();
+        return { body: browserStatus() };
+      }
+      if (p === '/api/browser/opera-import') {
+        const allow = config.researchBrowser.operaAllow;
+        const domains = b.domains ?? allow;
+        need(domains.length, 400, 'The Opera allowlist is empty');
+        for (const d of domains) need(allow.includes(d), 400, `${d} is not in the Opera allowlist`);
+        await new Promise((res) => setTimeout(res, 700));
+        const counts = { 'reddit.com': 10, 'linkedin.com': 32, 'google.com': 113 };
+        browser.opera.imported = Object.fromEntries(domains.map((d) => [d, counts[d] ?? 0]));
+        browser.opera.lastImportAt = new Date().toISOString();
+        for (const d of domains) { const s = browser.sites.find((x) => x.domain === d); if (s && counts[d]) { s.connected = true; s.via = 'opera'; s.checkedAt = browser.opera.lastImportAt; } }
+        return { body: browserStatus() };
+      }
+    }
     if (!p.startsWith('/api/intel')) return undefined;
     if (m === 'GET' && p === '/api/intel') return { body: store };
     if (m === 'GET' && p === '/api/intel/summary') return { body: summary() };
@@ -416,23 +629,52 @@ export function createIntelMock(deps) {
     }
     if (m === 'POST' && p === '/api/intel/checks') {
       const b = await body();
-      const job = queueJob({ kind: 'check', competitorIds: [], areas: [], ideaId: b.ideaId });
-      const check = { id: `IC${store.nextIds.check++}`, ideaId: b.ideaId, revision: 1, status: 'queued', rows: [], verdict: 'unclear', verdictText: '', confidence: 'low', sourceCount: 0, capabilityIds: [], jobId: job.id, createdAt: new Date().toISOString(), history: [] };
+      need(b.actor === 'you' || b.actor === 'captain', 403, 'Only you or the Captain can request an intel check');
+      const idea = state.research.ideas.find((i) => i.id === b.ideaId);
+      need(idea, 404, `No idea ${b.ideaId}`);
+      const pending = store.checks.find((c) => c.ideaId === idea.id && (c.status === 'queued' || c.status === 'running'));
+      if (pending) return { body: pending };
+      const live = store.competitors.filter((c) => !c.isUs && !c.removed);
+      const base = { id: `IC${store.nextIds.check++}`, ideaId: idea.id, revision: 1, rows: [], verdict: 'unclear', verdictText: '', confidence: 'low', sourceCount: 0, capabilityIds: [], createdAt: new Date().toISOString(), history: [] };
+      if (!live.length) {
+        const check = { ...base, status: 'skipped', skippedReason: 'no competitors tracked', doneAt: base.createdAt };
+        store.checks.push(check); idea.checkId = check.id; saved(); broadcastState();
+        return { body: check };
+      }
+      const check = { ...base, status: 'queued' };
       store.checks.push(check);
+      const job = queueJob({ kind: 'check', competitorIds: live.map((c) => c.id), areas: [], ideaId: idea.id }, b.actor);
+      check.jobId = job.id;
+      check.status = job.status === 'running' ? 'running' : 'queued';
       saved();
       return { body: check };
     }
     if (m === 'POST' && p === '/api/intel/ask') {
       const b = await body();
-      // Like the orchestrator: about one idea → that idea (its thread); else the updated Captain thread.
+      need(b.actor === 'you', 403, 'Only you can ask the Captain here');
+      need(typeof b.text === 'string' && b.text.trim(), 400, 'text is required');
+      const at = new Date().toISOString();
       if (b.ideaId) {
+        // Like the orchestrator: about one idea → that idea (its thread); else { captainThread }.
         const idea = state.research?.ideas?.find((i) => i.id === b.ideaId);
         need(idea, 404, `No idea ${b.ideaId}`);
-        (idea.thread ??= []).push({ at: new Date().toISOString(), from: 'you', text: b.text });
+        (idea.thread ??= []).push({ at, from: 'you', text: b.text.trim() });
+        broadcastState();
+        setTimeout(() => {
+          idea.thread.push({ at: new Date().toISOString(), from: 'captain', text: `It fits ${idea.stageId ?? 'the next stage'}: roughly ${idea.effort === 'L' ? '8' : idea.effort === 'M' ? '5' : '3'} tasks.\n\nNothing else moves if it goes in after the current goal.` });
+          idea.plan ??= [`+ Add goal ${idea.title} to ${idea.stageId ?? 'M4'}`];
+          toastAll('info', `Captain answered on ${idea.id}`);
+          broadcastState();
+        }, 2500);
         return { body: idea };
       }
-      store.captainThread.push({ at: new Date().toISOString(), from: 'you', text: b.text });
+      store.captainThread.push({ at, from: 'you', text: b.text.trim() });
       saved();
+      setTimeout(() => {
+        store.captainThread.push({ at: new Date().toISOString(), from: 'captain', text: 'R14 and R10 are the quick wins: both fit M3 next to sharing (about 3 and 5 tasks). M3 slips 2 days; launch stays Nov 14.\n\nI would leave R16 parked and test R12 before building it.' });
+        toastAll('info', 'Captain answered about the gaps');
+        saved();
+      }, 2500);
       return { body: { captainThread: store.captainThread } };
     }
     if (m === 'POST' && p === '/api/intel/changes/seen') {
@@ -451,5 +693,5 @@ export function createIntelMock(deps) {
     throw new deps.HttpError(404, `No route ${m} ${p}`);
   }
 
-  return { store, route, summary };
+  return { store, route, summary, gate, approved };
 }

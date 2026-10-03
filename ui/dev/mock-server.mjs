@@ -479,7 +479,7 @@ const findTask = (id) => { const t = state.tasks.find((x) => x.id === id); need(
 const findNote = (id) => { const n = state.notes.find((x) => x.id === id); need(n, 404, `No note ${id}`); return n; };
 // competitive intelligence (/api/intel/*, GET /api/browser and the `intel` event)
 const intel = createIntelMock({
-  state, config, now, need, HttpError, toastAll, readBody: (req) => body(req),
+  state, config, now, need, HttpError, toastAll, readBody: (req) => body(req), broadcast: () => broadcast(),
   send: (msg) => { const t = JSON.stringify(msg); for (const ws of eventClients) if (ws.readyState === 1) ws.send(t); },
 });
 const paused = () => state.usage.fiveHour && state.usage.fiveHour.usedPercentage >= config.pauseAtFiveHourPct;
@@ -533,7 +533,15 @@ async function api(req, url) {
   if (m === 'GET' && p === '/api/config') return config;
   if (m === 'PATCH' && p === '/api/config') {
     const patch = await body(req);
-    for (const [k, v] of Object.entries(patch)) { if (v === null) delete config[k]; else config[k] = v; }
+    for (const [k, v] of Object.entries(patch)) {
+      if (v === null) delete config[k];
+      // researchBrowser / intel are partial objects deep-merged over the current ones (contract); null clears a field
+      else if ((k === 'researchBrowser' || k === 'intel') && v && typeof v === 'object') {
+        const next = { ...(config[k] ?? {}) };
+        for (const [kk, vv] of Object.entries(v)) { if (vv === null) delete next[kk]; else next[kk] = vv; }
+        config[k] = next;
+      } else config[k] = v;
+    }
     state.usage.paused = !!paused();
     broadcast();
     return config;
@@ -697,7 +705,8 @@ async function api(req, url) {
     need(!state.research.runs.some((r) => r.status === 'running'), 409, 'A research run is already running');
     const src = b.sources ?? {};
     need(src.competitors?.length || src.reviews || src.forums?.length || src.ownApp, 400, 'Pick at least one source');
-    const run = { id: `RR${state.nextIds.run++}`, status: 'running', sources: { competitors: src.competitors ?? [], reviews: !!src.reviews, forums: src.forums ?? [], ownApp: !!src.ownApp }, ...(b.focus ? { focus: b.focus } : {}), depth: b.depth === 'thorough' ? 'thorough' : 'quick', agentId: 'scout', startedAt: new Date().toISOString(), ideaIds: [] };
+    need(!intel.store.jobs.some((j) => j.status === 'running'), 409, `scout is busy with ${intel.store.jobs.find((j) => j.status === 'running')?.id}`);
+    const run = { id: `RR${state.nextIds.run++}`, status: 'running', sources: { competitors: src.competitors ?? [], reviews: !!src.reviews, forums: src.forums ?? [], ownApp: !!src.ownApp }, ...(b.focus ? { focus: b.focus } : {}), depth: b.depth === 'thorough' ? 'thorough' : 'quick', browse: ['profile', 'public', 'opera'].includes(b.browse) ? b.browse : config.researchBrowser?.mode ?? 'profile', agentId: 'scout', startedAt: new Date().toISOString(), ideaIds: [] };
     state.research.runs.push(run);
     let scout = state.agents.find((a) => a.id === 'scout');
     if (!scout) { scout = agent('scout', 'research', 'main', 'starting', undefined, 0); state.agents.push(scout); }
@@ -751,7 +760,10 @@ async function api(req, url) {
       }, 2500);
     } else if (rr[2] === 'approve') {
       need(i.status === 'new', 409, `${i.id} is ${i.status}`);
+      const blocked = intel.gate(i);
+      need(!blocked, 409, blocked);
       i.status = 'approved'; i.decidedAt = now;
+      intel.approved(i);
       setTimeout(() => {
         const r = state.roadmap; if (!r) return;
         const stage = r.stages.find((x) => x.id === i.stageId) ?? r.stages.find((x) => x.status !== 'done');
