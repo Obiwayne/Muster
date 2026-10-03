@@ -1,0 +1,23 @@
+/* "How should scout browse?" (browsechoice.ts): three radio rows in the modal idiom of 5038-0. */
+.bc { display: flex; flex-direction: column; gap: 8px; }
+.bc-list { display: flex; flex-direction: column; gap: 6px; }
+.bc-opt {
+  display: flex; gap: 10px; padding: 10px 12px; border-radius: var(--radius-sm); border: 1px solid var(--color-line);
+  cursor: pointer; outline: none;
+}
+.bc-opt:hover:not(.disabled), .bc-opt:focus-visible { border-color: color-mix(in oklab, var(--color-line) 60%, var(--color-muted)); }
+.bc-opt.on { background: color-mix(in oklab, var(--color-glow-blue) 12%, transparent); border-color: color-mix(in oklab, var(--color-glow-blue) 50%, transparent); }
+.bc-opt.disabled { cursor: default; opacity: .55; }
+.bc-radio {
+  width: 14px; height: 14px; margin-top: 2px; flex-shrink: 0; border-radius: 7px; border: 1px solid var(--color-faint);
+  display: flex; align-items: center; justify-content: center;
+}
+.bc-opt.on .bc-radio { border-color: var(--color-research-text); }
+.bc-dot { width: 6px; height: 6px; border-radius: 3px; background: var(--color-research-text); }
+.bc-body { flex: 1; min-width: 0; display: flex; flex-direction: column; gap: 3px; }
+.bc-title { display: flex; align-items: center; gap: 8px; font-size: 13px; font-weight: 550; color: var(--color-text); }
+.bc-rec { font-size: 11px; font-weight: 500; color: var(--color-research-text); }
+.bc-sub { font-size: 12px; color: var(--color-muted); line-height: 17px; }
+.bc-warn { display: flex; gap: 6px; align-items: flex-start; font-size: 12px; line-height: 17px; color: var(--color-warm); }
+.bc-warn svg { margin-top: 2px; }
+.bc-off { font-size: 11px; color: var(--color-faint); }

@@ -1,6 +1,6 @@
 // Reconnecting client for ws://<host>/ws/events. Holds the latest {state, config}
 // snapshot and forwards toast events.
-import type { MusterConfig, MusterEvent, MusterState } from '../../src/types';
+import type { IntelSummary, MusterConfig, MusterEvent, MusterState } from '../../src/types';
 import { api, getToken, refreshToken } from './api';
 
 export interface Snapshot { state: MusterState; config: MusterConfig }
@@ -8,6 +8,7 @@ export interface Snapshot { state: MusterState; config: MusterConfig }
 type SnapListener = (s: Snapshot) => void;
 type ToastListener = (t: { level: 'info' | 'warn'; text: string }) => void;
 type ConnListener = (connected: boolean) => void;
+type IntelListener = (summary: IntelSummary) => void;
 
 export function wsUrl(path: string): string {
   const proto = location.protocol === 'https:' ? 'wss:' : 'ws:';
@@ -17,11 +18,14 @@ export function wsUrl(path: string): string {
 class EventClient {
   snapshot: Snapshot | null = null;
   connected = false;
+  /** The latest intel summary (GET /api/intel/summary on load, then each `intel` event). */
+  intel: IntelSummary | null = null;
   private ws: WebSocket | null = null;
   private retry = 0;
   private snapL = new Set<SnapListener>();
   private toastL = new Set<ToastListener>();
   private connL = new Set<ConnListener>();
+  private intelL = new Set<IntelListener>();
 
   start(): void {
     // Fetch once over HTTP so the first paint doesn't wait on the socket.
@@ -38,6 +42,7 @@ class EventClient {
       try { msg = JSON.parse(String(ev.data)); } catch { return; }
       if (msg.type === 'state') this.set({ state: msg.state, config: msg.config });
       else if (msg.type === 'toast') this.toastL.forEach((l) => l({ level: msg.level, text: msg.text }));
+      else if (msg.type === 'intel') this.setIntel(msg.summary);
     };
     ws.onclose = () => {
       if (this.ws !== ws) return;
@@ -61,9 +66,17 @@ class EventClient {
     this.snapL.forEach((l) => l(s));
   }
 
+  /** Keep a newer intel summary (by rev) and notify listeners: the nav badge and the Intel page refetch. */
+  setIntel(summary: IntelSummary): void {
+    if (this.intel && summary.rev < this.intel.rev) return;
+    this.intel = summary;
+    this.intelL.forEach((l) => l(summary));
+  }
+
   onSnapshot(l: SnapListener): () => void { this.snapL.add(l); return () => this.snapL.delete(l); }
   onToast(l: ToastListener): () => void { this.toastL.add(l); return () => this.toastL.delete(l); }
   onConnection(l: ConnListener): () => void { this.connL.add(l); return () => this.connL.delete(l); }
+  onIntel(l: IntelListener): () => void { this.intelL.add(l); return () => this.intelL.delete(l); }
 }
 
 export const events = new EventClient();

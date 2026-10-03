@@ -7,6 +7,8 @@
 //   MOCK_STRICT_DIFF=1 …                         → /diff ignores ?branch= (today's contract)
 //   MOCK_ROADMAP=none|draft …                    → no roadmap / a draft waiting for approval (default: approved, M3 active)
 //   MOCK_RESEARCH=none|running …                 → no research yet / scout still researching (default: a finished run, 4 new ideas)
+//   MOCK_INTEL=none|running …                    → no competitors yet / an intel sweep running (default: Padlet, Wakelet, Linoit swept)
+//   MOCK_BROWSER=off …                           → GET /api/browser: playwright-core missing
 //   MOCK_WEEKLY=84 …                             → weekly usage % (default 38; at 75+ an open weekly usage alert note)
 //
 // With `npx vite ui` (dev), set VITE_MUSTER_TOKEN=dev-token; vite proxies /api and /ws here.
@@ -18,6 +20,7 @@ import { existsSync } from 'node:fs';
 import { dirname, extname, join, normalize } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { WebSocketServer } from 'ws';
+import { createIntelMock } from './intel-mock.mjs';
 
 const PORT = Number(process.env.PORT ?? 47800);
 const TOKEN = process.env.MOCK_TOKEN ?? 'dev-token';
@@ -474,6 +477,11 @@ const need = (cond, status, msg) => { if (!cond) throw new HttpError(status, msg
 const findAgent = (id) => { const a = state.agents.find((x) => x.id === id); need(a, 404, `No agent ${id}`); return a; };
 const findTask = (id) => { const t = state.tasks.find((x) => x.id === id); need(t, 404, `No task ${id}`); return t; };
 const findNote = (id) => { const n = state.notes.find((x) => x.id === id); need(n, 404, `No note ${id}`); return n; };
+// competitive intelligence (/api/intel/*, GET /api/browser and the `intel` event)
+const intel = createIntelMock({
+  state, config, now, need, HttpError, toastAll, readBody: (req) => body(req),
+  send: (msg) => { const t = JSON.stringify(msg); for (const ws of eventClients) if (ws.readyState === 1) ws.send(t); },
+});
 const paused = () => state.usage.fiveHour && state.usage.fiveHour.usedPercentage >= config.pauseAtFiveHourPct;
 
 function fakeDiff(a) {
@@ -933,6 +941,11 @@ const server = http.createServer(async (req, res) => {
       res.writeHead(200, { 'content-type': Buffer.isBuffer(f) ? 'text/plain' : 'image/png' });
       res.end(data);
       return;
+    }
+    if ((url.pathname.startsWith('/api/intel') || url.pathname === '/api/browser') && req.headers['x-muster-token'] === TOKEN) {
+      const out = await intel.route(req, req.method, url.pathname);
+      if (out?.text !== undefined) { res.writeHead(200, { 'content-type': 'text/markdown; charset=utf-8' }); res.end(out.text); return; }
+      if (out) { res.writeHead(200, { 'content-type': 'application/json' }); res.end(JSON.stringify(out.body ?? null)); return; }
     }
     if (url.pathname.startsWith('/api/')) {
       const out = await api(req, url);
