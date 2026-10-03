@@ -91,8 +91,8 @@ function capNote(kind: OppKind, caps: IntelCapability[], store: Pick<IntelStore,
 
 /**
  * Group the opportunities. Ideas count when scout raised them from intel (origin 'intel') or a matrix row links
- * them (capability.ideaId); rejected ideas are left out. Matrix rows with an edge or open verdict and no idea are
- * listed too (no detail), so "Where we win" shows every edge.
+ * them (capability.ideaId); rejected ideas are left out. Matrix rows with a gap, edge or open verdict and no idea are
+ * listed too (no detail, after the ideas), so the lists agree with the feature matrix's Gaps / Edges / Open counts.
  */
 export function groupOpportunities(
   ideas: ResearchIdea[],
@@ -125,14 +125,17 @@ export function groupOpportunities(
   for (const c of store.capabilities) {
     if (c.ideaId && seenIdeas.has(c.ideaId)) continue;
     if (c.ideaId && ideas.some((i) => i.id === c.ideaId && i.status === 'rejected')) continue;
-    if (c.verdict !== 'edge' && c.verdict !== 'open') continue;
+    if (c.verdict !== 'edge' && c.verdict !== 'open' && c.verdict !== 'gap') continue;
     const atRisk = c.verdict === 'edge' ? atRiskOf([c], store) : undefined;
-    const item: OppItem = { caps: [c], kind: c.verdict, id: c.id, title: c.name, priority: 'next', value: 3, effort: 3, note: atRisk ?? capNote(c.verdict, [c], store), ...(atRisk ? { atRisk } : {}) };
-    (c.verdict === 'open' ? out.open : out.edges).push(item);
+    const item: OppItem = {
+      caps: [c], kind: c.verdict, id: c.id, title: c.name, priority: 'next', value: 3, effort: 3, note: atRisk ?? capNote(c.verdict, [c], store), ...(atRisk ? { atRisk } : {}),
+      ...(c.verdict === 'gap' ? { status: { text: 'No idea yet', cls: 'none' as const } } : {}),
+    };
+    (c.verdict === 'gap' ? out.gaps : c.verdict === 'open' ? out.open : out.edges).push(item);
   }
   const byPriority = (a: OppItem, b: OppItem) =>
     PRIORITY_RANK[a.priority] - PRIORITY_RANK[b.priority] || b.value - a.value || a.effort - b.effort || num(a.id) - num(b.id);
-  out.gaps.sort(byPriority);
+  out.gaps.sort((a, b) => (a.idea ? 0 : 1) - (b.idea ? 0 : 1) || byPriority(a, b));
   out.open.sort((a, b) => (a.idea ? 0 : 1) - (b.idea ? 0 : 1) || byPriority(a, b));
   out.edges.sort((a, b) => (b.atRisk ? 1 : 0) - (a.atRisk ? 1 : 0) || (a.idea ? 0 : 1) - (b.idea ? 0 : 1) || num(a.id) - num(b.id));
   return out;

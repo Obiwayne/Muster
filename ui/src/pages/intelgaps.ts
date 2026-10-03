@@ -182,9 +182,10 @@ function drawList(g: OppGroups): void {
       onclick: () => select(p.item.id),
     }, p.label)));
 
-  const gapRow = (i: OppItem) => h('button.op-row.gap', {
-    class: [i.id === selected && 'sel', (i.status?.cls === 'parked' || later.has(i.id)) && 'parked', (i.status?.cls === 'none' || i.status?.cls === 'test') && 'edge-red'],
-    onclick: () => select(i.id),
+  const gapRow = (i: OppItem) => h(i.idea ? 'button.op-row.gap' : 'div.op-row.gap', {
+    class: [i.id === selected && 'sel', (i.status?.cls === 'parked' || later.has(i.id)) && 'parked', (i.status?.cls === 'none' || i.status?.cls === 'test') && 'edge-red', !i.idea && 'static'],
+    title: i.idea ? '' : `${i.id} in the feature matrix; no idea raised for it`,
+    onclick: i.idea ? () => select(i.id) : undefined,
   },
   h('span.op-id', null, i.id),
   h('span.op-t', { title: i.title }, i.title),

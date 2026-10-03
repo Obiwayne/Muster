@@ -32,6 +32,7 @@ describe('groupOpportunities', () => {
       cap('F6', { name: 'AI flags', verdict: 'open', ideaId: 'R13' }),
       cap('F9', { name: 'Nobody has it', verdict: 'open' }),
       cap('F8', { name: 'Everyone has it', verdict: 'parity' }),
+      cap('F3', { name: 'LMS sync', verdict: 'gap', verdictVs: ['padlet'] }), // live run: a gap nobody raised an idea for
     ],
   };
   const ideas = [
@@ -48,18 +49,18 @@ describe('groupOpportunities', () => {
   const g = groupOpportunities(ideas, store, roadmap);
 
   it('puts each idea in its list by opportunity kind or matrix verdict, skipping rejected and unlinked research ideas', () => {
-    expect(g.gaps.map((i) => i.id)).toEqual(['R14', 'R8', 'R10', 'R12', 'R16']);
+    expect(g.gaps.map((i) => i.id)).toEqual(['R14', 'R8', 'R10', 'R12', 'R16', 'F3']);
     expect(g.open.map((i) => i.id)).toEqual(['R13', 'F9']);
     expect(g.edges.map((i) => i.id)).toEqual(['R7', 'F4']);
   });
 
   it('orders gaps by priority, then value', () => {
-    expect(g.gaps.map((i) => i.priority)).toEqual(['now', 'next', 'next', 'later', 'parked']);
+    expect(g.gaps.map((i) => i.priority)).toEqual(['now', 'next', 'next', 'later', 'parked', 'next']);
   });
 
   it('gives gaps their roadmap status', () => {
     const st = Object.fromEntries(g.gaps.map((i) => [i.id, i.status?.text]));
-    expect(st).toEqual({ R14: 'Not yet', R8: 'On M5', R10: 'Not yet', R12: 'Test first', R16: 'Parked' });
+    expect(st).toEqual({ R14: 'Not yet', R8: 'On M5', R10: 'Not yet', R12: 'Test first', R16: 'Parked', F3: 'No idea yet' });
   });
 
   it('flags edges at risk from a competitor commitment, and notes the rest', () => {
