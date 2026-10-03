@@ -1,6 +1,6 @@
 // Muster desktop app: a project picker, then the dashboard of the chosen project in its own window.
 // The app drives the same CLI as the terminal (`muster up` / `muster down`), so behaviour is identical.
-const { app, BrowserWindow, dialog, ipcMain, Menu, shell } = require('electron');
+const { app, BrowserWindow, dialog, ipcMain, Menu, nativeImage, shell } = require('electron');
 const { execFile, execFileSync } = require('node:child_process');
 const fs = require('node:fs');
 const path = require('node:path');
@@ -16,6 +16,8 @@ if (!app.requestSingleInstanceLock()) app.quit();
 let win = null;
 let current = null; // { root, name, url }
 let quitting = false;
+let needsYou = 0; // open notes that need you, reported by the dashboard (taskbar badge + title suffix)
+let pageTitle = 'Muster';
 
 // ---------------------------------------------------------------- settings (recent projects, close behaviour)
 
@@ -97,6 +99,12 @@ function createWindow() {
     webPreferences: { preload: path.join(__dirname, 'preload.cjs'), contextIsolation: true, sandbox: true },
   });
   win.on('close', onClose);
+  // The dashboard sets document.title; keep the needs-you suffix on whatever it sets.
+  win.on('page-title-updated', (e, title) => {
+    e.preventDefault();
+    pageTitle = title || 'Muster';
+    applyTitle();
+  });
   if (process.platform === 'win32') {
     // Taskbar pins relaunch through the hidden launcher (rebuild check, no console), not bare electron.exe.
     win.setAppDetails({
@@ -124,6 +132,7 @@ function createWindow() {
 
 function showPicker() {
   current = null;
+  setNeedsYou(0, null);
   win.setTitle('Muster');
   void win.loadFile(path.join(__dirname, 'picker.html'));
   buildMenu();
@@ -164,6 +173,7 @@ async function openProject(dir) {
   const port = serverPort(root);
   if (!r.ok || !port) return { ok: false, error: r.out || 'Muster did not start. See .muster/logs/orchestrator.log in the project.' };
   remember(root);
+  setNeedsYou(0, null); // the next dashboard reports its own count
   current = { root, name: path.basename(root), url: `http://127.0.0.1:${port}/` };
   win.setTitle(`Muster · ${current.name}`);
   await win.loadURL(current.url);
@@ -314,6 +324,28 @@ function writeUserName(name) {
   return clean;
 }
 
+// ---------------------------------------------------------------- needs-you badge
+
+function applyTitle() {
+  if (!win || win.isDestroyed()) return;
+  win.setTitle(needsYou > 0 ? `${pageTitle} — ${needsYou} need you` : pageTitle);
+}
+
+// Red count on the taskbar icon (Windows overlay icon) and " — N need you" on the title. png: data URL, or null to clear.
+function setNeedsYou(count, png) {
+  needsYou = Number.isFinite(count) && count > 0 ? Math.floor(count) : 0;
+  if (!win || win.isDestroyed()) return;
+  if (process.platform === 'win32') {
+    let image = null;
+    if (needsYou > 0 && typeof png === 'string' && png.startsWith('data:image/png;base64,') && png.length < 200_000) {
+      image = nativeImage.createFromDataURL(png);
+      if (image.isEmpty()) image = null;
+    }
+    win.setOverlayIcon(image, image ? `${needsYou} need you` : '');
+  }
+  applyTitle();
+}
+
 // ---------------------------------------------------------------- picker IPC
 ipcMain.handle('muster:getName', () => readUserName());
 
@@ -334,6 +366,10 @@ ipcMain.handle('app:switch', async (event, root) => {
   const r = await openProject(String(root)); // the project being left keeps its crew running
   if (!r.ok && !r.canceled) await dialog.showMessageBox(win, { type: 'error', title: 'Could not open project', message: r.error });
   return r;
+});
+ipcMain.on('app:needsYou', (event, payload) => {
+  if (!fromWindow(event) || !current) return;
+  setNeedsYou(Number(payload?.count) || 0, payload?.png ?? null);
 });
 ipcMain.handle('app:openFolder', (event) => (fromWindow(event) ? chooseAndOpen() : null));
 ipcMain.handle('app:picker', (event) => {

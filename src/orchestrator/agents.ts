@@ -3,7 +3,7 @@ import { randomUUID } from 'node:crypto';
 import { createWriteStream, existsSync, writeFileSync, type WriteStream } from 'node:fs';
 import { join } from 'node:path';
 import type { Agent, AgentStatus, MusterConfig, Role, Task } from '../types.js';
-import { captainOf, closeNoteIfOpen, feedEvent, findAgent, HUMAN, inboxFor, isCaptain, nowIso, nudgeText, postNote, requireAgent, SYSTEM, addInbox } from '../core/board.js';
+import { captainOf, closeNoteIfOpen, feedEvent, findAgent, HUMAN, inboxFor, isCaptain, noteFeedId, nowIso, nudgeText, postNote, requireAgent, SYSTEM, addInbox } from '../core/board.js';
 import { launchArgs, modelFor, ptyEnv, rolePrompt, spawnCommand, trustPromptKeys, writeAgentFiles, type LaunchOptions } from '../core/claude.js';
 import { EVIDENCE_DIR } from '../core/evidence.js';
 import { badRequest, conflict, forbidden } from '../core/errors.js';
@@ -1232,7 +1232,7 @@ export class AgentManager {
           const captain = captainOf(this.state);
           // postNote already queues stuck notes for the Captain; make sure it is there even without one running.
           if (captain && !this.state.inbox.some((i) => i.noteId === note.id && i.agentId === captain.id)) {
-            addInbox(this.state, { agentId: captain.id, from: SYSTEM, kind: 'note', text: `stuck ${note.id} from ${SYSTEM}: ${text}`, noteId: note.id, taskId: task?.id });
+            addInbox(this.state, { agentId: captain.id, from: SYSTEM, kind: 'note', text: `stuck ${note.id} from ${SYSTEM}: ${text}`, noteId: note.id, taskId: task?.id, feedId: noteFeedId(this.state, note.id) });
           }
         }
         this.log(text);

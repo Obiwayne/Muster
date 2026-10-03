@@ -84,6 +84,7 @@ export function forbiddenReason(caller: Caller, method: string, path: string): s
     if (!self(/^\/api\/inbox\/([^/]+)\/read$/)) return `${who} may only mark its own inbox read`;
     if (caller.role !== 'captain' && !self(/^\/api\/agents\/([^/]+)\/tests$/)) return `Only the Captain runs tests in other worktrees`;
   }
+  if (method === 'POST' && caller.role === 'research' && /^\/api\/feed\/[^/]+\/react$/.test(path)) return `The research agent doesn't react on the crew chat`;
   if (method === 'GET' && path === '/api/research/brief' && caller.role !== 'research') return `Only the research agent reads the research brief; ${who} is ${caller.role ?? 'an agent'}`;
   if (method === 'GET' && caller.role !== 'captain') {
     const id = agentParam(path, /^\/api\/agents\/([^/]+)\/output$/);

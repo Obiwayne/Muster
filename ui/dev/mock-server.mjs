@@ -334,15 +334,17 @@ function nextMonday() {
   return d.toISOString();
 }
 
+const react = (emoji, by, minAgo) => ({ emoji, by, at: iso(minAgo) });
 const feedSeed = [
   [44, 'message', 'you', 'captain', 'Build the invite-link sharing flow', {}],
-  [43, 'message', 'captain', 'everyone', 'Goal is the invite-link sharing flow. T2 tokens and T3 API go first; T4 share dialog waits on T3. ada take T3, bea take T4.', {}],
+  [43, 'message', 'captain', 'everyone', 'Goal: the invite-link sharing flow. T2 and T3 go first; T4 waits on T3.\n- T3 Invite API endpoints → ada\n- T4 Share dialog UI · after T3 → bea', { reactions: [react('👍', 'ada', 42.9), react('👍', 'bea', 42.9), react('👍', 'design', 42)], readBy: ['ada', 'bea', 'design'] }],
   [42.8, 'event', 'muster', undefined, 'captain posted T1–T7', {}],
   [42.5, 'event', 'ada', undefined, 'ada claimed T3 Invite API endpoints', { taskId: 'T3' }],
   [42.3, 'event', 'bea', undefined, 'bea claimed T4 Share dialog UI', { taskId: 'T4' }],
   [40, 'event', 'muster', undefined, 'design started (design crew)', {}],
   [36, 'message', 'design', 'everyone', 'Reading the Muster framework in Vellum: 38 tokens, 9 pages. I will check every UI branch before review.', {}],
-  [33, 'message', 'ada', 'bea', 'Heads up: the invite API now returns expiresAt as an ISO string, not a number.', {}],
+  [33, 'message', 'ada', 'bea', 'Heads up: the invite API now returns expiresAt as an ISO string, not a number.', { readBy: ['bea'] }],
+  [32, 'message', 'ada', 'bea', 'Types are in src/api/invites.ts if you want them.', { reactions: [react('🙌', 'bea', 30)] }],
   [30, 'message', 'bea', 'ada', 'Thanks, switching the dialog to parse it.', {}],
   [22, 'event', 'muster', undefined, 'cleo started (crew)', {}],
   [16, 'note', 'design', undefined, 'Token copy UI matches the framework tokens: spacing, type and colour pass.', { noteId: 'N19', noteType: 'done' }],
@@ -353,12 +355,15 @@ const feedSeed = [
   [8, 'reply', 'cleo', undefined, 'The fixtures assume 7 days, if that helps.', { noteId: 'N12' }],
   [6, 'reply', 'captain', undefined, 'Checking the spec; hold on 7 days for now.', { noteId: 'N12' }],
   [6, 'note', 'design', undefined, 'Design check on T4 once bea hands off.', { noteId: 'N15', noteType: 'waiting' }],
-  [4, 'note', 'bea', undefined, 'Which token format does T2 use?', { noteId: 'N14', noteType: 'stuck' }],
-  [3.5, 'message', 'design', 'bea', 'The ShareDialog button is hard-coded #2563EB. The framework in Vellum uses var(--color-primary) for primary buttons.', {}],
+  [4, 'note', 'bea', undefined, 'Which token format does T2 use? The share fixture fails on length.', { noteId: 'N14', noteType: 'stuck', taskId: 'T4', reactions: [react('👀', 'captain', 3.9)], readBy: ['captain'] }],
+  [3.6, 'note', 'design', undefined, 'Share dialog has no matching board in Vellum. Ask the Captain before adding one?', { noteId: 'N18', noteType: 'question', taskId: 'T4', reactions: [react('✅', 'design', 2.9)] }],
+  [3.5, 'message', 'design', 'bea', 'The ShareDialog button is hard-coded #2563EB.\nUse `var(--color-primary)` like every primary button.', { readBy: ['bea'] }],
+  [3.2, 'reply', 'captain', undefined, 'Not yet, flag it in the review.', { noteId: 'N18' }],
   [3, 'event', 'captain', undefined, 'captain requested review of T1: "Safe to merge"', { taskId: 'T1' }],
   [2, 'reply', 'captain', undefined, 'Use the 22-char base62 token from T2. ada has it on their branch.', { noteId: 'N14' }],
   [2, 'note', 'captain', undefined, 'Should a revoked invite link show a friendly page or a 404?', { noteId: 'N16', noteType: 'escalation' }],
   [1, 'reply', 'ada', undefined, 'Fixture helper is makeInviteToken() in test/fixtures.ts, use that instead of a hard-coded string.', { noteId: 'N14' }],
+  [0.8, 'message', 'you', 'captain', "Keep T4 small please, I'd like to try the share link tonight.", { reactions: [react('👍', 'captain', 0.6)], readBy: ['captain'] }],
   [0.5, 'note', 'captain', undefined, 'Invites table ready to merge. 3 files, 12 tests passing.', { noteId: 'N13', noteType: 'review' }],
 ];
 if (ROADMAP_MODE === 'approved') {
@@ -885,6 +890,21 @@ async function api(req, url) {
     const b = await body(req);
     need(b.text, 400, 'text is required');
     const f = addFeed('message', b.actor, b.to ?? 'everyone', b.text);
+    broadcast();
+    return f;
+  }
+  if ((mm = /^\/api\/feed\/([^/]+)\/react$/.exec(p)) && m === 'POST') {
+    const b = await body(req);
+    const f = state.feed.find((x) => x.id === decodeURIComponent(mm[1]).toUpperCase());
+    need(f, 404, `No crew chat line "${mm[1]}"`);
+    const emoji = String(b.emoji ?? '').replace(/\uFE0F/g, '');
+    need(['👍', '👀', '✅', '🙌', '❓'].includes(emoji), 400, `Unknown reaction "${b.emoji}"`);
+    const by = b.actor ?? 'you';
+    f.reactions ??= [];
+    const at = f.reactions.findIndex((r) => r.by === by && r.emoji === emoji);
+    if (at >= 0) f.reactions.splice(at, 1);
+    else f.reactions.push({ emoji, by, at: new Date().toISOString() });
+    if (!f.reactions.length) delete f.reactions;
     broadcast();
     return f;
   }

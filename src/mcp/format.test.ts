@@ -66,6 +66,9 @@ describe('agents, tasks, inbox', () => {
     const i = { id: 'I3', at: ago(1), agentId: 'crew-2', from: 'captain', kind: 'reply', text: 'Use radius-md', noteId: 'N14', read: false, delivered: true } as InboxItem;
     expect(formatInbox([i], NOW)).toBe('I3 reply from captain (N14) · 1m ago: Use radius-md');
     expect(formatInbox([], NOW)).toBe('Inbox empty.');
+    const m = { ...i, kind: 'message', noteId: undefined, text: 'message from captain: check T3', feedId: 'F12' } as InboxItem;
+    expect(formatInbox([m], NOW)).toBe('I3 message from captain · 1m ago: [F12] message from captain: check T3');
+    expect(formatInbox([m], NOW, false)).toBe('I3 message from captain · 1m ago: message from captain: check T3');
   });
 });
 

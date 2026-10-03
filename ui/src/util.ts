@@ -114,7 +114,7 @@ export function noteLabel(t: NoteType | 'approval'): string {
 }
 
 export function isNeedsYou(n: Note): boolean {
-  return n.open && (n.type === 'escalation' || n.type === 'review' || (n.type as string) === 'approval' || n.to === YOU);
+  return n.open && !n.dismissed && (n.type === 'escalation' || n.type === 'review' || (n.type as string) === 'approval' || n.to === YOU);
 }
 
 /** A stuck/question note counts as escalated if the note is addressed to you or an open escalation mentions it. */

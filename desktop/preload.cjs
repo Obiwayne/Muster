@@ -16,7 +16,7 @@ if (location.protocol === 'file:') contextBridge.exposeInMainWorld('muster', {
   closeChoice: (r) => ipcRenderer.send('muster:closeChoice', r),
 });
 
-// The dashboard (served by the project's own orchestrator on localhost) gets project switching only.
+// The dashboard (served by the project's own orchestrator on localhost) gets project switching and the needs-you badge only.
 if (location.protocol === 'http:' && (location.hostname === '127.0.0.1' || location.hostname === 'localhost')) {
   contextBridge.exposeInMainWorld('musterApp', {
     projects: () => ipcRenderer.invoke('app:projects'),
@@ -26,5 +26,7 @@ if (location.protocol === 'http:' && (location.hostname === '127.0.0.1' || locat
     renameProject: (name) => ipcRenderer.invoke('app:renameProject', name),
     openProjectFolder: () => ipcRenderer.invoke('app:openProjectFolder'),
     showPicker: () => ipcRenderer.invoke('app:picker'),
+    // taskbar badge: count of notes that need you, with a 32x32 PNG data URL drawn by the dashboard (null clears it)
+    setNeedsYou: (count, png) => ipcRenderer.send('app:needsYou', { count, png }),
   });
 }

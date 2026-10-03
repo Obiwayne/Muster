@@ -6,6 +6,8 @@ import { events, type Snapshot } from './events';
 import { openAddAgent, openGithubBackup, run } from './actions';
 import { api } from './api';
 import { agentStatusWord, agoLong, resetsIn, setUserName, sortedAgents } from './util';
+import { needsYouCount } from './chatmodel';
+import { reportNeedsYou } from './needsyou';
 import type { Page } from './page';
 import { createDashboard } from './pages/dashboard';
 import { createRoadmap } from './pages/roadmap';
@@ -52,6 +54,7 @@ const app = document.getElementById('app')!;
 const projectEl = h('div.logo-project', null, '');
 const navCounts = new Map<NavId, HTMLElement>();
 const navItems = new Map<NavId, HTMLElement>();
+const boardBadge = h('span.nav-ic-badge', { hidden: true });
 const agentsLabel = h('div.section-label.flex1', null, 'AGENTS');
 const agentList = h('div.agent-list');
 const addSide = h('button.icon-btn', { title: 'Add agent' }, icon('plus', 14));
@@ -64,6 +67,8 @@ interface MusterApp {
   openFolder(): Promise<unknown>;
   stopCurrent(): Promise<void>;
   showPicker(): Promise<void>;
+  /** Taskbar overlay badge + window title suffix; png is a 32×32 data URL, null clears it. Newer desktop builds only. */
+  setNeedsYou?(count: number, png: string | null): unknown;
 }
 const desk = (window as unknown as { musterApp?: MusterApp }).musterApp;
 const sameRoot = (a: string, b: string) => a.replace(/\\/g, '/').toLowerCase() === b.replace(/\\/g, '/').toLowerCase();
@@ -110,7 +115,8 @@ const sidebar = h('aside.sidebar', null,
   h('nav.nav', null, ROUTES.map((r) => {
     const count = h('span');
     navCounts.set(r.id, count);
-    const item = h('a.nav-item', { href: `#/${r.id}` }, icon(r.icon, 16), h('span.label', null, r.label), count);
+    const ic = r.id === 'board' ? h('span.nav-ic', null, icon(r.icon, 16), boardBadge) : icon(r.icon, 16);
+    const item = h('a.nav-item', { href: `#/${r.id}` }, ic, h('span.label', null, r.label), count);
     navItems.set(r.id, item);
     return item;
   })),
@@ -203,15 +209,26 @@ function renderShell(s: Snapshot): void {
   renderGithubOffer(s, project);
 
   // nav counts
-  const openNotes = state.notes.filter((n) => n.open).length;
-  const needsYou = state.notes.some((n) => n.open && (n.type === 'escalation' || n.type === 'review' || n.to === 'you'));
+  const openNotes = state.notes.filter((n) => n.open && !n.dismissed).length;
+  const needsYou = needsYouCount(state.notes);
   const setCount = (id: NavId, n: number, badge = false) => {
     const el = navCounts.get(id)!;
     el.className = badge && n > 0 ? 'nav-badge' : 'nav-count';
     el.textContent = n ? String(n) : '';
-    if (badge) el.title = needsYou ? 'Open notes · some need you' : 'Open notes';
+    if (badge) el.title = 'Open notes';
   };
   setCount('board', openNotes, true);
+  // needs-you: red badge on the board icon, "N for you" instead of the open-notes pill, and the taskbar badge
+  boardBadge.hidden = needsYou === 0;
+  boardBadge.textContent = needsYou > 99 ? '99+' : String(needsYou);
+  navItems.get('board')!.classList.toggle('needs', needsYou > 0);
+  if (needsYou > 0) {
+    const el = navCounts.get('board')!;
+    el.className = 'nav-foryou';
+    el.textContent = `${needsYou} for you`;
+    el.title = `${needsYou} open note${needsYou === 1 ? '' : 's'} need${needsYou === 1 ? 's' : ''} you · ${openNotes} open in all`;
+  }
+  reportNeedsYou(needsYou);
   setCount('chat', state.feed.length);
   setCount('tasks', state.tasks.filter((t) => t.status !== 'cancelled').length);
   const rm = state.roadmap;

@@ -121,12 +121,14 @@ export function formatTaskDetail(t: Task): string {
   return lines.join('\n');
 }
 
-export function formatInbox(items: InboxItem[], now: number = Date.now()): string {
+/** One line per item; `feedIds` prefixes the text with its crew-chat line ("[F12] message from ...") so agents can react to it. */
+export function formatInbox(items: InboxItem[], now: number = Date.now(), feedIds = true): string {
   if (!items.length) return 'Inbox empty.';
   return items
     .map((i) => {
       const ref = [i.noteId, i.taskId].filter(Boolean).join(' ');
-      return `${i.id} ${i.kind} from ${i.from}${ref ? ` (${ref})` : ''} · ${relTime(i.at, now)}: ${i.text.trim()}`;
+      const feed = feedIds && i.feedId ? `[${i.feedId}] ` : '';
+      return `${i.id} ${i.kind} from ${i.from}${ref ? ` (${ref})` : ''} · ${relTime(i.at, now)}: ${feed}${i.text.trim()}`;
     })
     .join('\n');
 }

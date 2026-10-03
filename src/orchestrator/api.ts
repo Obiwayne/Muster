@@ -649,6 +649,7 @@ ${pushed ? `Pushed ${base} to origin.` : `Push to origin failed: ${(r.stderr || 
   route('GET', '/api/feed', ({ query }) =>
     board.listFeed(state(), { limit: Number(query.get('limit')) || 200, before: query.get('before') ?? undefined, agent: query.get('agent') ?? undefined }),
   );
+  route('POST', '/api/feed/:id/react', ({ params, body }) => mutate(() => board.reactFeed(state(), params.id, str(body.actor, 'actor'), body.emoji)));
   route('GET', '/api/inbox/:agentId', ({ params, query }) => board.inboxFor(state(), agentOf(params.agentId).id, flag(query, 'unread')));
   route('POST', '/api/inbox/:agentId/read', ({ params, body }) => {
     const id = agentOf(params.agentId).id;

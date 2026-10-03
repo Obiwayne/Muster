@@ -154,6 +154,8 @@ export const api = {
   weeklyAlert: (body: { action: 'remind_at' | 'snooze_week' | 'never'; percent?: number; noteId?: string }) =>
     req<{ usage: UsageState; config: MusterConfig }>('POST', '/api/usage/weekly-alert', { actor: YOU, ...body }),
   message: (to: string, text: string) => req<FeedItem>('POST', '/api/messages', { actor: YOU, to, text }),
+  /** Toggles your reaction on a crew-chat line (one of REACTION_EMOJI). */
+  react: (feedId: string, emoji: string) => req<FeedItem>('POST', `/api/feed/${enc(feedId)}/react`, { actor: YOU, emoji }),
   feed: (q: { limit?: number; before?: string; agent?: string } = {}) => {
     const p = new URLSearchParams();
     p.set('limit', String(q.limit ?? 200));
