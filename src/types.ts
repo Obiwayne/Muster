@@ -138,6 +138,18 @@ export interface FeedItem {
   noteType?: NoteType; // note: the type of note posted
   taskId?: string;
   text: string;
+  reactions?: FeedReaction[]; // emoji reactions from agents and you (POST /api/feed/:id/react toggles one)
+  readBy?: string[]; // agents that read the inbox item(s) this message produced (read_inbox / mark read), in order
+}
+
+/** The emoji agents and you can react with; each means something on the crew chat. */
+export const REACTION_EMOJI = ['👍', '👀', '✅', '🙌', '❓'] as const; // read · looking into it · done/resolved · thanks · unclear
+export type ReactionEmoji = (typeof REACTION_EMOJI)[number];
+
+export interface FeedReaction {
+  emoji: ReactionEmoji;
+  by: string; // agent id or "you"
+  at: string;
 }
 
 // Something waiting to be delivered to an agent. Delivered by typing a short
@@ -151,6 +163,7 @@ export interface InboxItem {
   text: string;
   noteId?: string;
   taskId?: string;
+  feedId?: string; // the crew-chat line it came from (messages, replies, notes), so reading it marks feed.readBy
   read: boolean;
   delivered: boolean; // nudged into the terminal
 }

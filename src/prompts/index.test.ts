@@ -191,3 +191,21 @@ describe('captainPrompt research ideas', () => {
     expect(p).toContain('`list_ideas(status?)`');
   });
 });
+
+describe('reactions guidance', () => {
+  it('captain, crew and design learn react and what each emoji means; research does not', () => {
+    for (const make of [captainPrompt, crewPrompt, designPrompt]) {
+      const p = make(ctx);
+      expect(p).toContain('react(message, emoji)');
+      expect(p).toMatch(/👍 once you've read it and no reply is needed/);
+      expect(p).toMatch(/👀 when you're looking into it/);
+      expect(p).toMatch(/✅ when what it asked is done or the note is resolved/);
+      expect(p).toMatch(/❓ instead of guessing/);
+      expect(p).toMatch(/Don't react to your own messages/);
+      expect(p).toMatch(/never replaces an answer/);
+    }
+    const r = researchPrompt({ ...ctx, agentId: 'scout' });
+    expect(r).not.toContain('react(');
+    expect(r).not.toContain('👍');
+  });
+});

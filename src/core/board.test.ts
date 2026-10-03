@@ -1,6 +1,6 @@
 import { beforeEach, describe, expect, it } from 'vitest';
 import type { MusterState } from '../types.js';
-import { closeNote, escalate, inboxFor, isNeedsYou, listFeed, listNotes, markRead, nudgeText, postNote, replyNote, sendMessage } from './board.js';
+import { closeNote, escalate, inboxFor, isNeedsYou, listFeed, listNotes, markRead, noteFeedId, nudgeText, postNote, reactFeed, replyNote, sendMessage } from './board.js';
 import { emptyState } from './store.js';
 import { makeAgent } from './testutil.js';
 
@@ -90,5 +90,62 @@ describe('messages and feed', () => {
     expect(inboxFor(s, 'crew-2', true)).toHaveLength(1);
     markRead(s, 'crew-2');
     expect(inboxFor(s, 'crew-2', true)).toHaveLength(0);
+  });
+});
+
+describe('read receipts and reactions', () => {
+  it('links every inbox item made from a feed line to it (messages, notes, replies)', () => {
+    const m = sendMessage(s, 'you', 'everyone', 'standup');
+    expect(inboxFor(s, 'crew-2')[0].feedId).toBe(m.id);
+    expect(inboxFor(s, 'captain')[0].feedId).toBe(m.id);
+    const n = postNote(s, { actor: 'crew-2', type: 'waiting', text: 'need API', to: 'crew-3' });
+    const noteLine = s.feed.find((f) => f.kind === 'note' && f.noteId === n.id)!;
+    expect(noteFeedId(s, n.id)).toBe(noteLine.id);
+    expect(inboxFor(s, 'captain').at(-1)!.feedId).toBe(noteLine.id);
+    expect(inboxFor(s, 'crew-3').at(-1)!.feedId).toBe(noteLine.id);
+    replyNote(s, n.id, 'crew-3', 'done in 5');
+    const replyLine = s.feed.at(-1)!;
+    expect(replyLine.kind).toBe('reply');
+    expect(inboxFor(s, 'crew-2').at(-1)!.feedId).toBe(replyLine.id);
+    expect(inboxFor(s, 'captain').at(-1)!.feedId).toBe(replyLine.id);
+  });
+
+  it('reading appends the agent to readBy once, in order', () => {
+    const m = sendMessage(s, 'you', 'everyone', 'standup');
+    markRead(s, 'crew-3');
+    markRead(s, 'crew-2');
+    markRead(s, 'crew-2');
+    expect(m.readBy).toEqual(['crew-3', 'crew-2']);
+    const other = sendMessage(s, 'captain', 'crew-2', 'x');
+    expect(other.readBy).toBeUndefined();
+  });
+
+  it('marking only some ids marks only their lines', () => {
+    const a = sendMessage(s, 'you', 'crew-2', 'a');
+    const b = sendMessage(s, 'you', 'crew-2', 'b');
+    markRead(s, 'crew-2', [inboxFor(s, 'crew-2')[1].id]);
+    expect(a.readBy).toBeUndefined();
+    expect(b.readBy).toEqual(['crew-2']);
+  });
+
+  it('toggles one reaction per (by, emoji) and validates', () => {
+    const m = sendMessage(s, 'captain', 'crew-2', 'please look');
+    const inboxBefore = s.inbox.length;
+    reactFeed(s, m.id, 'crew-2', '👀');
+    reactFeed(s, m.id.toLowerCase(), 'you', '👀');
+    reactFeed(s, m.id, 'crew-2', '✅');
+    expect(m.reactions!.map((r) => `${r.by}:${r.emoji}`)).toEqual(['crew-2:👀', 'you:👀', 'crew-2:✅']);
+    reactFeed(s, m.id, 'crew-2', '👀');
+    expect(m.reactions!.map((r) => `${r.by}:${r.emoji}`)).toEqual(['you:👀', 'crew-2:✅']);
+    expect(s.inbox.length).toBe(inboxBefore); // not a message: nobody is told
+    expect(() => reactFeed(s, m.id, 'crew-2', '🔥')).toThrow(/Unknown reaction/);
+    expect(() => reactFeed(s, 'F999', 'crew-2', '👍')).toThrow(/No crew chat line/);
+    expect(() => reactFeed(s, m.id, 'nobody', '👍')).toThrow(/No agent/);
+  });
+
+  it('accepts an emoji with a variation selector', () => {
+    const m = sendMessage(s, 'captain', 'crew-2', 'q');
+    reactFeed(s, m.id, 'crew-2', '❓️');
+    expect(m.reactions![0].emoji).toBe('❓');
   });
 });

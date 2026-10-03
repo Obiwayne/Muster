@@ -6,6 +6,7 @@ import { z } from 'zod';
 import { musterFetch } from '../client.js';
 import { formatEvidence } from '../core/evidence.js';
 import { formatGuideline } from '../core/stations.js';
+import { REACTION_EMOJI } from '../types.js';
 import type { Agent, Evidence, FeedItem, InboxItem, MusterState, Note, ResearchIdea, ResearchRun, ResearchState, Role, Roadmap, RoadmapProgress, StationDef, Task } from '../types.js';
 import {
   BOARD_FILTERS,
@@ -63,11 +64,11 @@ export const CAPTAIN_TOOLS = [
   'read_inbox', 'read_output', 'get_diff', 'run_tests', 'request_review', 'merge_task', 'send_back', 'cancel_task', 'close_crew', 'escalate',
   'add_evidence', 'get_evidence',
   'roadmap', 'set_roadmap', 'update_stage', 'check_criterion', 'complete_stage', 'add_goal', 'update_goal', 'link_tasks',
-  'list_ideas', 'get_idea', 'advise_idea',
+  'list_ideas', 'get_idea', 'advise_idea', 'react',
 ] as const;
 export const CREW_TOOLS = [
   'claim_task', 'list_agents', 'list_tasks', 'post_note', 'read_board', 'reply', 'ask_captain',
-  'message_crew', 'handoff', 'report_done', 'read_inbox', 'add_evidence',
+  'message_crew', 'handoff', 'report_done', 'read_inbox', 'add_evidence', 'react',
 ] as const;
 /** The research agent (scout): reads public pages and posts ideas; no board, task or code tools. */
 export const RESEARCH_TOOLS = ['research_brief', 'add_idea', 'finish_research', 'read_inbox'] as const;
@@ -133,7 +134,7 @@ export function createMusterServer(opts: MusterServerOptions): McpServer {
   tool('read_inbox', 'Read and clear your unread inbox: replies, messages, assignments, hand-offs. Call it whenever a [muster] line appears.', {}, async () => {
     const items = await api<InboxItem[]>(`/api/inbox/${enc(me)}?unread=1`);
     if (items.length) await api(`/api/inbox/${enc(me)}/read`, { method: 'POST', body: { ids: items.map((i) => i.id) } });
-    return formatInbox(items, now());
+    return formatInbox(items, now(), role !== 'research');
   });
 
   if (role === 'research') {
@@ -182,6 +183,18 @@ export function createMusterServer(opts: MusterServerOptions): McpServer {
       const t = task ? await findTask(task) : await myTask();
       const e = await api<Evidence>(`/api/tasks/${enc(t.id)}/evidence`, { method: 'POST', body: { actor: me, files: files ?? [], text, summary } });
       return `Attached ${e.id} to ${t.id}: ${e.files.map((f) => f.name).join(', ')}.`;
+    },
+  );
+
+  tool(
+    'react',
+    `React to a crew chat line with one emoji: ${REACTION_EMOJI.join(' ')} (read, looking into it, done/resolved, thanks, unclear). message = its feed id from read_inbox, e.g. F123. Calling again with the same emoji takes it back. A reaction is not a reply: nobody is notified.`,
+    { message: z.string().describe('Feed id, e.g. F123'), emoji: z.enum(REACTION_EMOJI) },
+    async ({ message, emoji }) => {
+      const id = upId(message);
+      const f = await api<FeedItem>(`/api/feed/${enc(id)}/react`, { method: 'POST', body: { actor: me, emoji } });
+      const on = (f.reactions ?? []).some((r) => r.by === me && r.emoji === emoji);
+      return on ? `Reacted ${emoji} to ${f.id}.` : `Removed your ${emoji} from ${f.id}.`;
     },
   );
 

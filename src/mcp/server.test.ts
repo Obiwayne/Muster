@@ -367,3 +367,40 @@ describe('muster-mcp research tools', () => {
     expect(r.text).toBe('Added G14 Moderation queue to M3 for idea R7.');
   });
 });
+
+describe('muster-mcp reactions', () => {
+  const inbox = [{ id: 'I1', at: new Date().toISOString(), from: 'captain', kind: 'message', text: 'message from captain: check T3', feedId: 'F12' }];
+
+  it('captain, crew and design get react; research does not', async () => {
+    for (const role of ['captain', 'crew', 'design'] as Role[]) {
+      const { client } = await connect(role, () => null);
+      expect((await client.listTools()).tools.map((t) => t.name)).toContain('react');
+    }
+    const r = await connect('research', () => null);
+    expect((await r.client.listTools()).tools.map((t) => t.name)).not.toContain('react');
+  });
+
+  it('read_inbox shows feed ids for reacting roles only', async () => {
+    const handler = (c: { method?: string }) => (c.method === 'POST' ? { ok: true } : inbox);
+    const crew = await connect('crew', handler);
+    expect((await crew.call('read_inbox')).text).toContain('[F12] message from captain: check T3');
+    const research = await connect('research', handler);
+    expect((await research.call('read_inbox')).text).not.toContain('[F12]');
+  });
+
+  it('react posts the emoji to the feed line and reports the toggle', async () => {
+    let on = true;
+    const { call, calls } = await connect('crew', () => ({ id: 'F12', reactions: on ? [{ emoji: '👍', by: 'crew-2', at: 'x' }] : [] }));
+    expect((await call('react', { message: ' f12 ', emoji: '👍' })).text).toBe('Reacted 👍 to F12.');
+    expect(calls[0]).toEqual({ path: '/api/feed/F12/react', method: 'POST', body: { actor: 'crew-2', emoji: '👍' } });
+    on = false;
+    expect((await call('react', { message: 'F12', emoji: '👍' })).text).toBe('Removed your 👍 from F12.');
+  });
+
+  it('react rejects other emoji before calling the API', async () => {
+    const { call, calls } = await connect('captain', () => null);
+    const r = await call('react', { message: 'F12', emoji: '🔥' });
+    expect(r.isError).toBe(true);
+    expect(calls).toEqual([]);
+  });
+});

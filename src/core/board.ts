@@ -1,6 +1,6 @@
 // Bulletin board, crew chat feed and per-agent inbox. Pure state mutations;
 // the caller commits the store.
-import { OPEN_BY_DEFAULT, type Agent, type FeedItem, type InboxItem, type MusterState, type Note, type NoteType } from '../types.js';
+import { OPEN_BY_DEFAULT, REACTION_EMOJI, type Agent, type FeedItem, type InboxItem, type MusterState, type Note, type NoteType, type ReactionEmoji } from '../types.js';
 import { badRequest, forbidden, notFound } from './errors.js';
 import { nextId } from './store.js';
 
@@ -87,11 +87,11 @@ export function postNote(state: MusterState, input: NoteInput): Note {
     replies: [],
   };
   state.notes.push(note);
-  addFeed(state, { kind: 'note', from, to: note.to, noteId: note.id, noteType: note.type, taskId, text: note.text });
+  const feedId = addFeed(state, { kind: 'note', from, to: note.to, noteId: note.id, noteType: note.type, taskId, text: note.text }).id;
 
   const captainId = captainOf(state)?.id;
   const deliver = (agentId: string) =>
-    addInbox(state, { agentId, from, kind: 'note', text: `${note.type} ${note.id} from ${from}: ${note.text}`, noteId: note.id, taskId });
+    addInbox(state, { agentId, from, kind: 'note', text: `${note.type} ${note.id} from ${from}: ${note.text}`, noteId: note.id, taskId, feedId });
   if (captainId && (note.type === 'stuck' || note.type === 'question' || note.type === 'waiting')) deliver(captainId);
   if (note.to && note.to !== captainId) deliver(note.to);
   return note;
@@ -116,9 +116,9 @@ export function replyNote(state: MusterState, noteId: string, actor: string, tex
   const body = text.trim();
   note.replies.push({ at: nowIso(), from, text: body });
   if (close) closeNoteIfOpen(note);
-  addFeed(state, { kind: 'reply', from, noteId: note.id, taskId: note.taskId, text: body });
+  const feedId = addFeed(state, { kind: 'reply', from, noteId: note.id, taskId: note.taskId, text: body }).id;
 
-  const item = { from, kind: 'reply' as const, text: `reply from ${from} on ${note.id}: ${body}`, noteId: note.id, taskId: note.taskId };
+  const item = { from, kind: 'reply' as const, text: `reply from ${from} on ${note.id}: ${body}`, noteId: note.id, taskId: note.taskId, feedId };
   addInbox(state, { agentId: note.from, ...item });
   const captain = captainOf(state);
   if (captain && note.from !== captain.id) addInbox(state, { agentId: captain.id, ...item });
@@ -157,7 +157,7 @@ export function sendMessage(state: MusterState, actor: string, to: string, text:
   const body = text.trim();
   const item = addFeed(state, { kind: 'message', from, to, text: body });
   const recipients = to === 'everyone' ? state.agents.map((a) => a.id) : [to];
-  for (const agentId of recipients) addInbox(state, { agentId, from, kind: 'message', text: `message from ${from}: ${body}` });
+  for (const agentId of recipients) addInbox(state, { agentId, from, kind: 'message', text: `message from ${from}: ${body}`, feedId: item.id });
   return item;
 }
 
@@ -199,15 +199,57 @@ export function inboxFor(state: MusterState, agentId: string, unreadOnly = false
   return state.inbox.filter((i) => i.agentId === agentId && (!unreadOnly || !i.read));
 }
 
+/** The crew-chat line a note was posted as, so inbox items queued for it elsewhere can carry its feedId. */
+export function noteFeedId(state: MusterState, noteId: string): string | undefined {
+  return state.feed.find((f) => f.kind === 'note' && f.noteId === noteId)?.id;
+}
+
+/** Marks an agent's unread items read and records the agent once in readBy of each linked feed line. */
 export function markRead(state: MusterState, agentId: string, ids?: string[]): number {
   let n = 0;
   for (const i of inboxFor(state, agentId, true)) {
     if (ids && !ids.includes(i.id)) continue;
     i.read = true;
     i.delivered = true;
+    if (i.feedId) markFeedRead(state, i.feedId, agentId);
     n++;
   }
   return n;
+}
+
+function markFeedRead(state: MusterState, feedId: string, agentId: string): void {
+  if (!findAgent(state, agentId)) return; // read receipts are for agents only
+  const f = state.feed.find((x) => x.id === feedId);
+  if (!f || f.from === agentId) return;
+  const readBy = (f.readBy ??= []);
+  if (!readBy.includes(agentId)) readBy.push(agentId);
+}
+
+export function requireFeed(state: MusterState, id: string): FeedItem {
+  const raw = String(id ?? '').trim().toUpperCase();
+  const fid = /^\d+$/.test(raw) ? `F${raw}` : raw;
+  const f = state.feed.find((x) => x.id === fid);
+  if (!f) throw notFound(`No crew chat line "${id}"`);
+  return f;
+}
+
+export function isReactionEmoji(e: unknown): e is ReactionEmoji {
+  return typeof e === 'string' && (REACTION_EMOJI as readonly string[]).includes(e);
+}
+
+/** POST /api/feed/:id/react: toggles actor's reaction on a feed line. Not a message: no inbox items, no nudges. */
+export function reactFeed(state: MusterState, feedId: string, actor: string, emoji: unknown): FeedItem {
+  const by = requireActor(state, actor);
+  if (by === SYSTEM) throw forbidden('muster does not react');
+  const e = typeof emoji === 'string' ? emoji.replace(/️/g, '').trim() : emoji;
+  if (!isReactionEmoji(e)) throw badRequest(`Unknown reaction "${String(emoji)}"; use one of ${REACTION_EMOJI.join(' ')}`);
+  const f = requireFeed(state, feedId);
+  const reactions = (f.reactions ??= []);
+  const at = reactions.findIndex((r) => r.by === by && r.emoji === e);
+  if (at >= 0) reactions.splice(at, 1);
+  else reactions.push({ emoji: e, by, at: nowIso() });
+  if (!reactions.length) delete f.reactions;
+  return f;
 }
 
 /** The one-line nudge typed into an idle agent's terminal. */

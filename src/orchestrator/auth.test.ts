@@ -5,7 +5,7 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 import WebSocket from 'ws';
-import type { Agent, MusterState, Note } from '../types.js';
+import type { Agent, FeedItem, InboxItem, MusterState, Note } from '../types.js';
 import { serverInfo } from '../client.js';
 import { gitSync, tempRepo } from '../core/testutil.js';
 import { humanTokenFile } from '../core/tokens.js';
@@ -198,6 +198,46 @@ describe('identity comes from the token', () => {
     expect(forbiddenReason({ actor: 'crew-2', human: false, role: 'crew' }, 'POST', '/api/agents/crew-2/stop')).toBeUndefined();
     expect(forbiddenReason({ actor: 'crew-2', human: false, role: 'crew' }, 'POST', '/api/agents/crew-3/tests')).toMatch(/Captain/);
     expect(forbiddenReason({ actor: 'captain', human: false, role: 'captain' }, 'POST', '/api/agents/crew-3/tests')).toBeUndefined();
+  });
+});
+
+describe('reactions and read receipts', () => {
+  it('reacts as the caller, whatever the body claims, and toggles', async () => {
+    const msg = (await call('POST', '/api/messages', human(), { to: 'crew-2', text: 'can you check the login page?' })).data as FeedItem;
+    const r1 = await call('POST', `/api/feed/${msg.id}/react`, agentTok('crew-2'), { actor: 'captain', emoji: '👀' });
+    expect(r1.status).toBe(200);
+    expect((r1.data as FeedItem).reactions).toEqual([{ emoji: '👀', by: 'crew-2', at: expect.any(String) }]);
+    const r2 = (await call('POST', `/api/feed/${msg.id}/react`, human(), { actor: 'crew-2', emoji: '🙌' })).data as FeedItem;
+    expect(r2.reactions!.map((r) => `${r.by}:${r.emoji}`)).toEqual(['crew-2:👀', 'you:🙌']);
+    const r3 = (await call('POST', `/api/feed/${msg.id}/react`, agentTok('crew-2'), { emoji: '👀' })).data as FeedItem;
+    expect(r3.reactions!.map((r) => `${r.by}:${r.emoji}`)).toEqual(['you:🙌']);
+  });
+
+  it('answers 400 for an unknown emoji and 404 for an unknown line, and tells nobody', async () => {
+    const msg = (await call('POST', '/api/messages', human(), { to: 'crew-2', text: 'ping' })).data as FeedItem;
+    const before = ((await call('GET', '/api/state', human())).data as { state: MusterState }).state.inbox.length;
+    expect((await call('POST', `/api/feed/${msg.id}/react`, agentTok('crew-2'), { emoji: '🔥' })).status).toBe(400);
+    expect((await call('POST', `/api/feed/${msg.id}/react`, agentTok('crew-2'), {})).status).toBe(400);
+    expect((await call('POST', '/api/feed/F99999/react', agentTok('crew-2'), { emoji: '👍' })).status).toBe(404);
+    expect((await call('POST', `/api/feed/${msg.id}/react`, agentTok('captain'), { emoji: '👍' })).status).toBe(200);
+    const after = ((await call('GET', '/api/state', human())).data as { state: MusterState }).state.inbox.length;
+    expect(after).toBe(before);
+  });
+
+  it('reading the inbox records the agent in readBy once; inbox items carry feedId', async () => {
+    const msg = (await call('POST', '/api/messages', human(), { to: 'crew-2', text: 'read me' })).data as FeedItem;
+    const items = (await call('GET', '/api/inbox/crew-2?unread=1', agentTok('crew-2'))).data as InboxItem[];
+    expect(items.find((i) => i.text.includes('read me'))?.feedId).toBe(msg.id);
+    expect((await call('POST', '/api/inbox/crew-2/read', agentTok('crew-2'), {})).status).toBe(200);
+    expect((await call('POST', '/api/inbox/crew-2/read', human(), {})).status).toBe(200);
+    const { state } = (await call('GET', '/api/state', human())).data as { state: MusterState };
+    expect(state.feed.find((f) => f.id === msg.id)?.readBy).toEqual(['crew-2']);
+  });
+
+  it('policy: the research agent may not react', () => {
+    expect(forbiddenReason({ actor: 'scout', human: false, role: 'research' }, 'POST', '/api/feed/F1/react')).toMatch(/research/);
+    expect(forbiddenReason({ actor: 'crew-2', human: false, role: 'crew' }, 'POST', '/api/feed/F1/react')).toBeUndefined();
+    expect(forbiddenReason({ actor: 'captain', human: false, role: 'captain' }, 'POST', '/api/feed/F1/react')).toBeUndefined();
   });
 });
 

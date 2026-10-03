@@ -36,7 +36,8 @@ const boardRules = (ctx: PromptContext) => `## Bulletin board etiquette
 - Note types: **stuck** (can't move on — say what you tried), **question** (need a decision), **waiting** (blocked on another agent — set \`to\`), **progress** (milestone), **done** (step finished).
 - Reply in the thread (\`reply(note, text)\`) instead of starting a new note; pass \`close: true\` when the matter is settled.
 - **Crew-first answering:** stuck and question notes go to the crew, not to ${who(ctx)}. Whoever knows the answer replies — crew and Captain alike. Only the Captain escalates to ${who(ctx)}.
-- Keep notes short and concrete: file paths, task ids, error lines. No status chatter.`;
+- Keep notes short and concrete: file paths, task ids, error lines. No status chatter.
+- **Reactions** on a message addressed to you (\`react(message, emoji)\`, message = its \`[F12]\` id in \`read_inbox\`): 👍 once you've read it and no reply is needed, 👀 when you're looking into it and will come back, ✅ when what it asked is done or the note is resolved, ❓ instead of guessing when it's unclear. Don't react to your own messages; a reaction never replaces an answer that's needed.`;
 
 /** The line presets the Captain can post a task on (`line`), marking the default. */
 function linesSection(ctx: PromptContext): string {
@@ -90,7 +91,7 @@ You lead a crew of Claude Code agents working in parallel on **${ctx.projectName
 - \`post_task(title, description, goal, dependsOn?, stations?, assignee?)\` — \`goal\` = the roadmap goal it delivers (G3). One small, reviewable change per task. Description = what, acceptance criteria, files/areas. \`dependsOn\` for ordering ("tests need the API first"). \`stations\` e.g. \`["build","test","design"]\` ("review" is added and always last). \`line\` = the name of a line preset (see Stations) instead of listing stations yourself.
 - \`spawn_crew(task?, role?)\` — start a crew agent (task id or a new title). \`role: "design"\` for the Vellum design crew.
 - \`assign(agent, task)\` — give a ready task to an idle agent.
-- \`reply(note, text, close?)\`, \`message(agent|"everyone", text)\` — answer and coordinate.
+- \`reply(note, text, close?)\`, \`message(agent|"everyone", text)\` — answer and coordinate. \`react(message, emoji)\` — acknowledge a chat line without a message (see etiquette).
 - \`read_output(agent, lines?)\` — look at an agent's terminal when its status looks wrong.
 - \`get_diff(task)\`, \`run_tests(agent)\` — review a branch. \`get_diff\` takes the task id, so it works even after the builder has gone.
 - \`request_review(task, summary)\` — flag a tested task ready for ${who(ctx)} to merge. Pass the task id; it works even after the builder has gone.
@@ -165,6 +166,7 @@ function crewCore(ctx: PromptContext, kind: string): string {
 - \`post_note(type, text, to?)\` — stuck / question / waiting / progress / done.
 - \`reply(note, text, close?)\` — answer another agent's note when you know the answer.
 - \`message_crew(agent, text)\` — tell an agent something that affects them ("I changed the invite API shape: …").
+- \`react(message, emoji)\` — acknowledge a chat line without a message (see etiquette).
 - \`ask_captain(question)\` — blocking question; waits up to 10 min for a reply. Use after crew-first options.
 - \`handoff(agent?, note)\` — pass your committed branch to the next station.
 - \`report_done(summary)\` — task finished; it goes to Captain review.
