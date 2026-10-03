@@ -17,6 +17,8 @@ export function readPartial(p: MusterPaths): Partial<MusterConfig> {
 export function loadConfig(p: MusterPaths): MusterConfig {
   const partial = readPartial(p);
   const config = { ...DEFAULT_CONFIG, projectName: basename(p.root), ...partial, userName: readUserName() };
+  // Nested settings: a partial object in config.json is laid over the defaults, so new fields get their default.
+  for (const key of NESTED) config[key] = { ...DEFAULT_CONFIG[key], ...(isObject(partial[key]) ? partial[key] : {}) } as never;
   // Migration: a config.json from before lines kept its stations in defaultStations; they become the default line's edit.
   if (Array.isArray(partial.defaultStations) && partial.defaultLine === undefined && partial.lines === undefined) {
     const stations = partial.defaultStations.filter((s) => s !== 'review');
@@ -28,6 +30,10 @@ export function loadConfig(p: MusterPaths): MusterConfig {
   return config;
 }
 
+/** Config keys holding an object that is deep-merged (one level) over its default, on load and on save. */
+const NESTED = ['researchBrowser', 'intel'] as const;
+const isObject = (v: unknown): v is Record<string, unknown> => !!v && typeof v === 'object' && !Array.isArray(v);
+
 export type ConfigPatch = { [K in keyof MusterConfig]?: MusterConfig[K] | null };
 
 /** Merges `patch` into config.json (which stays partial) and returns the full config. A null value unsets the key. */
@@ -37,7 +43,16 @@ export function saveConfig(p: MusterPaths, patch: ConfigPatch): MusterConfig {
     writeUserName(userName);
     patch = rest;
   }
-  const next: Record<string, unknown> = { ...readPartial(p), ...patch };
+  const before = readPartial(p);
+  const next: Record<string, unknown> = { ...before, ...patch };
+  // A partial researchBrowser/intel patch changes only the fields it names; a null field unsets it.
+  for (const key of NESTED) {
+    const v = patch[key];
+    if (!isObject(v)) continue;
+    const merged: Record<string, unknown> = { ...(isObject(before[key]) ? before[key] : {}), ...v };
+    for (const [k, x] of Object.entries(merged)) if (x === null) delete merged[k];
+    next[key] = merged;
+  }
   delete next.userName;
   for (const [k, v] of Object.entries(next)) if (v === null) delete next[k];
   writeFileSync(p.config, JSON.stringify(next, null, 2) + '\n');

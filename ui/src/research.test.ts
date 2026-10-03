@@ -155,3 +155,27 @@ describe('"Captain updated it" line', () => {
     expect(agoText('2026-10-02T11:59:50Z', now)).toBe('just now');
   });
 });
+
+describe('research ideas vs intel ideas, browse and the estimate', () => {
+  it('Roadmap → Research leaves intel ideas to Intel → Opportunities', async () => {
+    const { researchIdeas } = await import('./research');
+    const list = [idea('R1'), idea('R2', { origin: 'research' }), idea('R3', { origin: 'intel' })];
+    expect(researchIdeas(list).map((i) => i.id)).toEqual(['R1', 'R2']);
+  });
+
+  it('draftToRun sends the browse mode when one is picked', () => {
+    const d = { ...draftFromLastRun(run()), browse: 'public' as const };
+    expect(draftToRun(d).body?.browse).toBe('public');
+    expect('browse' in (draftToRun({ ...d, browse: undefined }).body ?? {})).toBe(false);
+  });
+
+  it('the estimate is estimateResearch from the server, with intel checks when competitors are tracked', async () => {
+    const { researchEstimate } = await import('./research');
+    const { estimateResearch } = await import('../../src/core/intelestimate');
+    expect(researchEstimate('quick', 0)).toEqual({ usage: estimateResearch('quick', 0).text, checks: 'No intel checks: no competitors tracked' });
+    const t = researchEstimate('thorough', 3);
+    expect(t.usage).toBe(estimateResearch('thorough', 3).text);
+    expect(t.usage).toMatch(/incl\. 9 intel checks/);
+    expect(t.checks).toBe('each idea is checked against 3 competitors');
+  });
+});

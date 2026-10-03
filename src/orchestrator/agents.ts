@@ -2,7 +2,7 @@
 import { randomUUID } from 'node:crypto';
 import { createWriteStream, existsSync, writeFileSync, type WriteStream } from 'node:fs';
 import { join } from 'node:path';
-import type { Agent, AgentStatus, MusterConfig, Role, Task } from '../types.js';
+import type { Agent, AgentStatus, IntelJob, MusterConfig, Role, Task } from '../types.js';
 import { captainOf, closeNoteIfOpen, feedEvent, findAgent, HUMAN, inboxFor, isCaptain, noteFeedId, nowIso, nudgeText, postNote, requireAgent, SYSTEM, addInbox } from '../core/board.js';
 import { launchArgs, modelFor, ptyEnv, rolePrompt, spawnCommand, trustPromptKeys, writeAgentFiles, type LaunchOptions } from '../core/claude.js';
 import { EVIDENCE_DIR } from '../core/evidence.js';
@@ -64,7 +64,19 @@ export interface AgentManagerOptions {
   killPid?: (pid: number) => void;
   /** The watchdog gave up on an agent (after the stuck note): a place for a desktop toast. */
   onStuck?: (text: string) => void;
+  /** Intel jobs scout runs besides research runs (src/core/intel.ts); the store lives outside MusterState. */
+  intel?: ScoutIntel;
 }
+
+export interface ScoutIntel {
+  /** The intel job scout is working on, if any. */
+  runningJob(): IntelJob | undefined;
+  /** scout exited or was stopped mid-job: fail the job (its findings stay). */
+  onScoutExit(reason: string): void;
+}
+
+/** What scout is told when it starts (or is typed into) for an intel job. */
+export const intelJobPrompt = (agentId: string, job: Pick<IntelJob, 'id' | 'kind'>) => `[muster] You are ${agentId} (research). Intel job ${job.id} (${job.kind}). Call intel_brief and start.`;
 
 interface Runtime {
   pty: PtyProcess;
@@ -302,7 +314,7 @@ export class AgentManager {
 
   /** After a --resume the conversation is back, but the agent doesn't know it was restarted. */
   private resumePromptFor(agent: Agent): string | undefined {
-    if (agent.role === 'research') return runningRun(this.state) ? this.firstPromptFor(agent) : undefined;
+    if (agent.role === 'research') return runningRun(this.state) || this.o.intel?.runningJob() ? this.firstPromptFor(agent) : undefined;
     const task = agent.taskId ? this.state.tasks.find((t) => t.id === agent.taskId) : undefined;
     if (!task || task.assignee !== agent.id || task.status !== 'in_progress') return undefined;
     return `[muster] You were restarted. Continue ${task.id} ${task.title}; call read_inbox first.`;
@@ -313,7 +325,10 @@ export class AgentManager {
   }
 
   private firstPromptFor(agent: Agent): string | undefined {
-    if (agent.role === 'research') return `[muster] You are ${agent.id} (research). Call research_brief and start.`;
+    if (agent.role === 'research') {
+      const job = runningRun(this.state) ? undefined : this.o.intel?.runningJob();
+      return job ? intelJobPrompt(agent.id, job) : `[muster] You are ${agent.id} (research). Call research_brief and start.`;
+    }
     if (agent.taskId) {
       const task = this.state.tasks.find((t) => t.id === agent.taskId);
       return `[muster] You are ${agent.id} (${agent.role}). Your task: ${agent.taskId} ${task?.title ?? ''}. Call read_inbox and claim/confirm it, then start.`;
@@ -435,13 +450,17 @@ export class AgentManager {
     agent.status = 'stopped';
     agent.pid = undefined;
     feedEvent(this.state, SYSTEM, `${id} exited (code ${exitCode})`);
-    if (agent.role === 'research') failRun(this.state, `${id} exited (code ${exitCode}) before finish_research`);
+    if (agent.role === 'research') {
+      failRun(this.state, `${id} exited (code ${exitCode}) before finish_research`);
+      this.o.intel?.onScoutExit(`${id} exited (code ${exitCode}) before finish_intel_job`);
+    }
     this.o.store.commit();
   }
 
   async stop(id: string, reason?: string): Promise<Agent> {
     const agent = requireAgent(this.state, id);
     const rt = this.runtimes.get(id);
+    const heldJob = agent.role === 'research' ? this.o.intel?.runningJob()?.id : undefined; // a job started meanwhile isn't this stop's
     if (rt) {
       rt.stopping = true;
       rt.pty.kill();
@@ -456,6 +475,8 @@ export class AgentManager {
       feedEvent(this.state, SYSTEM, reason ? `${id} stopped: ${reason}` : `${id} stopped`);
       this.o.store.commit();
     }
+    // Stopped on purpose (not a shutdown, which keeps work for the resume): an intel job it held can't finish.
+    if (heldJob && reason !== undefined && this.o.intel?.runningJob()?.id === heldJob) this.o.intel.onScoutExit(`${id} stopped: ${reason}`);
     return agent;
   }
 
@@ -579,7 +600,11 @@ export class AgentManager {
   /** Why a crew agent can't be closed yet, or null when it's finished: no open task, nothing uncommitted, nothing unmerged. */
   async unfinishedReason(agent: Agent): Promise<string | null> {
     if (agent.role === 'captain') return "the Captain can't be closed";
-    if (agent.role === 'research') return runningRun(this.state) ? 'its research run is still going (cancel it first)' : null;
+    if (agent.role === 'research') {
+      if (runningRun(this.state)) return 'its research run is still going (cancel it first)';
+      const job = this.o.intel?.runningJob();
+      return job ? `its intel job ${job.id} is still going (cancel it first)` : null;
+    }
     const config = this.o.config();
     const open = new Set(['blocked', 'ready', 'in_progress', 'review', 'ready_for_merge']);
     const task = agent.taskId ? this.state.tasks.find((t) => t.id === agent.taskId) : undefined;
@@ -682,7 +707,7 @@ export class AgentManager {
   // ---------------------------------------------------------------- research agent
 
   /**
-   * A research run started: start scout (the one research agent) at the repo root. A stopped scout is restarted
+   * A research run or intel job started: start scout (the one research agent) at the repo root. A stopped scout is restarted
    * with its session and told to read the new brief; a running one is told directly.
    */
   async startScout(): Promise<Agent> {
@@ -690,7 +715,10 @@ export class AgentManager {
     if (!existing) return this.create({ name: SCOUT_ID, role: 'research', actor: SYSTEM });
     if (existing.role !== 'research') throw conflict(`An agent called "${SCOUT_ID}" already exists and isn't the research agent; rename or remove it first`);
     existing.model = modelFor('research', this.o.config());
-    if (this.runtimes.has(existing.id)) {
+    const rt = this.runtimes.get(existing.id);
+    // Being stopped (a run just ended): let the stop finish, then start it afresh below (start() handles a survivor).
+    if (rt?.stopping) await this.until(() => this.runtimes.get(existing.id) !== rt, this.timings.stopConfirmMs * 3);
+    else if (rt) {
       const prompt = this.firstPromptFor(existing);
       if (prompt) void this.type(existing.id, prompt).catch(() => {});
       return existing;
@@ -704,7 +732,7 @@ export class AgentManager {
     if (!scout || !this.runtimes.has(scout.id)) return;
     if (delayMs > 0) {
       setTimeout(() => {
-        if (!runningRun(this.state)) void this.stop(scout.id, reason).catch((e) => this.log(`${scout.id}: not stopped: ${errText(e)}`));
+        if (!runningRun(this.state) && !this.o.intel?.runningJob()) void this.stop(scout.id, reason).catch((e) => this.log(`${scout.id}: not stopped: ${errText(e)}`));
       }, delayMs).unref();
       return;
     }

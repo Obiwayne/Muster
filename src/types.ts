@@ -120,7 +120,7 @@ export interface Note {
   text: string;
   createdAt: string;
   open: boolean; // stuck/question/waiting/review/escalation start open; others start closed
-  topic?: 'weekly_usage' | 'five_hour' | 'roadmap' | 'research'; // what a system/approval note is about, so the UI can offer the right controls
+  topic?: 'weekly_usage' | 'five_hour' | 'roadmap' | 'research' | 'intel'; // what a system/approval note is about, so the UI can offer the right controls
   dismissed?: boolean; // you removed it from the board (POST /api/notes/:id/dismiss); kept in state for history, hidden by default
   closedAt?: string;
   replies: NoteReply[];
@@ -230,6 +230,8 @@ export interface MusterConfig {
   requireEvidence: boolean; // default true: the Captain can't flag a task ready for merge until it has evidence (add_evidence)
   githubOffer: 'ask' | 'never'; // whether the dashboard offers a GitHub backup once work is merged and there is no remote
   userName?: string; // what agents call the person running Muster; stored per OS user (core/user.ts), not in config.json
+  researchBrowser: ResearchBrowserConfig; // how scout browses (src/browser); loadConfig deep-merges it over the default
+  intel: IntelConfig; // competitive intelligence settings; loadConfig deep-merges it over the default
 }
 
 export interface MusterState {
@@ -284,6 +286,7 @@ export interface RoadmapGoal {
   due?: string; // YYYY-MM-DD
   activatedAt?: string;
   completedAt?: string;
+  intelCheckId?: string; // the intel check (IC4) of the idea this goal delivers; set when add_goal/update_goal links an idea that has one
 }
 
 export interface Roadmap {
@@ -317,7 +320,8 @@ export interface RoadmapProgress {
 // Events pushed over ws://127.0.0.1:<port>/ws/events
 export type MusterEvent =
   | { type: 'state'; state: MusterState; config: MusterConfig } // full snapshot, sent on connect and after every change
-  | { type: 'toast'; level: 'info' | 'warn'; text: string };
+  | { type: 'toast'; level: 'info' | 'warn'; text: string }
+  | { type: 'intel'; rev: number; summary: IntelSummary }; // .muster/intel.json changed: refetch GET /api/intel if you show it
 
 // Messages on ws://127.0.0.1:<port>/ws/term/<agentId>
 // server -> client: raw terminal output as text frames (a backlog replay first)
@@ -349,6 +353,8 @@ export const DEFAULT_CONFIG: MusterConfig = {
   requireEvidence: true,
   notify: true,
   weeklyAlerts: true,
+  researchBrowser: { mode: 'profile', channel: 'chrome', operaAllow: [], minDelayMs: 3000, maxPagesPerJob: 150, visibleSites: [] },
+  intel: { recheck: 'weekly', checkMaxAgeDays: 14 },
   allowedTools: [
     'Bash(npm *)', // no Bash(node *) / Bash(npx *): either runs arbitrary code without a prompt
     'Bash(git status*)',
@@ -428,6 +434,7 @@ export interface ResearchRun {
   summary?: string; // scout's one-paragraph wrap-up
   sourcesRead?: number;
   ideaIds: string[];
+  browse?: BrowseMode; // how scout may browse in this run (absent on runs from before the research browser = 'public')
 }
 
 export type IdeaImpact = 'high' | 'medium' | 'low' | 'business';
@@ -461,6 +468,10 @@ export interface ResearchIdea {
   thread: IdeaMessage[]; // your questions and the Captain's advice
   plan?: string[]; // Captain's proposed roadmap changes on approve, e.g. ["+ Add goal Moderation queue to M3 (Oct 13–17)", "~ Move M3 due Oct 17 → 20"]
   goalId?: string; // the goal the Captain created for it after you approved
+  origin?: 'research' | 'intel'; // absent = 'research'. 'intel' = a gap / open space / edge scout raised from competitive intelligence (runId is then the intel job, IJ3)
+  opportunity?: IntelOpportunity; // origin 'intel' only: the opportunity fields shown on Intel → Opportunities
+  checkId?: string; // the latest intel check of this idea (IC4); approving needs a done, fresh one (see Competitive intelligence)
+  watchId?: string; // the re-check watch set up when it was approved (W2)
   decidedAt?: string;
   createdAt: string;
 }
@@ -468,4 +479,442 @@ export interface ResearchIdea {
 export interface ResearchState {
   runs: ResearchRun[];
   ideas: ResearchIdea[];
+}
+
+// ---- Competitive intelligence (src/core/intel.ts, src/core/intelcheck.ts, src/browser/*) ----
+// You track competitors on the Intel page; scout researches them (intel jobs) and records labelled, sourced, dated
+// findings through MCP tools. Everything lives in .muster/intel.json (IntelStore), not in state.json, so the state
+// snapshot stays small; a `{ type: 'intel' }` event tells the dashboard to refetch. Gaps and open spaces become
+// research ideas (origin 'intel'); every idea approval needs one shared intel check, and approved ideas are re-checked.
+
+/** How scout may browse: Muster's own research browser profile (signed in to sites you chose), anonymous public pages, or cookies imported from Opera for allow-listed sites. */
+export type BrowseMode = 'profile' | 'public' | 'opera';
+
+/** config.researchBrowser */
+export interface ResearchBrowserConfig {
+  mode: BrowseMode; // the default answer to "How should scout browse?" (default 'profile')
+  channel: 'chrome' | 'msedge'; // installed browser playwright-core launches (default 'chrome'); Muster never downloads one
+  operaAllow: string[]; // registrable domains whose Opera cookies may be imported, e.g. ["reddit.com"]; empty = Opera mode imports nothing
+  minDelayMs: number; // at least this long between two page loads on the same domain (default 3000)
+  maxPagesPerJob: number; // browse calls allowed per intel job or research run (default 150)
+  /** Registrable domains ("reddit.com") the research profile reads in a visible, headed Chrome window instead of headless (default []). */
+  visibleSites: string[];
+}
+
+/** config.intel */
+export interface IntelConfig {
+  recheck: WatchCadence; // cadence of the re-check watch set up when an idea is approved (default weekly)
+  checkMaxAgeDays: number; // an intel check older than this is stale: approval asks for a fresh one (default 14)
+  companiesHouseKey?: string; // optional Companies House API key; without it the probe reads the public search pages
+}
+
+export type IntelLabel = 'fact' | 'opinion' | 'prediction'; // Fact / Customer opinion / Prediction (the legend on every Intel tab)
+export type IntelConfidence = 'high' | 'medium' | 'low';
+export type IntelArea =
+  | 'features' | 'roadmap' | 'reviews' | 'gaps' | 'audience' | 'pricing' | 'marketing' | 'team' | 'ai' | 'financials' | 'org';
+/** The research areas you can tick in "Add a competitor", in display order. */
+export const INTEL_AREAS: IntelArea[] = ['features', 'roadmap', 'reviews', 'gaps', 'audience', 'pricing', 'ai', 'financials', 'team', 'marketing', 'org'];
+export type WatchCadence = 'off' | 'daily' | 'weekly' | 'monthly';
+
+export type IntelSourceKind =
+  | 'site' | 'pricing' | 'roadmap' | 'changelog' | 'help' | 'app_store' | 'google_play' | 'g2' | 'capterra' | 'reddit' | 'forum'
+  | 'linkedin' | 'youtube' | 'tiktok' | 'instagram' | 'x' | 'facebook' | 'companies_house' | 'jobs' | 'press' | 'rss' | 'own_app' | 'other';
+
+/** Where a claim comes from. A claim with no source is refused (400). */
+export interface IntelSource {
+  kind: IntelSourceKind;
+  title: string; // "App Store · Padlet · 2★", "Wakelet public roadmap", "Companies House filing history"
+  url?: string; // required unless kind is 'own_app'
+  publishedAt?: string; // YYYY-MM-DD the source itself carries (review date, post date), when it has one
+  seenAt: string; // YYYY-MM-DD scout read it (server fills today when missing)
+  via?: BrowseMode; // how it was read: 'profile'/'opera' = behind a login
+}
+
+/**
+ * The rule for every significant conclusion: label, confidence, sources, date and what it means for us.
+ * Predictions also need `prediction` (signals, timeframe, what would change it), else 400.
+ */
+export interface IntelClaim {
+  label: IntelLabel;
+  confidence: IntelConfidence;
+  sources: IntelSource[]; // 1–12
+  asOf: string; // YYYY-MM-DD the claim holds for
+  implication?: string; // "what it means for us": required on insights, changes, opportunities and check verdicts
+  prediction?: { signals: string[]; timeframe: string; wouldChange: string }; // label 'prediction' only
+}
+
+/** A tracked company. "us" (id 'us', isUs) is created automatically from config.projectName and the roadmap. */
+export interface IntelCompetitor {
+  id: string; // slug: "padlet", "wakelet"; 'us' is reserved
+  name: string;
+  url: string; // home page
+  isUs?: boolean;
+  colour: number; // chart/chip colour slot 0–7, assigned on add so every chart keeps the same colour per company
+  tagline?: string;
+  identity?: {
+    legalName?: string; // "Boardly Learning Ltd"
+    matchedFrom?: string; // "site footer and privacy policy"
+    companiesHouse?: { number: string; status: string; incorporated?: string; registeredOffice?: string; url: string };
+  };
+  sources: IntelSiteSource[]; // where scout will look ("Public roadmap · Canny")
+  areas: IntelArea[]; // what to research
+  watch: WatchCadence; // keep watching: scheduled re-sweeps for changes
+  browse: BrowseMode;
+  addedAt: string;
+  lastSweptAt?: string;
+  removed?: boolean; // DELETE keeps its findings for history; hidden from chips and the matrix
+}
+
+/** A place to look for one competitor (found by the probe or added by you). */
+export interface IntelSiteSource {
+  kind: IntelSourceKind;
+  url: string;
+  label?: string; // "Public roadmap"
+  note?: string; // "Canny", "4.1★ · 2.3k", "41 mentions"
+}
+
+/** What POST /api/intel/probe finds from a pasted URL in a few seconds, without an agent. Nothing is saved. */
+export interface IntelProbe {
+  url: string; // normalised home page
+  found: boolean;
+  name?: string;
+  tagline?: string;
+  suggestedId?: string;
+  legal: { name: string; matchedFrom: string }[]; // legal names seen on the site (footer, privacy, terms)
+  companies: { number: string; name: string; status: string; incorporated?: string; address?: string; url: string }[]; // Companies House candidates, best first
+  sources: IntelSiteSource[]; // links found: pricing, roadmap, changelog, store pages, socials
+  notes: string[]; // what failed or was skipped ("site blocks anonymous requests")
+}
+
+/** Per-cell status in the feature matrix. 'planned' needs `stageId` for us or `planNote` for them. */
+export type CapabilityStatus = 'yes' | 'partial' | 'paid' | 'none' | 'planned' | 'missing'; // missing = we checked and it isn't there; none = no sign of it
+/** Gap = they have it, we don't (red). Edge = we have it (or have it planned) and they don't (green). Open = nobody has it (blue, be first). */
+export type CapabilityVerdict = 'gap' | 'edge' | 'open' | 'parity';
+
+export interface CapabilityCell extends IntelClaim {
+  status: CapabilityStatus;
+  note?: string; // "3 walls", "Credits"
+  stageId?: string; // us + planned: the roadmap stage (from the linked goal)
+  planNote?: string; // them + planned: "public roadmap, Q1"
+}
+
+/** One row of the feature matrix. `verdict*` are computed (capabilityVerdict in core/intelcheck.ts), never sent by scout. */
+export interface IntelCapability {
+  id: string; // "F1"
+  name: string; // "Approve posts before live"
+  group?: string; // "Moderation", "Sharing"
+  cells: Record<string, CapabilityCell>; // competitor id → cell; 'us' included
+  goalId?: string; // our roadmap goal for it; the us cell follows the goal (planned while open, yes when done)
+  ideaId?: string; // the idea (R12) raised for a gap/open row
+  verdict: CapabilityVerdict;
+  verdictVs: string[]; // gap: competitors that have it; edge: competitors that lack it
+  verdictStage?: string; // gap we plan to close ("M5") / edge we are building and nobody has ("M3")
+  updatedAt: string;
+}
+
+/** A complaint (or "what they love") theme across reviews, forums and social comments. Customer opinion by definition. */
+export interface IntelTheme extends IntelClaim {
+  id: string; // "TH1"
+  title: string;
+  love?: boolean; // a "What they love" theme
+  mentions: number; // mentions in the reviewed sample
+  sampleSize: number; // size of that sample (IntelStore.sample.total); share = mentions / sampleSize
+  independentSources: number; // distinct authors/threads; under 5 the UI shows it as "thin evidence", never as a finding
+  byCompetitor: Record<string, number>; // competitor id → mentions
+  severity: 'severe' | 'high' | 'medium' | 'low';
+  trend: 'rising' | 'steady' | 'easing' | 'new';
+  trendNote?: string; // "rising since Jun"
+  who?: string; // affected customer type
+  workaround?: string;
+  quotes: { text: string; source: IntelSource }[]; // ≤ 300 chars each, ≤ 6
+  ourAnswer?: { kind: 'edge' | 'opportunity' | 'watch' | 'win_over'; text: string; ideaId?: string; goalId?: string };
+}
+
+/** The reviewed sample themes are counted against ("412 reviews + 63 threads, last 12 months"). */
+export interface IntelSample {
+  window: string; // "last 12 months"
+  counts: { kind: IntelSourceKind | 'social_comments'; label: string; n: number }[];
+  total: number;
+  asOf: string;
+}
+
+export interface IntelSocialChannel extends IntelClaim {
+  competitorId: string;
+  channel: 'youtube' | 'tiktok' | 'instagram' | 'linkedin' | 'reddit' | 'x' | 'facebook';
+  presence: 'active' | 'dormant' | 'absent';
+  url?: string;
+  followers?: number;
+  cadence?: string; // "2 / wk"
+  contentType?: string; // "tutorials", "hacks", "district sales"
+  replies?: string; // Reddit/comment behaviour: "Staff reply ~2 days", "41 unanswered"
+  dormantFor?: string; // "14 mo"
+}
+
+/** Social insights; engagement is attention, not sales (the UI says so under the panel). */
+export interface IntelSocialInsight extends IntelClaim {
+  id: string; // "SO1"
+  kind: 'engagement' | 'comment_complaint' | 'win';
+  text: string;
+  competitorId?: string;
+  metric?: string; // "8× avg views", "1.2k likes"
+}
+
+/** A competitor's plan: a public commitment (roadmap, announcement) or our prediction (needs signals, confidence, timeframe, what would change it). */
+export interface IntelPlan extends IntelClaim {
+  id: string; // "PL1"
+  competitorId: string;
+  title: string;
+  kind: 'commitment' | 'prediction'; // commitment ⇒ label 'fact'; prediction ⇒ label 'prediction'
+  status?: 'planned' | 'in_progress' | 'shipped' | 'dropped';
+  timeframe?: string; // "Q1 2027"
+  capabilityIds: string[];
+}
+
+/** Anything else scout learned, per area: audience (claimed vs evidenced), pricing tiers, team & hiring, AI claims, marketing, org. */
+export interface IntelFinding extends IntelClaim {
+  id: string; // "IF1"
+  competitorId?: string; // absent = market-wide
+  area: IntelArea;
+  title: string;
+  detail?: string;
+  facts?: Record<string, string>; // small key/value table: { "Claimed": "teachers", "Evidenced": "district buyers" }, { "Price": "£8/mo", "Limit": "3 walls" }
+  aiStatus?: 'verified' | 'claimed'; // area 'ai': seen working vs marketing claim only
+  partial?: boolean; // team/org: public view only (the server sets it for those areas)
+}
+
+/** A realistic cost scenario ("30-teacher school for a year") with its assumptions. */
+export interface IntelScenario extends IntelClaim {
+  id: string; // "PS1"
+  name: string;
+  assumptions: string[];
+  costs: Record<string, { amount?: number; currency: string; period: 'month' | 'year' | 'once'; note?: string }>; // competitor id → cost; no amount = not sold / needs a quote
+}
+
+/** UK public filings (Companies House). Shown with its limits: small companies file abridged accounts, no revenue. */
+export interface IntelFiling extends IntelClaim {
+  competitorId: string;
+  companyNumber: string;
+  status: string; // "Active", "Active · proposal to strike off"
+  incorporated?: string;
+  accountsType?: string; // "micro-entity", "small", "full"
+  accountsMadeUpTo?: string;
+  accountsDue?: string;
+  overdue?: boolean;
+  officers?: number;
+  pscs?: string[]; // persons with significant control, names only
+  figures?: Record<string, string>; // what the accounts actually show: { "Net assets": "£412k" }
+  limits: string; // what this data can't tell you
+}
+
+/** The positioning map: scout's axes, points and assumptions. */
+export interface IntelPositioning extends IntelClaim {
+  title: string; // "Price for a 30-teacher school vs. classroom safety"
+  x: { label: string; min: string; max: string };
+  y: { label: string; min: string; max: string };
+  points: { competitorId: string; x: number; y: number; future?: boolean; label?: string }[]; // 0..1; future = "us after M3"
+  openSpace?: { x0: number; y0: number; x1: number; y1: number; label: string };
+  assumptions: string[];
+}
+
+/** "What this means for us" decision cards on the overview. */
+export interface IntelInsight extends IntelClaim {
+  id: string; // "IN1"
+  kind: 'match' | 'advantage' | 'audience' | 'test'; // Match · customers expect it / Clear advantage / Underserved audience / Test before building
+  title: string;
+  detail: string;
+  ideaId?: string;
+}
+
+/** Dated change log: what changed, why it matters, does the plan need to respond. */
+export interface IntelChange extends IntelClaim {
+  id: string; // "IX1"
+  at: string; // YYYY-MM-DD it changed (or was noticed)
+  competitorId: string;
+  area: IntelArea;
+  title: string; // "Padlet raised Pro to £8/mo"
+  planImpact: 'none' | 'watch' | 'respond';
+  suggestion?: string; // the Captain's suggestion when planImpact is 'respond'
+  ideaId?: string; // the idea/goal it threatens or supports
+  goalId?: string;
+  seen: boolean; // you opened it (POST /api/intel/changes/seen); unseen 'respond' changes count toward the nav badge
+  jobId?: string;
+}
+
+/** The opportunity fields on an intel idea (ResearchIdea.opportunity). */
+export interface IntelOpportunity {
+  kind: 'gap' | 'open' | 'edge'; // edge = "where we win · protect this"
+  capabilityIds: string[];
+  problem: string; // customer problem
+  alternatives: string; // what they do today
+  proposal: string; // proposed improvement
+  value: string; // customer value
+  effortNote: string; // effort & dependencies ("Medium · ~5 tasks · needs Google OAuth review")
+  priority: 'now' | 'next' | 'later' | 'parked';
+  validation: string; // how we'd validate before/while building
+  valueScore: number; // 1–5, scout's estimate from evidence (value-vs-effort matrix)
+  effortScore: number; // 1–5, scout's estimate until the Captain advises (advise_idea effort)
+  testFirst?: boolean; // "Test before building"
+  atRisk?: string; // edge only: who threatens it ("Wakelet building it")
+  claim: IntelClaim; // label/confidence/sources/implication of the opportunity as a whole
+}
+
+export type IntelCheckArea = 'features' | 'complaints' | 'social' | 'plans' | 'pricing' | 'audience' | 'ai';
+export const INTEL_CHECK_AREAS: IntelCheckArea[] = ['features', 'complaints', 'social', 'plans', 'pricing', 'audience', 'ai'];
+export type IntelVerdict = 'gap' | 'edge' | 'edge_at_risk' | 'open' | 'parity' | 'unclear';
+
+/** One row of an intel check: what scout found for one area, with its label and sources. */
+export interface IntelCheckRow extends IntelClaim {
+  area: IntelCheckArea;
+  finding: string; // "Padlet partial · Linoit none", "#1 theme · 22% · rising"
+  signal: 'supports' | 'against' | 'neutral' | 'threat'; // threat = a competitor is heading there (their plans)
+  changed?: boolean; // re-check: differs from the previous revision
+}
+
+/**
+ * The one shared intel check every idea passes before you approve it (Research ideas and Intel → Opportunities alike).
+ * Written by scout with intel_check; re-checked by the watch after approval.
+ */
+export interface IntelCheck {
+  id: string; // "IC1"
+  ideaId: string;
+  revision: number; // 1, then +1 per re-check (earlier revisions are summarised in `history`)
+  status: 'queued' | 'running' | 'done' | 'skipped' | 'failed';
+  rows: IntelCheckRow[]; // at most one per INTEL_CHECK_AREAS; coverage = rows.length of 7
+  verdict: IntelVerdict; // computed from capabilityIds when given (core/intelcheck.ts), else scout's
+  verdictText: string; // "Build before Wakelet ships, or lose the edge."
+  confidence: IntelConfidence;
+  sourceCount: number; // distinct source urls across rows
+  capabilityIds: string[];
+  watchFor?: string; // what would change the verdict; becomes the watch's alert line ("Wakelet ships post approval")
+  skippedReason?: string; // status 'skipped': e.g. "no competitors tracked"
+  jobId?: string;
+  createdAt: string;
+  doneAt?: string;
+  goalId?: string; // set when the idea's goal is created
+  history: { revision: number; verdict: IntelVerdict; confidence: IntelConfidence; doneAt: string; changedAreas: IntelCheckArea[] }[];
+}
+
+/** A scheduled re-check of an approved idea, or a competitor's keep-watching sweep. */
+export interface IntelWatch {
+  id: string; // "W1"
+  subject: { kind: 'idea'; ideaId: string } | { kind: 'competitor'; competitorId: string };
+  cadence: WatchCadence;
+  alertOn?: string; // "alert if Wakelet changes"
+  nextAt: string; // ISO
+  lastAt?: string;
+  lastJobId?: string;
+  active: boolean;
+}
+
+export type IntelJobKind = 'competitor' | 'sweep' | 'check' | 'recheck' | 'watch';
+export type IntelJobStatus = 'queued' | 'running' | 'done' | 'failed' | 'cancelled';
+
+/** One piece of scout work. Jobs run one at a time, never alongside a research run, never while paused. */
+export interface IntelJob {
+  id: string; // "IJ1"
+  kind: IntelJobKind; // competitor = first research of a new competitor; sweep = "Run sweep" over all; check/recheck = an intel check; watch = a cadence re-sweep for changes
+  status: IntelJobStatus;
+  competitorIds: string[];
+  areas: IntelArea[];
+  ideaId?: string; // check / recheck
+  checkId?: string;
+  watchId?: string;
+  browse: BrowseMode;
+  depth: 'quick' | 'thorough';
+  by: string; // "you", "captain" or "schedule"
+  queuedAt: string;
+  startedAt?: string;
+  finishedAt?: string;
+  summary?: string;
+  sourcesRead?: number;
+  pagesBrowsed: number; // research browser calls so far (capped by researchBrowser.maxPagesPerJob)
+  error?: string;
+}
+
+/** .muster/intel.json */
+export interface IntelStore {
+  version: 1;
+  rev: number; // +1 on every save; carried by the 'intel' event
+  competitors: IntelCompetitor[];
+  capabilities: IntelCapability[];
+  themes: IntelTheme[];
+  sample?: IntelSample;
+  social: IntelSocialChannel[];
+  socialInsights: IntelSocialInsight[];
+  plans: IntelPlan[];
+  findings: IntelFinding[];
+  scenarios: IntelScenario[];
+  filings: IntelFiling[];
+  positioning?: IntelPositioning;
+  insights: IntelInsight[];
+  changes: IntelChange[];
+  checks: IntelCheck[];
+  watches: IntelWatch[];
+  jobs: IntelJob[];
+  captainThread: IdeaMessage[]; // "Talk to Captain" about the gaps in general (per-idea talk uses the idea's thread)
+  nextIds: { capability: number; theme: number; insight: number; plan: number; finding: number; scenario: number; social: number; change: number; check: number; watch: number; job: number };
+}
+
+/** Small counts for the nav badge and headers, carried by the 'intel' event and GET /api/intel/summary. */
+export interface IntelSummary {
+  rev: number;
+  competitors: number; // tracked, not counting us
+  lastSweptAt?: string;
+  sources: number; // distinct source urls in the store
+  gaps: number;
+  edges: number;
+  open: number;
+  newIdeas: number; // intel ideas still 'new'
+  alerts: number; // unseen changes with planImpact 'respond' + re-checks whose verdict changed since you looked: the nav badge
+  runningJob?: { id: string; kind: IntelJobKind; label: string; startedAt: string };
+  queuedJobs: number;
+}
+
+// ---- Research browser (src/browser/*) ----
+
+/** A site scout may need to be signed in to, as shown in Settings → Research browser. */
+export interface ResearchSiteStatus {
+  site: string; // 'reddit' | 'linkedin' | 'x' | 'youtube' | 'instagram' | 'tiktok' | 'facebook' | 'g2' (src/browser/sites.ts)
+  label: string; // "Reddit"
+  domain: string; // "reddit.com"
+  loginUrl: string;
+  connected: boolean; // a login cookie for the domain is in the research profile (e.g. reddit_session, li_at, auth_token)
+  via?: 'login' | 'opera'; // how it got there
+  checkedAt: string;
+  warning?: string; // LinkedIn: "restricts automated accounts; use a separate account"
+  limits?: string; // honest limits: "Reddit's anonymous JSON is blocked; reads need the login"
+  blocked?: { reason: string; at: string }; // the site answered the research browser with a bot check last time (src/browser/botcheck.ts)
+  visible?: boolean; // config.researchBrowser.visibleSites has it: the profile reads it in a visible window
+}
+
+/** GET /api/browser: what the research browser can do on this PC. */
+export interface ResearchBrowserStatus {
+  available: boolean; // playwright-core loads and the channel's browser is installed
+  problem?: string; // "playwright-core is not installed", "Chrome not found"
+  channel: 'chrome' | 'msedge';
+  profileDir: string; // under the secrets base (the agents' guard refuses to touch it)
+  state: 'idle' | 'browsing' | 'login_open'; // the profile is single-use: a login window and browsing never overlap
+  loginSite?: string;
+  sites: ResearchSiteStatus[];
+  tools: { name: string; ok: boolean; note?: string }[]; // yt-dlp, Agent Reach python, browser_cookie3, Opera profile
+  opera: { found: boolean; profileDir?: string; allow: string[]; lastImportAt?: string; imported?: Record<string, number> }; // imported: domain → cookie count (never values)
+  /** Domains whose last load was a bot check or block ("Just a moment…", 429); cleared by the next good load. Scout reads them via the public reader. */
+  blocked?: { domain: string; reason: string; at: string }[];
+}
+
+/** What the read-only browse tool returns to scout (POST /api/browser/read). */
+export interface BrowseResult {
+  url: string; // final URL after redirects
+  title: string;
+  status: number; // HTTP status of the document
+  text?: string; // action 'read': visible text, ≤ 40000 chars, then "[… truncated]"
+  links?: { text: string; url: string }[]; // action 'read' with links: true; ≤ 200
+  screenshot?: string; // action 'screenshot': absolute path of the PNG under .muster/intel/shots/ (scout opens it with Read)
+  scrolled?: { y: number; height: number }; // action 'scroll'
+  loggedIn?: boolean; // a login cookie for this domain was present
+  via: BrowseMode;
+  pagesLeft: number; // of this job's budget
+  blocked?: string; // the site answered with a bot check / block instead of the page: "bot check (Cloudflare)", "rate limited (429)"
+  readVia?: 'public_reader'; // set when `text` came from the public reader (r.jina.ai, else a plain cookie-less request) because the site blocked the browser
+  note?: string; // for scout: "read via public reader (site blocked the research browser)"; put it on the source title
 }

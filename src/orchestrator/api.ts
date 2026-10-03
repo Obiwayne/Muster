@@ -20,11 +20,23 @@ import { createVellumChecker, type VellumCall } from '../core/vellum.js';
 import { applyUsage, refreshGuard, setWeeklyAlert, type RawUsage } from '../core/usage.js';
 import type { AgentManager } from './agents.js';
 import { applyIdentity, forbiddenReason, type Caller } from './auth.js';
+import { registerIntelRoutes, type IntelRuntime } from './intelapi.js';
+import { registerBrowserRoutes, type BrowserRouteDeps } from './browserapi.js';
+import * as intel from '../core/intel.js';
+import * as intelcheck from '../core/intelcheck.js';
 
 export interface ApiContext {
   store: Store;
   paths: MusterPaths;
   agents: AgentManager;
+  /** The intel store's runtime (core/intel.ts + dispatcher); see intelapi.ts. */
+  intel: IntelRuntime;
+  /** The research browser (src/browser/researchbrowser.ts), or a fake in tests. */
+  browser: BrowserRouteDeps['browser'];
+  /** Test seam: replaces the real site probe behind POST /api/intel/probe. */
+  probe?: BrowserRouteDeps['probe'];
+  /** Test seam: replaces the public reader used when a site blocks the research browser. */
+  publicRead?: BrowserRouteDeps['publicRead'];
   version: string;
   /** Build stamp (ms) of the code this server loaded; see core/build.ts. */
   build?: number;
@@ -52,6 +64,11 @@ class FileReply {
   constructor(public path: string, public contentType: string) {}
 }
 
+/** A handler result sent as text (a Markdown export) rather than JSON. */
+class TextReply {
+  constructor(public text: string, public contentType: string, public filename?: string) {}
+}
+
 interface Route {
   method: string;
   pattern: RegExp;
@@ -64,7 +81,47 @@ const MAX_BODY = 2 * 1024 * 1024;
 const CONFIG_KEYS = new Set<string>([
   'port', 'captainModel', 'crewModel', 'designModel', 'maxCrew', 'pauseAtFiveHourPct', 'warnAtWeeklyPct', 'shutdownIdleCrew',
   'defaultStations', 'testCommand', 'baseBranch', 'permissionMode', 'claudePath', 'vellum', 'notify', 'allowedTools', 'projectName', 'userName', 'vellumFile', 'vellumEdit', 'defaultLine', 'lines', 'githubOffer', 'crewNames', 'requireEvidence', 'weeklyAlerts',
+  'researchBrowser', 'intel',
 ]);
+const DOMAIN_RE = /^(?=.{1,253}$)([a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?\.)+[a-z]{2,63}$/;
+
+/** PATCH /api/config { researchBrowser }: a partial object; each field checked, null unsets it (back to the default). operaAllow and visibleSites are lowercased and de-duplicated. */
+function checkResearchBrowser(v: unknown): void {
+  if (v === null || v === undefined) return;
+  if (typeof v !== 'object' || Array.isArray(v)) throw badRequest('researchBrowser must be an object');
+  const o = v as Record<string, unknown>;
+  for (const [k, x] of Object.entries(o)) {
+    if (x === null) continue;
+    if (k === 'mode') intel.oneOf(x, intel.BROWSE_MODES, 'researchBrowser.mode');
+    else if (k === 'channel') intel.oneOf(x, ['chrome', 'msedge'] as const, 'researchBrowser.channel');
+    else if (k === 'operaAllow' || k === 'visibleSites') {
+      if (!Array.isArray(x) || x.some((d) => typeof d !== 'string' || !DOMAIN_RE.test(d.trim().toLowerCase()))) throw badRequest(`researchBrowser.${k} must be a list of domains like "reddit.com"`);
+      if (x.length > 50) throw badRequest(`researchBrowser.${k}: at most 50 domains`);
+      o[k] = [...new Set((x as string[]).map((d) => d.trim().toLowerCase()))];
+    } else if (k === 'minDelayMs') {
+      if (!Number.isInteger(x) || (x as number) < 0 || (x as number) > 60_000) throw badRequest('researchBrowser.minDelayMs must be a whole number of ms from 0 to 60000');
+    } else if (k === 'maxPagesPerJob') {
+      if (!Number.isInteger(x) || (x as number) < 1 || (x as number) > 1000) throw badRequest('researchBrowser.maxPagesPerJob must be a whole number from 1 to 1000');
+    } else throw badRequest(`researchBrowser has no setting "${k}"`);
+  }
+}
+
+/** PATCH /api/config { intel }: a partial object; each field checked, null unsets it. */
+function checkIntelConfig(v: unknown): void {
+  if (v === null || v === undefined) return;
+  if (typeof v !== 'object' || Array.isArray(v)) throw badRequest('intel must be an object');
+  const o = v as Record<string, unknown>;
+  for (const [k, x] of Object.entries(o)) {
+    if (x === null) continue;
+    if (k === 'recheck') intel.oneOf(x, intel.CADENCES, 'intel.recheck');
+    else if (k === 'checkMaxAgeDays') {
+      if (!Number.isInteger(x) || (x as number) < 1 || (x as number) > 365) throw badRequest('intel.checkMaxAgeDays must be a whole number of days from 1 to 365');
+    } else if (k === 'companiesHouseKey') {
+      if (typeof x !== 'string' || x.length > 200) throw badRequest('intel.companiesHouseKey must be text');
+      o[k] = x.trim();
+    } else throw badRequest(`intel has no setting "${k}"`);
+  }
+}
 const MAX_EVIDENCE_TEXT = 200_000;
 
 const str = (v: unknown, name: string): string => {
@@ -196,6 +253,8 @@ ${block}`;
     if (patch.weeklyAlerts !== undefined && patch.weeklyAlerts !== null && typeof patch.weeklyAlerts !== 'boolean') {
       throw badRequest('weeklyAlerts must be true or false');
     }
+    checkResearchBrowser(patch.researchBrowser);
+    checkIntelConfig(patch.intel);
     lineEdits(patch);
     const before = ctx.config().userName;
     const beforeEdit = ctx.config().vellumEdit;
@@ -573,9 +632,11 @@ ${pushed ? `Pushed ${base} to origin.` : `Push to origin failed: ${(r.stderr || 
 
   // ------------------------------------------------------------------ research (core/research.ts)
   route('GET', '/api/research', () => research.getResearch(state()));
-  route('GET', '/api/research/brief', () => ({ text: research.researchBrief(state(), ctx.paths.root) }));
+  route('GET', '/api/research/brief', () => ({ text: research.researchBrief(state(), ctx.paths.root, ctx.intel.store) }));
   route('POST', '/api/research/runs', async ({ body }) => {
-    const run = mutate(() => research.startRun(state(), str(body.actor, 'actor'), { sources: body.sources, focus: body.focus, depth: body.depth }));
+    const run = mutate(() =>
+      research.startRun(state(), str(body.actor, 'actor'), { sources: body.sources, focus: body.focus, depth: body.depth, browse: body.browse }, ctx.config().researchBrowser.mode, ctx.intel.store),
+    );
     try {
       await agents.startScout();
     } catch (e) {
@@ -597,8 +658,8 @@ ${pushed ? `Pushed ${base} to origin.` : `Push to origin failed: ${(r.stderr || 
     void agents.stopScout(`research ${run.id} finished`, agents.scoutStopDelayMs); // after scout has read the result
     return run;
   });
-  route('POST', '/api/research/ideas', ({ body }) =>
-    mutate(() =>
+  route('POST', '/api/research/ideas', ({ body }) => {
+    const idea = mutate(() =>
       research.addIdea(state(), str(body.actor, 'actor'), {
         title: body.title,
         summary: body.summary,
@@ -608,17 +669,53 @@ ${pushed ? `Pushed ${base} to origin.` : `Push to origin failed: ${(r.stderr || 
         overlapsGoalId: body.overlapsGoalId,
         evidence: body.evidence,
       }),
-    ),
-  );
+    );
+    // No competitors tracked: the idea needs no intel check, so it is marked skipped right away.
+    if (!intel.trackedIds(ctx.intel.store).length) {
+      intelcheck.skipCheck(ctx.intel.store, idea);
+      store.commit();
+      ctx.intel.commit();
+    }
+    return idea;
+  });
   route('POST', '/api/research/ideas/:id/ask', ({ params, body }) => mutate(() => research.askIdea(state(), str(body.actor, 'actor'), params.id, body.text)));
   route('POST', '/api/research/ideas/:id/advice', ({ params, body }) => {
-    const idea = mutate(() => research.adviseIdea(state(), str(body.actor, 'actor'), params.id, { text: body.text, plan: body.plan }));
+    const idea = mutate(() => research.adviseIdea(state(), str(body.actor, 'actor'), params.id, { text: body.text, plan: body.plan, effort: body.effort }));
     ctx.toast('info', `The Captain advised on ${idea.id} ${idea.title}`);
     return idea;
   });
-  route('POST', '/api/research/ideas/:id/approve', ({ params, body }) => mutate(() => research.approveIdea(state(), str(body.actor, 'actor'), params.id)));
+  route('POST', '/api/research/ideas/:id/approve', ({ params, body }) => {
+    try {
+      return mutate(() => research.approveIdea(state(), str(body.actor, 'actor'), params.id, { store: ctx.intel.store, config: ctx.config() }));
+    } finally {
+      ctx.intel.commit(); // the watch, or a skipped check made on the way (kept even when approval is refused)
+    }
+  });
   route('POST', '/api/research/ideas/:id/reject', ({ params, body }) => mutate(() => research.rejectIdea(state(), str(body.actor, 'actor'), params.id, body.note)));
   route('POST', '/api/research/ideas/:id/reopen', ({ params, body }) => mutate(() => research.reopenIdea(state(), str(body.actor, 'actor'), params.id)));
+
+  // ------------------------------------------------------------------ competitive intelligence (intelapi.ts)
+  registerIntelRoutes(route, {
+    store,
+    runtime: ctx.intel,
+    agents,
+    config: ctx.config,
+    notify: ctx.notify,
+    toast: ctx.toast,
+    markdown: (text, filename) => new TextReply(text, 'text/markdown; charset=utf-8', filename),
+  });
+  // The research browser (/api/browser/*) and the add-competitor probe (POST /api/intel/probe).
+  registerBrowserRoutes(route, {
+    browser: ctx.browser,
+    config: ctx.config,
+    isHuman: (a) => a === board.HUMAN,
+    isResearcher: (a) => research.isResearcher(state(), a),
+    currentWork: () => ctx.intel.currentWork(),
+    countPage: (id) => ctx.intel.countPage(id),
+    shotsDir: (id) => ctx.intel.shotsDir(id),
+    probe: ctx.probe,
+    publicRead: ctx.publicRead,
+  });
 
   // ------------------------------------------------------------------ board, chat, inbox
   route('GET', '/api/notes', ({ query }) =>
@@ -692,6 +789,12 @@ ${pushed ? `Pushed ${base} to origin.` : `Push to origin failed: ${(r.stderr || 
       if (!caller.human) agents.touch(caller.actor);
       const result = await r.handler({ params, query: url.searchParams, body });
       if (result instanceof FileReply) return sendFile(res, result);
+      if (result instanceof TextReply) {
+        const headers: Record<string, string> = { 'content-type': result.contentType, 'cache-control': 'no-store', 'x-content-type-options': 'nosniff' };
+        if (result.filename) headers['content-disposition'] = `inline; filename="${result.filename}"`;
+        res.writeHead(200, headers);
+        return void res.end(result.text);
+      }
       sendJson(res, 200, result ?? null);
     } catch (e) {
       const status = e instanceof HttpError ? e.status : 500;

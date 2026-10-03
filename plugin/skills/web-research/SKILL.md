@@ -12,9 +12,10 @@ PATH and whose python is `$AGENT_REACH_PYTHON` (it has `feedparser`).
 
 ## Rules
 
-- **Public sources only.** Never log in to anything, never read or export browser cookies, never drive
-  the user's browser. If something is behind a login (Twitter/X, Reddit, LinkedIn, Facebook, Instagram,
-  Xiaohongshu), say so in your notes and work from public sources instead.
+- **Public sources only with these tools.** Never log in to anything, never read or export browser
+  cookies, never drive a browser of your own. If something is behind a login (Twitter/X, Reddit, LinkedIn,
+  Facebook, Instagram, Xiaohongshu), use the muster `browse` tool if you have it (see "Logged-in sites"
+  below); otherwise say so in your notes and work from public sources instead.
 - **Queries leave this PC.** Exa and Jina Reader are outside services: they see what you search and the
   URLs you read. Search for the topic, never paste the project's private code, names or plans into a query.
 - **Don't run the `agent-reach` command itself.** Its `doctor`/`install` copy a skill into the user's own
@@ -79,6 +80,37 @@ work from the description and chapters. Never download the video itself. Don't u
 ```bash
 "$AGENT_REACH_PYTHON" -c "import feedparser,sys; f=feedparser.parse(sys.argv[1]); [print(e.get('published',''), '|', e.title, '|', e.link) for e in f.entries[:10]]" "https://github.blog/feed/"
 ```
+
+## Logged-in sites (the muster `browse` tool)
+
+The research agent (scout) has a `browse` MCP tool during an intel job or research run. It reads pages
+through Muster's own research browser profile, which the human signed in to (Settings → Research browser),
+so Reddit threads, LinkedIn company pages and similar pages behind a login can be read.
+
+- **Pages behind a login go only through `browse`.** Never through cookies, cookie export tools
+  (browser_cookie3, rookiepy, `agent-reach` cookie commands), a browser profile, Playwright or a Chrome you
+  start yourself. The guard refuses those commands anyway.
+- **Read-only.** `browse(url, action)` with `read` (text, optional `links`), `screenshot` (a PNG you open
+  with Read) or `scroll` (then `read` again to see what loaded). It can't post, like, follow, message,
+  connect or fill in anything, and you never try to.
+- **Rate-limited and budgeted.** Pages on one site are spaced out and each job has a page budget; when it
+  says the budget is used, finish with what you have.
+- **The job's browse mode decides** (the brief names it: `profile`, `opera` or `public`):
+  - **`profile` or `opera`: you MUST use `browse`** for pages that benefit from a login (Reddit, LinkedIn,
+    G2, X, app pages behind a sign-in) and for every competitor product, feature and pricing page. Don't
+    read those with `curl` or Jina Reader.
+  - In those modes, `curl` / Jina Reader are only for official feeds and APIs (RSS, Companies House,
+    app-store data), GitHub (`gh`), Exa search, or the fallback when `browse` reports `blocked` and its
+    own public reader failed too.
+  - **`public`: never call `browse`.** Use the tools above (Jina, Exa, `gh`, RSS) and say what was behind
+    a login and out of reach.
+- If a page needs a login the profile doesn't have (the result says `loggedIn: false`, or the page is a
+  sign-in or "prove you're human" screen), say so in your summary; don't work around it.
+- **Bot checks:** when a site answers the research browser with a bot check ("Just a moment…", 403/429),
+  the result carries `blocked` and `browse` reads the public page through the Jina Reader (or a plain
+  cookie-less request) instead, with `readVia: "public_reader"`. Never retry to get past the check. Title
+  that source "… (read via public reader (site blocked the research browser))".
+- Sources read this way carry `via` (profile/opera) when you record them.
 
 ## When a channel fails
 

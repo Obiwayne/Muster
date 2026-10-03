@@ -1,14 +1,20 @@
 // Pure helpers for the research pages (src/core/research.ts on the server): filters and counts,
 // evidence chips, plan lines, the run strip and the "Captain updated it … ago" line. No DOM here.
 import type {
-  FeedItem, IdeaEvidence, IdeaStatus, ResearchIdea, ResearchRun, ResearchSources, ResearchState, Roadmap,
+  BrowseMode, FeedItem, IdeaEvidence, IdeaStatus, ResearchIdea, ResearchRun, ResearchSources, ResearchState, Roadmap,
 } from '../../src/types';
+import { estimateResearch } from '../../src/core/intelestimate';
 
 export type IdeaFilter = 'new' | 'roadmap' | 'rejected';
 
 export const EMPTY_RESEARCH: ResearchState = { runs: [], ideas: [] };
 
 const FILTER_STATUS: Record<IdeaFilter, IdeaStatus> = { new: 'new', roadmap: 'approved', rejected: 'rejected' };
+
+/** Roadmap → Research lists scout's research ideas; intel ideas (gaps scout raised from competitors) live on Intel → Opportunities. */
+export function researchIdeas(ideas: ResearchIdea[]): ResearchIdea[] {
+  return ideas.filter((i) => i.origin !== 'intel');
+}
 
 export function ideaMatches(i: ResearchIdea, f: IdeaFilter): boolean {
   return i.status === FILTER_STATUS[f];
@@ -210,6 +216,7 @@ export interface ResearchDraft {
   focus: string;
   depth: 'quick' | 'thorough';
   fromLastRun: boolean; // competitor chips came from the last run (shown as "suggested by scout")
+  browse?: BrowseMode; // "How should scout browse?" (absent = the server's default, config.researchBrowser.mode)
 }
 
 export const DEPTH = {
@@ -240,8 +247,18 @@ export function addChip(list: string[], value: string): string[] {
   return [...list, v];
 }
 
+/**
+ * The estimate line under Depth, from the same `estimateResearch` the server uses. With competitors tracked, scout
+ * writes an intel check after every idea, so the line includes them.
+ */
+export function researchEstimate(depth: 'quick' | 'thorough', competitors: number): { usage: string; checks: string } {
+  const est = estimateResearch(depth, competitors);
+  if (competitors <= 0) return { usage: est.text, checks: 'No intel checks: no competitors tracked' };
+  return { usage: est.text, checks: `each idea is checked against ${competitors} competitor${competitors === 1 ? '' : 's'}` };
+}
+
 /** Body for POST /api/research/runs, or an error to show in the modal. */
-export function draftToRun(d: ResearchDraft): { body?: { sources: ResearchSources; focus?: string; depth: 'quick' | 'thorough' }; error?: string } {
+export function draftToRun(d: ResearchDraft): { body?: { sources: ResearchSources; focus?: string; depth: 'quick' | 'thorough'; browse?: BrowseMode }; error?: string } {
   if (d.useCompetitors && !d.competitors.length) return { error: 'Add at least one similar app, or untick that source.' };
   if (d.useForums && !d.forums.length) return { error: 'Add at least one subreddit or forum, or untick that source.' };
   const sources: ResearchSources = {
@@ -252,7 +269,7 @@ export function draftToRun(d: ResearchDraft): { body?: { sources: ResearchSource
   };
   if (!sources.competitors.length && !sources.reviews && !sources.forums.length && !sources.ownApp) return { error: 'Pick at least one source.' };
   const focus = d.focus.trim();
-  return { body: { sources, ...(focus ? { focus } : {}), depth: d.depth } };
+  return { body: { sources, ...(focus ? { focus } : {}), depth: d.depth, ...(d.browse ? { browse: d.browse } : {}) } };
 }
 
 // ---------------------------------------------------------------- "Captain updated it … ago"

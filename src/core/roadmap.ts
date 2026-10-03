@@ -492,7 +492,7 @@ export function addGoal(state: MusterState, input: GoalInput & { stageId: string
   stage.goalIds.push(goal.id);
   addFeed(state, { kind: 'event', from: actor, text: `added goal ${goal.id} ${goal.title} to ${stage.id} ${stage.title}` });
   if (idea) {
-    idea.goalId = goal.id;
+    linkIdea(idea, goal);
     addFeed(state, { kind: 'event', from: actor, text: `added ${goal.id} for idea ${idea.id}` });
     if (r.status === 'approved') {
       r.updatedAt = nowIso();
@@ -500,6 +500,15 @@ export function addGoal(state: MusterState, input: GoalInput & { stageId: string
     }
   }
   return { ...afterEdit(state, before, actor), goal };
+}
+
+/**
+ * The goal delivers the idea: it carries the idea's intel check (the orchestrator then sets the check's goalId and
+ * keeps the capability verdicts in step with the goal, see core/intelcheck.ts syncIntel).
+ */
+function linkIdea(idea: ResearchIdea, goal: RoadmapGoal): void {
+  idea.goalId = goal.id;
+  if (idea.checkId) goal.intelCheckId = idea.checkId;
 }
 
 /** The idea a new goal is for: 404 unknown, 409 unless approved and still without a goal. */
@@ -546,7 +555,7 @@ export function patchGoal(state: MusterState, id: string, patch: GoalPatch, acto
     if (p.status === 'active' || p.status === 'planned') addFeed(state, { kind: 'event', from: actor, text: `set ${goal.id} ${goal.title} to ${p.status}` });
   }
   if (idea) {
-    idea.goalId = goal.id;
+    linkIdea(idea, goal);
     addFeed(state, { kind: 'event', from: actor, text: `updated ${goal.id} for idea ${idea.id}` });
     if (r.status === 'approved') {
       r.updatedAt = nowIso();

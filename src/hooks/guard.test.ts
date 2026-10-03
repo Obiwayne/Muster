@@ -141,6 +141,46 @@ describe('research (scout) rules', () => {
   });
 });
 
+describe('browser and cookie tooling (every role)', () => {
+  const SECRETS = 'C:\\Users\\me\\AppData\\Local\\muster';
+  const envs: GuardEnv[] = [
+    { ...crew, secretDirs: [SECRETS] },
+    { ...captain, secretDirs: [SECRETS] },
+    { role: 'research', agentId: 'scout', repo: 'F:\\Proj', baseBranch: 'main', platform: 'win32', secretDirs: [SECRETS] },
+    { role: 'design', agentId: 'design', worktree: WT, baseBranch: 'main', platform: 'win32', secretDirs: [SECRETS] },
+  ];
+  const denied = [
+    'python -c "import browser_cookie3; print(browser_cookie3.chrome())"',
+    '"$AGENT_REACH_PYTHON" -m rookiepy',
+    'agent-reach cookie_extract --browser opera',
+    'python scripts/opera-cookies.py reddit.com',
+    'type "%APPDATA%\\Opera Software\\Opera Stable\\Local State"',
+    'cat ~/AppData/Roaming/Opera\\ Software/Opera\\ Stable/Default/Network/Cookies',
+    '"C:\\Program Files\\Google\\Chrome\\Application\\chrome.exe" --remote-debugging-port=9222',
+    'chrome.exe --user-data-dir=C:\\tmp\\p https://reddit.com',
+    'node -e "require(\'playwright-core\').chromium.launchPersistentContext(\'x\')"',
+    'npx playwright open https://reddit.com',
+    'dir C:\\Users\\me\\AppData\\Local\\muster\\research-browser\\profile',
+  ];
+  it('denies cookie extraction, profiles and driving a browser', () => {
+    for (const env of envs)
+      for (const c of denied) {
+        const d = decide(bash(c, env.worktree ?? 'F:\\Proj'), env);
+        expect(d.allow, `${env.role}: ${c}`).toBe(false);
+      }
+    const d = decide(bash('python -c "import browser_cookie3"', WT), envs[0]);
+    expect(!d.allow && d.reason).toMatch(/browse tool/);
+  });
+  it('denies reading the research profile with the read tools', () => {
+    for (const env of envs)
+      expect(decide({ tool_name: 'Read', tool_input: { file_path: `${SECRETS}\\research-browser\\profile\\Default\\Cookies` }, cwd: 'F:\\Proj' }, env).allow).toBe(false);
+  });
+  it('still allows ordinary research and builds', () => {
+    for (const c of ['npm test', 'curl -s "https://r.jina.ai/https://padlet.com/premium"', 'git log --oneline -5'])
+      expect(decide(bash(c, WT), envs[0]).allow, c).toBe(true);
+  });
+});
+
 describe('non-muster sessions and helpers', () => {
   it('allows everything without a role', () => {
     expect(decide(bash('git push'), {}).allow).toBe(true);

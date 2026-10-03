@@ -7,6 +7,9 @@
 //   MOCK_STRICT_DIFF=1 …                         → /diff ignores ?branch= (today's contract)
 //   MOCK_ROADMAP=none|draft …                    → no roadmap / a draft waiting for approval (default: approved, M3 active)
 //   MOCK_RESEARCH=none|running …                 → no research yet / scout still researching (default: a finished run, 4 new ideas)
+//   MOCK_INTEL=none|running …                    → no competitors yet / an intel sweep running (default: Padlet, Wakelet, Linoit swept)
+//   MOCK_BROWSER=off …                           → GET /api/browser: playwright-core missing
+//   MOCK_SANDBOX=<dir> …                       → research, roadmap, intel store and intel config read from <dir>/.muster (a live run's data; read only)
 //   MOCK_WEEKLY=84 …                             → weekly usage % (default 38; at 75+ an open weekly usage alert note)
 //
 // With `npx vite ui` (dev), set VITE_MUSTER_TOKEN=dev-token; vite proxies /api and /ws here.
@@ -14,10 +17,11 @@
 
 import http from 'node:http';
 import { readFile } from 'node:fs/promises';
-import { existsSync } from 'node:fs';
+import { existsSync, readFileSync } from 'node:fs';
 import { dirname, extname, join, normalize } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { WebSocketServer } from 'ws';
+import { createIntelMock } from './intel-mock.mjs';
 
 const PORT = Number(process.env.PORT ?? 47800);
 const TOKEN = process.env.MOCK_TOKEN ?? 'dev-token';
@@ -474,6 +478,26 @@ const need = (cond, status, msg) => { if (!cond) throw new HttpError(status, msg
 const findAgent = (id) => { const a = state.agents.find((x) => x.id === id); need(a, 404, `No agent ${id}`); return a; };
 const findTask = (id) => { const t = state.tasks.find((x) => x.id === id); need(t, 404, `No task ${id}`); return t; };
 const findNote = (id) => { const n = state.notes.find((x) => x.id === id); need(n, 404, `No note ${id}`); return n; };
+// competitive intelligence (/api/intel/*, GET /api/browser and the `intel` event)
+const intel = createIntelMock({
+  state, config, now, need, HttpError, toastAll, readBody: (req) => body(req), broadcast: () => broadcast(),
+  send: (msg) => { const t = JSON.stringify(msg); for (const ws of eventClients) if (ws.readyState === 1) ws.send(t); },
+});
+// MOCK_SANDBOX: replay a live run's research, roadmap and intel store (the files are only read).
+if (process.env.MOCK_SANDBOX) {
+  const dir = join(process.env.MOCK_SANDBOX, '.muster');
+  const read = (f) => JSON.parse(readFileSync(join(dir, f), 'utf8'));
+  const live = read('state.json');
+  if (live.research) state.research = live.research;
+  state.roadmap = live.roadmap ?? null;
+  const store = read('intel.json');
+  for (const k of Object.keys(intel.store)) delete intel.store[k];
+  Object.assign(intel.store, store);
+  const cfg = existsSync(join(dir, 'config.json')) ? read('config.json') : {};
+  if (cfg.projectName) config.projectName = cfg.projectName;
+  if (cfg.intel) config.intel = { ...config.intel, ...cfg.intel };
+  if (cfg.researchBrowser) config.researchBrowser = { ...config.researchBrowser, ...cfg.researchBrowser };
+}
 const paused = () => state.usage.fiveHour && state.usage.fiveHour.usedPercentage >= config.pauseAtFiveHourPct;
 
 function fakeDiff(a) {
@@ -525,7 +549,15 @@ async function api(req, url) {
   if (m === 'GET' && p === '/api/config') return config;
   if (m === 'PATCH' && p === '/api/config') {
     const patch = await body(req);
-    for (const [k, v] of Object.entries(patch)) { if (v === null) delete config[k]; else config[k] = v; }
+    for (const [k, v] of Object.entries(patch)) {
+      if (v === null) delete config[k];
+      // researchBrowser / intel are partial objects deep-merged over the current ones (contract); null clears a field
+      else if ((k === 'researchBrowser' || k === 'intel') && v && typeof v === 'object') {
+        const next = { ...(config[k] ?? {}) };
+        for (const [kk, vv] of Object.entries(v)) { if (vv === null) delete next[kk]; else next[kk] = vv; }
+        config[k] = next;
+      } else config[k] = v;
+    }
     state.usage.paused = !!paused();
     broadcast();
     return config;
@@ -689,7 +721,8 @@ async function api(req, url) {
     need(!state.research.runs.some((r) => r.status === 'running'), 409, 'A research run is already running');
     const src = b.sources ?? {};
     need(src.competitors?.length || src.reviews || src.forums?.length || src.ownApp, 400, 'Pick at least one source');
-    const run = { id: `RR${state.nextIds.run++}`, status: 'running', sources: { competitors: src.competitors ?? [], reviews: !!src.reviews, forums: src.forums ?? [], ownApp: !!src.ownApp }, ...(b.focus ? { focus: b.focus } : {}), depth: b.depth === 'thorough' ? 'thorough' : 'quick', agentId: 'scout', startedAt: new Date().toISOString(), ideaIds: [] };
+    need(!intel.store.jobs.some((j) => j.status === 'running'), 409, `scout is busy with ${intel.store.jobs.find((j) => j.status === 'running')?.id}`);
+    const run = { id: `RR${state.nextIds.run++}`, status: 'running', sources: { competitors: src.competitors ?? [], reviews: !!src.reviews, forums: src.forums ?? [], ownApp: !!src.ownApp }, ...(b.focus ? { focus: b.focus } : {}), depth: b.depth === 'thorough' ? 'thorough' : 'quick', browse: ['profile', 'public', 'opera'].includes(b.browse) ? b.browse : config.researchBrowser?.mode ?? 'profile', agentId: 'scout', startedAt: new Date().toISOString(), ideaIds: [] };
     state.research.runs.push(run);
     let scout = state.agents.find((a) => a.id === 'scout');
     if (!scout) { scout = agent('scout', 'research', 'main', 'starting', undefined, 0); state.agents.push(scout); }
@@ -743,7 +776,10 @@ async function api(req, url) {
       }, 2500);
     } else if (rr[2] === 'approve') {
       need(i.status === 'new', 409, `${i.id} is ${i.status}`);
+      const blocked = intel.gate(i);
+      need(!blocked, 409, blocked);
       i.status = 'approved'; i.decidedAt = now;
+      intel.approved(i);
       setTimeout(() => {
         const r = state.roadmap; if (!r) return;
         const stage = r.stages.find((x) => x.id === i.stageId) ?? r.stages.find((x) => x.status !== 'done');
@@ -933,6 +969,11 @@ const server = http.createServer(async (req, res) => {
       res.writeHead(200, { 'content-type': Buffer.isBuffer(f) ? 'text/plain' : 'image/png' });
       res.end(data);
       return;
+    }
+    if ((url.pathname.startsWith('/api/intel') || url.pathname === '/api/browser') && req.headers['x-muster-token'] === TOKEN) {
+      const out = await intel.route(req, req.method, url.pathname);
+      if (out?.text !== undefined) { res.writeHead(200, { 'content-type': 'text/markdown; charset=utf-8' }); res.end(out.text); return; }
+      if (out) { res.writeHead(200, { 'content-type': 'application/json' }); res.end(JSON.stringify(out.body ?? null)); return; }
     }
     if (url.pathname.startsWith('/api/')) {
       const out = await api(req, url);
