@@ -51,7 +51,7 @@ export function browseOptions(operaAllow: string[], status?: ResearchBrowserStat
 export function browseFootnote(mode: BrowseMode): string {
   if (mode === 'public') return 'Public pages only. Never signs in or contacts them.';
   if (mode === 'opera') return 'Read-only with your Opera sign-ins for allow-listed sites. Never posts or contacts them.';
-  return 'Read-only. Uses the research profile, never your own browser. Never posts or contacts them.';
+  return "Read-only, in Muster's research profile. Never posts or contacts them.";
 }
 
 /** The mode to start with: the config default, falling back when it can't be used. */
@@ -107,7 +107,7 @@ export function createBrowseChoice(opts: {
       h('div.bc-body', null,
         h('div.bc-title', null, o.title, o.recommended ? h('span.bc-rec', null, 'Recommended') : null),
         h('div.bc-sub', null, o.sub),
-        o.warning && (on || o.mode === 'opera') ? h('div.bc-warn', null, icon('alert', 12), h('span', null, o.warning)) : null,
+        o.warning && !o.disabled ? h('div.bc-warn', null, icon('alert', 12), h('span', null, o.warning)) : null,
         o.disabled ? h('div.bc-off', null, o.disabled) : null));
     }));
   }

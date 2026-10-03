@@ -114,10 +114,11 @@ export function createIntel(): Page {
     snapshot: snap!,
     refresh: refetch,
     go: (t) => { location.hash = t === 'overview' ? '#/intel' : `#/intel/${t}`; },
-    addCompetitor: () => openAdd(),
+    addCompetitor: () => void openAdd(),
   });
-  function openAdd(): void {
-    openAddCompetitor({ config: snap?.config ?? null, existing: data?.competitors ?? [], onAdded: () => refetch() });
+  async function openAdd(url?: string): Promise<void> {
+    if (!loaded) await load(); // the new company's colour slot depends on who is tracked already
+    openAddCompetitor({ config: snap?.config ?? null, existing: data?.competitors ?? [], onAdded: () => refetch(), ...(url ? { url } : {}) });
   }
 
   // ---------------------------------------------------------------- render
@@ -136,7 +137,7 @@ export function createIntel(): Page {
         if (!us) chip.onclick = () => chipMenu(c, chip);
         return chip;
       }),
-      h('button.it-chip.add', { onclick: () => openAdd() }, icon('plus', 12, 2.2), 'Add competitor'));
+      h('button.it-chip.add', { onclick: () => void openAdd() }, icon('plus', 12, 2.2), 'Add competitor'));
   }
 
   function renderTabs(store: IntelStore): void {
@@ -188,6 +189,9 @@ export function createIntel(): Page {
       const next = parseTab(p.get('tab'));
       if (next !== tab) { tab = next; body.scrollTop = 0; }
       render();
+      // #/intel?add=<url> opens Add competitor with the URL filled in (links from elsewhere, e.g. a research idea)
+      const add = p.get('add');
+      if (add !== null) setTimeout(() => void openAdd(add || undefined), 0);
     },
     show() { visible = true; if (!loaded) void load(); else refetch(); },
     hide() { visible = false; },

@@ -34,6 +34,12 @@ export function normaliseUrl(raw: string): string | null {
   } catch { return null; }
 }
 
+/** The site's own spelling of the legal name when it is the same company as the Companies House match. */
+export function sameCompany(a: string, b: string): boolean {
+  const norm = (s: string) => s.toLowerCase().replace(/\b(limited|ltd|plc|llp|inc)\b\.?/g, '').replace(/[^a-z0-9]/g, '');
+  return norm(a) === norm(b);
+}
+
 /** Town from a registered office ("1 Long Lane, London, SE1 4PG" → "London"). */
 function town(address?: string): string {
   if (!address) return '';
@@ -41,7 +47,7 @@ function town(address?: string): string {
   return parts.length >= 2 ? parts[parts.length - 2]! : parts[0] ?? '';
 }
 
-export function openAddCompetitor(opts: { config: MusterConfig | null; existing: IntelCompetitor[]; onAdded?: (c: IntelCompetitor) => void }): void {
+export function openAddCompetitor(opts: { config: MusterConfig | null; existing: IntelCompetitor[]; onAdded?: (c: IntelCompetitor) => void; url?: string }): void {
   closeFloating();
   const rivals = opts.existing.filter((c) => !c.isUs && c.id !== 'us');
   const colour = COMPANY_COLOURS[rivals.length % COMPANY_COLOURS.length]!;
@@ -145,7 +151,7 @@ export function openAddCompetitor(opts: { config: MusterConfig | null; existing:
       h('div.ac-card-body', null,
         h('div.ac-card-head', null, nameInput, probed?.tagline ? h('div.ac-tagline', null, probed.tagline) : null),
         h('div.ac-facts', null,
-          fact('Legal entity', ch?.name ?? legal?.name ?? 'Not found'),
+          fact('Legal entity', ch && legal && sameCompany(ch.name, legal.name) ? legal.name : ch?.name ?? legal?.name ?? 'Not found'),
           ch ? fact('Companies House', `${ch.number} · ${ch.status}`, true) : fact('Companies House', probed?.companies.length ? 'None picked' : 'No match'),
           ch?.incorporated ? fact('Incorporated', [fmtDate(ch.incorporated), town(ch.address)].filter(Boolean).join(' · ')) : null),
         h('div.ac-matched', null,
@@ -246,7 +252,7 @@ export function openAddCompetitor(opts: { config: MusterConfig | null; existing:
         url: probed?.url || url,
         ...(probed?.tagline ? { tagline: probed.tagline } : {}),
         identity: {
-          ...(ch?.name ?? legal?.name ? { legalName: ch?.name ?? legal?.name } : {}),
+          ...(ch && legal && sameCompany(ch.name, legal.name) ? { legalName: legal.name } : ch?.name ?? legal?.name ? { legalName: ch?.name ?? legal?.name } : {}),
           ...(legal ? { matchedFrom: legal.matchedFrom } : {}),
           ...(ch ? { companiesHouse: { number: ch.number, status: ch.status, ...(ch.incorporated ? { incorporated: ch.incorporated } : {}), ...(ch.address ? { registeredOffice: ch.address } : {}), url: ch.url } } : {}),
         },
@@ -295,5 +301,5 @@ export function openAddCompetitor(opts: { config: MusterConfig | null; existing:
   document.addEventListener('keydown', onKey, true);
   window.addEventListener('hashchange', close);
   draw();
-  setTimeout(() => urlInput.focus());
+  if (opts.url) { urlInput.value = opts.url; void runProbe(); } else setTimeout(() => urlInput.focus());
 }
