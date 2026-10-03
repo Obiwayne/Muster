@@ -191,7 +191,7 @@ describe('progress labels', () => {
     expect(stageBasis({ ...base, basis: 'criteria' })).toBe('no tasks linked yet · 3/4 exit criteria met');
     expect(goalCount({ done: 0, total: 0 }, 'done')).toBe('✓');
     expect(goalCount({ done: 0, total: 0 }, 'active')).toBe('–');
-    expect(overallText({ done: 0, total: 0 })).toBe('no tasks linked yet');
+    expect(overallText({ done: 0, total: 0 })).toBe('no tasks');
     expect(unlinkedText({ unlinked: 21 })).toBe('21 tasks not on the roadmap');
     expect(unlinkedText({ unlinked: 0 })).toBe('');
     expect(overallText({ done: 2, total: 5 })).toBe('2 / 5 tasks');

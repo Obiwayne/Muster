@@ -271,7 +271,7 @@ export function goalCount(p: { done: number; total: number }, status: string): s
 
 /** The line under OVERALL. */
 export function overallText(o: { done: number; total: number }): string {
-  return o.total ? `${o.done} / ${o.total} tasks` : 'no tasks linked yet';
+  return o.total ? `${o.done} / ${o.total} tasks` : 'no tasks';
 }
 
 /** Second line under OVERALL when some tasks have no goal; '' when none. */
