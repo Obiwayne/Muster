@@ -160,7 +160,7 @@
 .ac-seg button { height: 26px; padding: 0 10px; display: flex; align-items: center; border-radius: 6px; font-size: 12px; color: var(--color-muted); }
 .ac-seg button:hover { color: var(--color-text); }
 .ac-seg button.on { background: var(--color-surface-2); color: var(--color-text); font-weight: 550; }
-.ac-est { font-family: var(--font-mono); font-size: 11px; color: var(--color-faint); white-space: nowrap; }
+.ac-est { font-family: var(--font-mono); font-size: 11px; color: var(--color-faint); min-width: 0; text-align: right; line-height: 15px; }
 .ac-err { flex-shrink: 0; margin: 0 22px 14px; font-size: 12px; line-height: 17px; color: var(--color-stuck); padding: 8px 10px; border-radius: 8px; background: color-mix(in oklab, var(--color-stuck) 10%, transparent); }
 .ac-foot { display: flex; align-items: center; gap: 10px; padding: 16px 22px; border-top: 1px solid var(--color-line); flex-shrink: 0; }
 .ac-foot > svg { color: var(--color-faint); }

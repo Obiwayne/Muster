@@ -4,12 +4,15 @@
 import { INTEL_AREAS, type IntelArea, type IntelCompetitor, type IntelProbe, type IntelSiteSource, type MusterConfig, type WatchCadence } from '../../../src/types';
 import { closeFloating, h, icon, setChildren, showMenu, toast } from '../dom';
 import { addCompetitor, ApiError, getBrowserStatus, probe as probeSite } from '../intelapi';
-import { AREA_LABELS, COMPANY_COLOURS, domainOf, fmtDate, jobEstimate } from '../intelmodel';
+import { AREA_LABELS, COMPANY_COLOURS, domainOf, fmtDate } from '../intelmodel';
+import { estimateIntelJob } from '../../../src/core/intelestimate';
 import { browseFootnote, createBrowseChoice, initialBrowseMode } from '../browsechoice';
 
 const errText = (e: unknown) => (e instanceof Error ? e.message : String(e));
 /** Areas ticked by default: everything but marketing & social and the org chart (the slow, low-yield ones). */
 export const DEFAULT_AREAS: IntelArea[] = INTEL_AREAS.filter((a) => a !== 'marketing' && a !== 'org');
+/** A new competitor gets a thorough first pass (watches and sweeps later are quick); the estimate line matches it. */
+export const FIRST_DEPTH = 'thorough' as const;
 const WATCH: { value: WatchCadence; label: string }[] = [
   { value: 'off', label: 'Off' }, { value: 'daily', label: 'Daily' }, { value: 'weekly', label: 'Weekly' }, { value: 'monthly', label: 'Monthly' },
 ];
@@ -217,7 +220,7 @@ export function openAddCompetitor(opts: { config: MusterConfig | null; existing:
       h('div.section-label.ac-watch-l', null, 'KEEP WATCHING'),
       h('div.ac-seg', null, WATCH.map((w) => h('button', { class: w.value === watch && 'on', onclick: () => { watch = w.value; drawWatch(); } }, w.label))),
       h('div.flex1'),
-      h('div.ac-est', null, jobEstimate(areas.size)));
+      h('div.ac-est', null, areas.size ? estimateIntelJob('competitor', FIRST_DEPTH, 1).text : 'pick at least one area'));
   }
 
   function drawFoot(): void {
@@ -260,6 +263,7 @@ export function openAddCompetitor(opts: { config: MusterConfig | null; existing:
         areas: INTEL_AREAS.filter((a) => areas.has(a)),
         watch,
         browse: browse.value(),
+        depth: FIRST_DEPTH,
         start: true,
       });
       close();
