@@ -1,14 +1,15 @@
 // Intel → Reviews & social (6138-0): complaint themes counted within the reviewed sample (thin themes kept apart),
 // what they love, the social channel grid, complaints in their comments, what gets engagement and where we can win.
-import type { IntelSocialChannel, IntelStore, IntelTheme } from '../../../src/types';
-import { h, icon, promptDialog, setChildren } from '../dom';
+import type { IntelSocialChannel, IntelSocialInsight, IntelStore, IntelTheme } from '../../../src/types';
+import { h, icon, promptDialog, setChildren, type Child } from '../dom';
 import { run as runAction } from '../actions';
 import { askIntel } from '../intelapi';
 import {
   SEVERITY_TEXT, THIN_SOURCES, TREND_TEXT, companyColour, companyName, compact, complaintThemes, fmtDate, isThin, loveThemes, rivals,
   sampleLine, shareOfSample, themeTag, themesFor,
 } from '../intelmodel';
-import { caption, claimLine, emptyState, labelDot, openSources, segmented, type IntelCtx } from './common';
+import { caption, claimLine, emptyState, labelDot, segmented, type IntelCtx } from './common';
+import { after, details } from './expand';
 
 let who: string = 'all';
 let openTheme: string | null = null;
@@ -56,10 +57,7 @@ function complaintsColumn(host: HTMLElement, ctx: IntelCtx): HTMLElement {
         ? `No complaint theme has ${THIN_SOURCES}+ independent sources${who === 'all' ? '' : ` for ${companyName(store, who)}`} yet, so none is shown as a finding.`
         : "scout hasn't read their reviews yet. Run a sweep with Reviews & pain points ticked.")),
     rest.length ? h('div.it-tlist', null, rest.map((t) => themeRow(t, () => { openTheme = t.id; rerender(); }))) : null,
-    love.length ? h('button.it-love', { onclick: (e: MouseEvent) => openSources(e.currentTarget as HTMLElement, 'What they love', love[0]!.sources, love[0]) },
-      h('div.it-love-k', null, 'WHAT THEY LOVE'),
-      h('div.it-love-t', null, love.map((l) => l.title).join(' · ')),
-      h('div.it-love-s', null, love[0]!.implication ? 'customers will expect this' : `${shareOfSample(love[0]!)}% of sample`)) : null,
+    love.length ? loveRow(love) : null,
     thin.length ? h('div.it-thin', null,
       h('div.section-label', null, `THIN EVIDENCE · ${thin.length}`),
       thin.map((t) => h('div.it-thin-row', null,
@@ -69,10 +67,20 @@ function complaintsColumn(host: HTMLElement, ctx: IntelCtx): HTMLElement {
     caption(`Customer opinion. Percentages are of the reviewed sample, not all customers. A theme needs ${THIN_SOURCES}+ independent sources before it's shown.`));
 }
 
+function loveRow(love: IntelTheme[]): Child[] {
+  const top = love[0]!;
+  const el = h('button.it-love', null,
+    h('div.it-love-k', null, 'WHAT THEY LOVE'),
+    h('div.it-love-t', null, love.map((l) => l.title).join(' · ')),
+    h('div.it-love-s', null, top.implication ? 'customers will expect this' : `${shareOfSample(top)}% of sample`));
+  return [el, details(el, { group: 'love', key: top.id, heading: love.length > 1 ? top.title : undefined, sources: top.sources, claim: top, cls: 'xp-attach', accent: 'var(--color-success)' })];
+}
+
 function themeCard(ctx: IntelCtx, t: IntelTheme): HTMLElement {
   const tag = themeTag(t);
   const answer = t.ourAnswer;
   const trendCls = t.trend === 'rising' ? 'warm' : t.trend === 'easing' ? 'ok' : '';
+  const claim = claimLine(t, t.title, `claim:${t.id}`, { group: `theme:${t.id}` });
   const fact = (label: string, value: string, cls = '') => h('div.it-fact', null, h('div.it-fact-l', null, label), h('div.it-fact-v', { class: cls }, value));
   const ask = h('button.btn.sm.it-ask', null, 'Ask Captain');
   ask.onclick = async () => {
@@ -89,12 +97,11 @@ function themeCard(ctx: IntelCtx, t: IntelTheme): HTMLElement {
       fact('Trend', `${TREND_TEXT[t.trend].split(' ')[0]} ${t.trendNote ?? t.trend}`, trendCls),
       t.who ? fact('Who', t.who) : null,
       t.workaround ? fact('Workaround', t.workaround) : null),
-    t.quotes.slice(0, 6).map((q) => {
-      const qEl = h('button.it-quote', { title: 'Open the source' },
+    t.quotes.slice(0, 6).map((q, i) => {
+      const qEl = h('button.it-quote', null,
         h('div.it-quote-t', null, `“${q.text}”`),
         h('div.it-quote-s', null, [q.source.title, fmtDate(q.source.publishedAt ?? q.source.seenAt)].filter(Boolean).join(' · ')));
-      qEl.onclick = () => openSources(qEl, 'Quote source', [q.source]);
-      return qEl;
+      return [qEl, details(qEl, { group: `theme:${t.id}`, key: `q${i}:${q.source.url ?? q.source.title}`, heading: 'Quote source', sources: [q.source], cls: 'xp-attach' })];
     }),
     h('div.it-theme-foot', null,
       answer ? h('div.it-answer', { class: `a-${answer.kind}` },
@@ -102,7 +109,8 @@ function themeCard(ctx: IntelCtx, t: IntelTheme): HTMLElement {
         h('span', null, answer.text, answer.ideaId && !answer.text.includes(answer.ideaId) ? ` (${answer.ideaId})` : '', answer.goalId ? ` · ${answer.goalId}` : ''))
         : tag ? h('span.it-tag', { class: tag.cls }, tag.text) : h('div.flex1'),
       ask),
-    h('div.it-theme-claim', null, claimLine(t, t.title), h('span.faint', null, ` · ${t.independentSources} independent sources`)));
+    h('div.it-theme-claim', null, claim.line, h('span.faint', null, ` · ${t.independentSources} independent sources`)),
+    claim.panel);
 }
 
 function themeRow(t: IntelTheme, onOpen: () => void): HTMLElement {
@@ -126,10 +134,11 @@ function socialColumn(store: IntelStore): HTMLElement {
   const wins = store.socialInsights.filter((s) => s.kind === 'win');
   const commentCount = store.sample?.counts.find((c) => c.kind === 'social_comments')?.n;
 
+  let panel: HTMLElement | null = null;
   const cell = (s: IntelSocialChannel | undefined, channel: string) => {
     if (!s) return h('div.it-sg-c', null, h('div.it-sg-v.faint', null, '?'), h('div.it-sg-s', null, 'not checked'));
-    const el = h('button.it-sg-c', { title: 'Show sources' });
-    el.onclick = () => openSources(el, `${companyName(store, s.competitorId)} · ${channel}`, s.sources, s);
+    const el = h('button.it-sg-c');
+    panel = details(el, { group: 'social', key: `${s.channel}:${s.competitorId}`, heading: `${companyName(store, s.competitorId)} · ${channel}`, sources: s.sources, claim: s, cls: 'xp-wide', place: after('.it-sg-row') }) ?? panel;
     if (s.replies) {
       const [main, ...more] = s.replies.split(' · ');
       setChildren(el, h('div.it-sg-v.text', null, main),
@@ -153,37 +162,47 @@ function socialColumn(store: IntelStore): HTMLElement {
     rows.length
       ? h('div.it-sg', null,
           h('div.it-sg-head', null, h('div.it-sg-ch.section-label', null, 'CHANNEL'), comps.map((c) => h('div.it-sg-c', null, c.name))),
-          rows.map((ch) => h('div.it-sg-row', null,
-            h('div.it-sg-ch', null, ch.label),
-            comps.map((c) => cell(store.social.find((s) => s.channel === ch.id && s.competitorId === c.id), ch.label)))))
+          rows.map((ch) => {
+            panel = null;
+            const row = h('div.it-sg-row', null,
+              h('div.it-sg-ch', null, ch.label),
+              comps.map((c) => cell(store.social.find((s) => s.channel === ch.id && s.competitorId === c.id), ch.label)));
+            return [row, panel];
+          }))
       : h('div.it-empty', null, h('div.it-empty-t', null, 'No social profiles checked yet'), h('div.it-empty-s', null, 'Tick Marketing & social on a competitor and scout reads their public profiles.')),
     complaints.length ? h('div.it-block', null,
       h('div.it-block-head', null, h('div.section-label.flex1.bad', null, `COMPLAINTS IN THEIR COMMENTS${commentCount ? ` · ${commentCount}` : ''}`)),
       complaints.map((c) => {
         const comp = store.competitors.find((x) => x.id === c.competitorId);
         const src = c.sources[0];
-        const el = h('button.it-cc', { title: 'Show sources' },
+        const el = h('button.it-cc', null,
           h('span.it-cc-dot', { style: { background: companyColour(comp) } }),
           h('div.flex1', null,
             h('div.it-cc-t', null, c.text),
             h('div.it-cc-s', null, labelDot(c.label), [src?.title, c.metric, fmtDate(src?.publishedAt ?? src?.seenAt, true)].filter(Boolean).join(' · '))));
-        el.onclick = () => openSources(el, 'Comment', c.sources, c);
-        return el;
+        return [el, details(el, { group: 'comments', key: c.id, sources: c.sources, claim: c, cls: 'xp-attach', accent: 'var(--color-stuck)' })];
       })) : null,
-    engagement.length ? h('div.it-block', null,
-      h('div.section-label', null, 'WHAT GETS ENGAGEMENT'),
-      h('div.it-eng', null, engagement.map((e) => {
-        const el = h('button.it-eng-c', null, h('div.it-eng-t', null, e.text), h('div.it-eng-s', null, labelDot(e.label), [e.competitorId ? companyName(store, e.competitorId) : null, e.metric].filter(Boolean).join(' ')));
-        el.onclick = () => openSources(el, e.text, e.sources, e);
-        return el;
-      }))) : null,
+    engagement.length ? engagementBlock(store, engagement) : null,
     wins.length ? h('div.it-win', null,
       h('div.it-win-k', null, 'WHERE WE CAN WIN ON SOCIAL'),
       wins.map((w) => {
         const el = h('button.it-win-r', null, h('span.it-win-up', null, '↑'), h('span.flex1', null, w.text), labelDot(w.label));
-        el.onclick = () => openSources(el, w.text, w.sources, w);
-        return el;
+        return [el, details(el, { group: 'wins', key: w.id, sources: w.sources, claim: w, cls: 'xp-loose', accent: 'var(--color-success)' })];
       }),
       h('div.it-win-cap', null, 'Followers and likes show attention, not sales or growth.')) : null,
     !wins.length && (rows.length || engagement.length) ? caption('Followers and likes show attention, not sales or growth.') : null);
+}
+
+/** "What gets engagement": cards side by side, so a card's details open full width under the row of cards, headed by it. */
+function engagementBlock(store: IntelStore, engagement: IntelSocialInsight[]): HTMLElement {
+  let panel: HTMLElement | null = null;
+  const cards = engagement.map((e) => {
+    const el = h('button.it-eng-c', null, h('div.it-eng-t', null, e.text), h('div.it-eng-s', null, labelDot(e.label), [e.competitorId ? companyName(store, e.competitorId) : null, e.metric].filter(Boolean).join(' ')));
+    panel = details(el, { group: 'engagement', key: e.id, heading: e.text, sources: e.sources, claim: e, cls: 'xp-loose', place: after('.it-eng') }) ?? panel;
+    return el;
+  });
+  return h('div.it-block', null,
+    h('div.section-label', null, 'WHAT GETS ENGAGEMENT'),
+    h('div.it-eng', null, cards),
+    panel);
 }
