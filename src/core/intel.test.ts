@@ -12,6 +12,7 @@ import {
   failJob,
   finishJob,
   IntelFile,
+  browseRule,
   intelBrief,
   intelReport,
   intelSummary,
@@ -271,6 +272,20 @@ describe('watches', () => {
   });
 });
 
+describe('browseRule', () => {
+  it('profile / opera require browse for login and competitor pages; public forbids it', () => {
+    for (const m of ['profile', 'opera'] as const) {
+      const r = browseRule(m);
+      expect(r).toContain(`Browse mode ${m}: you MUST read pages with the browse tool`);
+      expect(r).toMatch(/competitor product, feature and pricing page/);
+      expect(r).toMatch(/Reddit, LinkedIn, G2/);
+      expect(r).toMatch(/curl \/ Jina Reader only for official feeds .* fallback when browse reports blocked/);
+    }
+    expect(browseRule('public')).toMatch(/do not call browse/);
+    expect(browseRule('public')).not.toMatch(/MUST/);
+  });
+});
+
 describe('summary, brief, report, estimates', () => {
   it('summary counts; brief describes the running job; report lists every claim', () => {
     addPadlet();
@@ -285,6 +300,7 @@ describe('summary, brief, report, estimates', () => {
     expect(brief).toContain('Intel job IJ1 (competitor, quick): Researching Padlet.');
     expect(brief).toContain('- capabilities: F1 Approve posts');
     expect(brief).toContain('150 of 150 browse calls left');
+    expect(brief).toContain('Browse mode profile: you MUST read pages with the browse tool');
     expect(brief).toContain('finish_intel_job');
     // Live run: scout left every us cell empty, so all its rows read as gaps.
     expect(brief).toContain('- Capabilities: fill the us cell too, from our own app');

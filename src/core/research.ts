@@ -5,7 +5,7 @@
 import type { BrowseMode, IdeaEvidence, IdeaImpact, IntelOpportunity, IntelStore, MusterConfig, MusterState, ResearchIdea, ResearchRun, ResearchSources, ResearchState } from '../types.js';
 import { addFeed, addInbox, captainOf, findAgent, HUMAN, isCaptain, nowIso, SYSTEM } from './board.js';
 import { badRequest, conflict, forbidden, notFound } from './errors.js';
-import { BROWSE_MODES, checkClaim, oneOf, runningJob, tracked } from './intel.js';
+import { BROWSE_MODES, browseRule, checkClaim, oneOf, runningJob, tracked } from './intel.js';
 import { checkGate, onApproved } from './intelcheck.js';
 import { nextId } from './store.js';
 import { assertNotPaused } from './usage.js';
@@ -276,7 +276,7 @@ export function researchBrief(state: MusterState, repoRoot = state.repoRoot, int
     for (const c of comps) out.push(`- ${c.name} (${c.id}) ${c.url}`);
     out.push('After every add_idea, write intel_check for that idea (intel_brief and record_intel are yours too; record what you learn about these competitors as you go).');
   }
-  if (run.browse) out.push('', `Browsing: mode ${run.browse}. The browse tool is read-only; prefer official feeds and the web-research tools for public pages.`);
+  if (run.browse) out.push('', `Browsing: mode ${run.browse}. The browse tool is read-only.`, browseRule(run.browse));
 
   const ideas = state.research?.ideas ?? [];
   out.push('', 'Ideas already found (never post them again):');

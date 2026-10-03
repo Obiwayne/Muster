@@ -614,7 +614,7 @@ ${r.output}`;
 
     tool(
       'advise_idea',
-      'Answer the user about a research idea: honest cost, where it fits on the roadmap, what it moves. plan = the roadmap changes you will make if they approve, one per item, e.g. ["+ Add goal Moderation queue to M3 (Oct 13-17)", "~ Move M3 due Oct 17 -> 20", "Re-check weekly; alert if Wakelet ships approval"]. effort = your honest effort 1-5 for an intel idea (sets its place on the value-vs-effort matrix).',
+      'Answer the user about a research idea: honest cost, where it fits on the roadmap, what it moves. plan = the roadmap changes you will make if they approve, one per item, e.g. ["+ Add goal Moderation queue to M3 (Oct 13-17)", "~ Move M3 due Oct 17 -> 20"]. Leave the re-check out of plan: Muster shows it from the idea watch. effort = your honest effort 1-5 for an intel idea (sets its place on the value-vs-effort matrix).',
       { idea: z.string().describe('Idea id, e.g. R7'), text: z.string().min(1), plan: z.array(z.string().min(1)).optional(), effort: z.number().int().min(1).max(5).optional() },
       async ({ idea, text, plan, effort }) => {
         const body: Record<string, unknown> = { actor: me, text };
@@ -764,7 +764,7 @@ ${r.output}`;
 
     tool(
       'browse',
-      "Read one page through Muster's research browser (read-only, rate-limited): action read (visible text, links: true for links), screenshot (PNG path; open it with Read) or scroll (by pixels). Pages you are signed in to through the research profile work here; never sign in yourself. Prefer official feeds and the web-research tools for public pages.",
+      "Read one page through Muster's research browser (read-only, rate-limited): action read (visible text, links: true for links), screenshot (PNG path; open it with Read) or scroll (by pixels). Pages you are signed in to through the research profile work here; never sign in yourself. In profile or opera mode use it (not curl or Jina) for competitor product and pricing pages and for Reddit, LinkedIn, G2 and other pages that show more signed in; never call it in public mode.",
       { url: z.string().min(1), action: z.enum(['read', 'screenshot', 'scroll']).optional(), links: z.boolean().optional(), by: z.number().int().optional() },
       async ({ url, action, links, by }) => {
         const body: Record<string, unknown> = { actor: me, url, action: action ?? 'read' };

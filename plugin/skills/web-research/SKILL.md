@@ -95,8 +95,15 @@ so Reddit threads, LinkedIn company pages and similar pages behind a login can b
   connect or fill in anything, and you never try to.
 - **Rate-limited and budgeted.** Pages on one site are spaced out and each job has a page budget; when it
   says the budget is used, finish with what you have.
-- **Public pages still come first.** Use the tools above (Jina, Exa, `gh`, RSS) for anything public, and
-  official data before logged-in pages: Companies House, store pages, public roadmaps, RSS.
+- **The job's browse mode decides** (the brief names it: `profile`, `opera` or `public`):
+  - **`profile` or `opera`: you MUST use `browse`** for pages that benefit from a login (Reddit, LinkedIn,
+    G2, X, app pages behind a sign-in) and for every competitor product, feature and pricing page. Don't
+    read those with `curl` or Jina Reader.
+  - In those modes, `curl` / Jina Reader are only for official feeds and APIs (RSS, Companies House,
+    app-store data), GitHub (`gh`), Exa search, or the fallback when `browse` reports `blocked` and its
+    own public reader failed too.
+  - **`public`: never call `browse`.** Use the tools above (Jina, Exa, `gh`, RSS) and say what was behind
+    a login and out of reach.
 - If a page needs a login the profile doesn't have (the result says `loggedIn: false`, or the page is a
   sign-in or "prove you're human" screen), say so in your summary; don't work around it.
 - **Bot checks:** when a site answers the research browser with a bot check ("Just a moment…", 403/429),

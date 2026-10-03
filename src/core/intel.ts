@@ -1257,6 +1257,23 @@ export function intelSummary(store: IntelStore, state: MusterState): IntelSummar
   };
 }
 
+/**
+ * What scout does with the browse tool in this job's mode (intel brief and research brief). In profile / opera mode
+ * the research browser is the way pages get read; curl / Jina Reader only in public mode or when browse fails.
+ */
+export function browseRule(mode: BrowseMode): string {
+  if (mode === 'public') {
+    return 'Browse mode public: do not call browse in this job. Read pages with the web-research tools (Jina Reader via curl, Exa, gh, RSS). Pages behind a login are out of reach: say so in your summary.';
+  }
+  const via = mode === 'opera' ? 'the research browser with cookies imported from Opera for the allowed sites' : "the research browser profile, signed in where the user chose";
+  return [
+    `Browse mode ${mode}: you MUST read pages with the browse tool (${via}), not curl or Jina, for:`,
+    '- every competitor product, feature and pricing page;',
+    '- pages that show more signed in: Reddit, LinkedIn, G2, X, app pages behind a sign-in.',
+    'curl / Jina Reader only for official feeds and APIs (RSS, Companies House, app-store data), GitHub (gh), Exa search, or as the fallback when browse reports blocked and its public reader failed too. Count every browse call against the page budget.',
+  ].join('\n');
+}
+
 const RULES = [
   'Rules:',
   '- Record as you go: one claim per record_intel call. Every claim has label, confidence, sources (title, url, publishedAt when the page has a date), asOf.',
@@ -1269,7 +1286,7 @@ const RULES = [
   '- Pricing scenarios are realistic and list their assumptions.',
   '- Changes: what changed, why it matters (implication), and planImpact none/watch/respond.',
   '- Gaps, open spaces and edges worth acting on: add_opportunity, then intel_check for that idea.',
-  "- browse is read-only and rate-limited; prefer official feeds (Companies House, store pages, RSS, public roadmaps). Never sign in yourself, never touch cookies or browser profiles. If a page needs a login the profile doesn't have, say so in your summary.",
+  "- browse is read-only and rate-limited; follow the browse mode above. Official feeds (Companies House, store pages, RSS, public roadmaps) are good primary sources. Never sign in yourself, never touch cookies or browser profiles. If a page needs a login the profile doesn't have, say so in your summary.",
   '- When done, finish_intel_job(summary, sourcesRead).',
 ];
 
@@ -1324,7 +1341,7 @@ export function intelBrief(store: IntelStore, state: MusterState, config: Pick<M
   out.push(`- plans: ${store.plans.map((p) => `${p.id} ${p.title} (${p.competitorId})`).join('; ') || 'none'}`);
   out.push(`- intel ideas: ${(state.research?.ideas ?? []).filter((i) => i.origin === 'intel').map((i) => `${i.id} ${i.title}`).join('; ') || 'none'}`);
   const left = Math.max(0, config.researchBrowser.maxPagesPerJob - job.pagesBrowsed);
-  out.push('', `Browsing: mode ${job.browse}, ${left} of ${config.researchBrowser.maxPagesPerJob} browse calls left, at least ${config.researchBrowser.minDelayMs} ms between pages on one site.`);
+  out.push('', `Browsing: mode ${job.browse}, ${left} of ${config.researchBrowser.maxPagesPerJob} browse calls left, at least ${config.researchBrowser.minDelayMs} ms between pages on one site.`, browseRule(job.browse));
   out.push('', ...RULES);
   return out.join('\n');
 }

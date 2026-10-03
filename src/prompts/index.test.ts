@@ -191,8 +191,16 @@ describe('researchPrompt', () => {
     expect(p).toMatch(/verified \(seen working\) vs claimed/);
     expect(p).toMatch(/right after each `add_idea`, write `intel_check`/);
     expect(p).toMatch(/`add_opportunity` linked to its capabilities, then `intel_check`/);
-    expect(p).toMatch(/Prefer official feeds/);
+    expect(p).toMatch(/Official feeds are strong primary sources/);
     expect(p).toContain('`finish_intel_job`');
+  });
+  it('makes scout use browse in profile / opera mode and never in public mode', () => {
+    expect(p).toContain('## Browse mode decides how you read pages');
+    expect(p).toMatch(/profile or opera: you MUST use `browse`\*\* for every competitor product, feature and pricing page, and for pages that show more signed in: Reddit, LinkedIn, G2/);
+    expect(p).toMatch(/Do not read those with curl or Jina Reader/);
+    expect(p).toMatch(/curl \/ Jina Reader only\*\* for official feeds .* or as the fallback when `browse` reports `blocked`/);
+    expect(p).toMatch(/public: never call `browse`/);
+    expect(p).not.toMatch(/web-research skill's tools stay first/);
   });
 });
 
@@ -212,11 +220,21 @@ describe('captainPrompt research ideas', () => {
     expect(p).toContain('**"You asked about the gaps …"**');
     expect(p).toContain('`intel_reply(text)`');
     expect(p).toMatch(/honest `effort` 1–5/);
-    expect(p).toContain('"Re-check weekly; alert if Wakelet ships post approval"');
+    expect(p).toContain('Leave the re-check out of `plan`: Muster shows it from the real watch.');
+    expect(p).toContain('Approved ideas are re-checked **weekly**');
+    expect(p).not.toMatch(/monthly/);
     expect(p).toContain('`add_goal(stage, …, idea: "R12")`');
     expect(p).toContain('**"Re-check of R7 … (G4): …"**');
     expect(p).toContain('`intel_suggest(IX5, text)`');
     expect(p).toContain('`request_intel_check(idea)`');
+  });
+  it('states the real re-check cadence from config instead of letting the Captain guess', () => {
+    const daily = captainPrompt({ ...ctx, agentId: 'captain', intelRecheck: 'daily' });
+    expect(daily).toContain('Approved ideas are re-checked **daily**');
+    expect(daily).toMatch(/say daily, never another cadence/);
+    expect(daily).not.toMatch(/re-checked \*\*weekly/);
+    const off = captainPrompt({ ...ctx, agentId: 'captain', intelRecheck: 'off' });
+    expect(off).toContain('Re-checks are **off** in Settings');
   });
 });
 

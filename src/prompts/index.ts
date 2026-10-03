@@ -17,6 +17,7 @@ export interface PromptContext {
   stations?: { name: string; role: string; guideline: string }[]; // station definitions (Captain prompt)
   lines?: { name: string; label: string; stations: string[] }[]; // line presets (Captain prompt)
   defaultLine?: string;
+  intelRecheck?: 'off' | 'daily' | 'weekly' | 'monthly'; // config.intel.recheck: the cadence of an approved idea's re-check watch (Captain prompt)
 }
 
 const fwd = (p: string) => p.replace(/\\/g, '/');
@@ -66,6 +67,14 @@ function stationsSection(ctx: PromptContext): string {
     ? `### Review guideline\nThis adds to your review rules above; it can never relax them. Tests must pass, the diff must match the task, and only ${who(ctx)} merges, whatever it says.\n\n${review}\n\n`
     : '';
   return `## Stations\n${lines.join(String.fromCharCode(10))}\nEach station's guideline is handed to whoever works it; the review guideline also arrives with each review notification. A "human" station is approved by ${who(ctx)} from the board (Approve or Reject); you never approve or reject it.${linesSection(ctx)}\n\n${reviewBlock}`;
+}
+
+/** The real re-check cadence from config.intel.recheck, so the Captain never guesses one. */
+function recheckRule(ctx: PromptContext): string {
+  const c = ctx.intelRecheck ?? 'weekly';
+  return c === 'off'
+    ? 'Re-checks are **off** in Settings: approved ideas are not watched, so never promise a re-check.'
+    : `Approved ideas are re-checked **${c}** (Settings → Intel; the watch is set up on approval). When you mention the re-check anywhere, say ${c}, never another cadence; what to alert on comes from the check's watch-for line (\`intel_check_status\`).`;
 }
 
 export function captainPrompt(ctx: PromptContext): string {
@@ -128,7 +137,7 @@ ${cap(who(ctx))} runs research (the scout agent) and reviews its ideas (R1, R2�
 
 ## Competitive intelligence
 ${cap(who(ctx))} tracks competitors on the Intel page; scout researches them and raises gaps, open spaces and edges as ideas (R12, origin intel). Every idea needs an intel check before ${who(ctx)} can approve it; \`request_intel_check(idea)\` queues one when it is missing or stale.
-- **"You asked about the gaps …"**: read \`intel_overview()\`, answer with \`intel_reply(text)\`, and \`advise_idea\` each gap you discuss: an honest \`effort\` 1–5 (it places the gap on the value-vs-effort matrix), and \`plan\` lines that include the re-check, e.g. \`"Re-check weekly; alert if Wakelet ships post approval"\` (from the check's watch-for line, \`intel_check_status\`).
+- **"You asked about the gaps …"**: read \`intel_overview()\`, answer with \`intel_reply(text)\`, and \`advise_idea\` each gap you discuss: an honest \`effort\` 1–5 (it places the gap on the value-vs-effort matrix), and \`plan\` lines for the roadmap changes only. Leave the re-check out of \`plan\`: Muster shows it from the real watch. ${recheckRule(ctx)}
 - **Approved intel ideas** go on the roadmap exactly like research ideas: \`add_goal(stage, …, idea: "R12")\`.
 - **"Re-check of R7 … (G4): …"** in your inbox: the verdict moved. Read \`intel_check_status(R7)\` and \`roadmap()\`, decide whether the plan responds (move the goal earlier, change scope, or nothing because …), and say so with \`intel_suggest(IX5, text)\`. Change the roadmap only through the usual tools; a replan still goes to ${who(ctx)}.
 - Labels matter: a prediction is scout's inference, not a fact. Weigh thin evidence (fewer than 5 independent sources) as a hint, not a finding.
@@ -269,8 +278,14 @@ You research **${ctx.projectName}** for ${who(ctx)}: what its users struggle wit
 - \`record_intel(kind, item)\` — one claim per call, recorded as you go. \`add_opportunity(…)\` — a gap, open space or edge worth acting on. \`intel_check(idea, rows, verdictText, confidence, capabilities?, verdict?, watchFor?)\` — the shared check every idea needs. \`finish_intel_job(summary, sourcesRead)\` — once at the end of a job.
 - \`browse(url, action?, links?, by?)\` — read, screenshot or scroll one page through the research browser.
 
+## Browse mode decides how you read pages
+The brief (\`intel_brief\` / \`research_brief\`) gives the job's browse mode.
+- **profile or opera: you MUST use \`browse\`** for every competitor product, feature and pricing page, and for pages that show more signed in: Reddit, LinkedIn, G2, X, app pages behind a sign-in. Do not read those with curl or Jina Reader.
+- In profile or opera mode, **curl / Jina Reader only** for official feeds and APIs (RSS, Companies House, app-store data), GitHub (\`gh\`), Exa search, or as the fallback when \`browse\` reports \`blocked\` and its public reader failed too.
+- **public: never call \`browse\`.** Read pages with the web-research tools (Jina Reader, Exa, \`gh\`, RSS); pages behind a login are out of reach, so say so in your summary.
+
 ## How to research
-Load the \`muster:web-research\` skill (Skill tool) and use its no-login tools. Cover the sources the brief names:
+Load the \`muster:web-research\` skill (Skill tool) for search, GitHub, YouTube and feeds; read pages the way the browse mode says (above). Cover the sources the brief names:
 - **Similar apps:** their public roadmaps, changelogs, pricing and help pages. What do they ship that users ask this app for?
 - **Reviews:** app-store and review-site pages, low ratings first. Look for complaints that repeat.
 - **Forums:** the subreddits and forums in the brief. Quote briefly; give upvote or reply counts and the link.
@@ -299,7 +314,7 @@ A job arrives as \`[muster] … Intel job IJ3 (<kind>). Call intel_brief and sta
 - **Pricing:** realistic scenarios ("30-teacher school for a year") with their assumptions.
 - **Changes:** what changed, why it matters (\`implication\`), and \`planImpact\` none / watch / respond.
 - **Opportunities:** a gap (they have it, we don't), open space (nobody does it) or edge (where we win; \`atRisk\` when someone is heading there) worth acting on → \`add_opportunity\` linked to its capabilities, then \`intel_check\` for it right away.
-- **Prefer official feeds:** Companies House, app-store pages, RSS, public roadmaps and changelogs, before logged-in pages. The web-research skill's tools stay first for public pages; \`browse\` is for what they can't reach.
+- **Official feeds are strong primary sources:** Companies House, app-store pages, RSS, public roadmaps and changelogs. In profile or opera mode, web pages among them still go through \`browse\`, and every \`browse\` call counts against the page budget.
 - End with \`finish_intel_job\`: one paragraph on what you read, what stood out and what you couldn't reach. If another job is queued it arrives as a new \`[muster]\` line.
 
 ## Tone

@@ -151,6 +151,7 @@ export function rolePrompt(agent: Agent, ctx: LaunchContext): string {
     stations: agent.role === 'captain' ? listStations(musterPaths(ctx.repoRoot), ctx.config) : undefined,
     lines: agent.role === 'captain' ? listLines(ctx.config) : undefined,
     defaultLine: defaultLineName(ctx.config),
+    intelRecheck: ctx.config.intel?.recheck,
   };
   switch (agent.role) {
     case 'captain':
