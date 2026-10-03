@@ -12,6 +12,8 @@ import type { Page } from './page';
 import { createDashboard } from './pages/dashboard';
 import { createRoadmap } from './pages/roadmap';
 import { createResearch } from './pages/research';
+import { createIntel } from './pages/intel';
+import { getIntelSummary } from './intelapi';
 import { currentStageId } from './roadmap';
 import { createBoard } from './pages/board';
 import { createChat } from './pages/chat';
@@ -20,11 +22,12 @@ import { createBranches } from './pages/branches';
 import { createVellum } from './pages/vellum';
 import { createSettings } from './pages/settings';
 
-type RouteId = 'dashboard' | 'roadmap' | 'research' | 'board' | 'chat' | 'tasks' | 'branches' | 'vellum' | 'settings';
+type RouteId = 'dashboard' | 'roadmap' | 'research' | 'intel' | 'board' | 'chat' | 'tasks' | 'branches' | 'vellum' | 'settings';
 type NavId = Exclude<RouteId, 'research'>;
 const ROUTES: { id: NavId; label: string; icon: string; create: () => Page }[] = [
   { id: 'dashboard', label: 'Dashboard', icon: 'grid', create: createDashboard },
   { id: 'roadmap', label: 'Roadmap', icon: 'route', create: createRoadmap },
+  { id: 'intel', label: 'Intel', icon: 'radar', create: createIntel },
   { id: 'board', label: 'Bulletin board', icon: 'pin', create: createBoard },
   { id: 'chat', label: 'Crew chat', icon: 'chat', create: createChat },
   { id: 'tasks', label: 'Tasks', icon: 'tasks', create: createTasks },
@@ -46,6 +49,8 @@ export function parseHash(): { route: RouteId; params: URLSearchParams } {
   // #/roadmap/research → the research page (not a stage); #/roadmap/M3 → route "roadmap", params.stage = "M3"
   if (route === 'roadmap' && rest[0] === 'research') route = 'research';
   else if (route === 'roadmap' && rest[0]) params.set('stage', decodeURIComponent(rest[0]));
+  // #/intel/reviews → route "intel", params.tab = "reviews" (no tab = overview)
+  else if (route === 'intel' && rest[0]) params.set('tab', decodeURIComponent(rest[0]));
   return { route, params };
 }
 
@@ -236,6 +241,7 @@ function renderShell(s: Snapshot): void {
   rmEl.className = 'nav-count mono';
   rmEl.textContent = !rm ? '' : rm.status === 'draft' && !rm.approvedAt ? 'draft' : currentStageId(rm) ?? '';
   rmEl.title = rm?.status === 'draft' ? 'Roadmap draft waiting for your approval' : rm ? 'Current stage' : '';
+  renderIntelBadge();
 
   // agents
   const agents = sortedAgents(state);
@@ -273,6 +279,15 @@ function renderShell(s: Snapshot): void {
   week.title = `Warns you at ${config.warnAtWeeklyPct}%`;
 }
 
+/** Intel nav badge: blue, unseen changes that need a response + re-checks whose verdict changed. */
+function renderIntelBadge(): void {
+  const el = navCounts.get('intel')!;
+  const n = events.intel?.alerts ?? 0;
+  el.className = n > 0 ? 'nav-badge intel' : 'nav-count';
+  el.textContent = n > 0 ? String(n) : '';
+  el.title = n > 0 ? `${n} intel alert${n === 1 ? '' : 's'}: changes that may need the plan to respond` : '';
+}
+
 function agentRow(s: Snapshot, a: Agent): HTMLElement {
   const word = agentStatusWord(s.state, a);
   const row = h('button.agent-row', {
@@ -292,6 +307,7 @@ events.onSnapshot((s) => {
   if (current) pages.get(current)?.update(s);
 });
 events.onToast((t) => toast(t.text, t.level));
+events.onIntel(() => renderIntelBadge());
 let everConnected = false;
 events.onConnection((c) => {
   if (c) everConnected = true;
@@ -304,3 +320,5 @@ setInterval(() => { if (events.snapshot) renderShell(events.snapshot); }, 30_000
 
 onHash();
 events.start();
+// Older orchestrators have no /api/intel: the badge just stays empty.
+getIntelSummary().then((s) => events.setIntel(s), () => {});
