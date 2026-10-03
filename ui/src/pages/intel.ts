@@ -16,6 +16,8 @@ import type { IntelCtx } from '../intel/common';
 import { emptyState } from '../intel/common';
 import { TAB_RENDERERS } from '../intel/tabs';
 import { openAddCompetitor } from '../intel/addcompetitor';
+import { createProgressOverlay } from '../intel/progressoverlay';
+import { overlayModel, PeekMemory } from '../intelprogress';
 
 const errText = (e: unknown) => (e instanceof Error ? e.message : String(e));
 
@@ -43,7 +45,18 @@ export function createIntel(): Page {
   const tabs = h('div.it-tabs');
   const jobStrip = h('div.it-job', { hidden: true });
   const body = h('div.it-body');
-  const el = h('div.page.it-page', null, sub, tabs, jobStrip, body);
+  // Research in progress: the overlay over this page's content while scout researches a competitor. Leaving the page
+  // never cancels or pauses the job (it runs in the orchestrator); coming back shows the overlay again unless you peeked.
+  const peeks = new PeekMemory();
+  const overlay = createProgressOverlay({
+    onCancel: async (id) => {
+      const r = await runAction(cancelJob(id), `Cancelled ${id}`);
+      if (r) refetch();
+      return !!r;
+    },
+    onPeek: (id) => { peeks.peek(id); renderOverlay(); if (data) renderJob(data); },
+  });
+  const el = h('div.page.it-page', null, sub, tabs, jobStrip, body, overlay.el);
 
   // ---------------------------------------------------------------- fetching
   let seq = 0;
@@ -68,7 +81,17 @@ export function createIntel(): Page {
     clearTimeout(timer);
     timer = setTimeout(() => void load(), 250);
   }
-  events.onIntel(() => { if (visible) refetch(); else loaded = false; });
+  events.onIntel(() => { if (visible) { refetch(); renderOverlay(); } else loaded = false; });
+
+  /** The overlay for the running (or your queued) competitor research, unless you peeked at that job. Ticks each second for elapsed time. */
+  let tick: ReturnType<typeof setInterval> | undefined;
+  function renderOverlay(): void {
+    const m = visible ? overlayModel(events.intel) : null;
+    const show = m && !peeks.isPeeked(m.jobId) ? m : null;
+    overlay.render(show);
+    if (show && !tick) tick = setInterval(renderOverlay, 1000);
+    if (!show && tick) { clearInterval(tick); tick = undefined; }
+  }
 
   // ---------------------------------------------------------------- actions
   async function runSweep(): Promise<void> {
@@ -157,6 +180,12 @@ export function createIntel(): Page {
         h('span', null, h('i.ld-prediction'), 'Prediction')));
   }
 
+  /** The overlay job you peeked at, if it is still running or queued: the strip offers "Show progress". */
+  function peekedId(): string | undefined {
+    const m = overlayModel(events.intel);
+    return m && peeks.isPeeked(m.jobId) ? m.jobId : undefined;
+  }
+
   function renderJob(store: IntelStore): void {
     const job = runningJob(store);
     const queued = queuedJobs(store);
@@ -169,6 +198,7 @@ export function createIntel(): Page {
         job?.startedAt ? h('span.faint', null, ` · started ${ago(job.startedAt)}`) : null,
         job && queued.length ? h('span.faint', null, ` · ${queued.length} queued`) : null,
         snap?.state.usage.paused ? h('span.it-job-warn', null, ' · paused by the 5-hour limit') : null),
+      peekedId() ? h('button.btn.sm', { onclick: () => { peeks.show(peekedId()!); renderOverlay(); renderJob(store); } }, 'Show progress') : null,
       job ? h('button.btn.sm', { onclick: () => void runAction(cancelJob(job.id), `Cancelled ${job.id}`).then(refetch) }, 'Cancel') : null);
   }
 
@@ -178,6 +208,7 @@ export function createIntel(): Page {
     renderHead(store);
     renderTabs(store);
     renderJob(store);
+    renderOverlay();
     if (!loaded) { setChildren(body, h('div.it-loading', null, 'Loading intel…')); return; }
     if (error) { setChildren(body, emptyState("Couldn't load intel", error, { label: 'Try again', onClick: () => void load() })); return; }
     body.dataset.tab = tab;
@@ -195,7 +226,7 @@ export function createIntel(): Page {
       const add = p.get('add');
       if (add !== null) setTimeout(() => void openAdd(add || undefined), 0);
     },
-    show() { visible = true; if (!loaded) void load(); else refetch(); },
-    hide() { visible = false; },
+    show() { visible = true; renderOverlay(); if (!loaded) void load(); else refetch(); },
+    hide() { visible = false; renderOverlay(); }, // only hides the overlay: the job keeps running server-side
   };
 }

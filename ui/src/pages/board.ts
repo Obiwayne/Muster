@@ -9,6 +9,8 @@ import { evidenceStrip } from '../evidence';
 import { NOTE_BADGE, ageShort, ago, displayName, initial, isEscalated, isNeedsYou, branchOwnerId, ms, noteLabel, roleOf, taskById } from '../util';
 import { isUsageNote, isWeeklyNote, weeklyThreshold } from '../usagealert';
 import { createWeeklyAlertView } from './usagealert';
+import { intelNoteView, isIntelJobNote, runAgainBody, type IntelNoteAction } from '../intelnote';
+import { startJob } from '../intelapi';
 
 type Filter = 'open' | 'stuck' | 'question' | 'waiting' | 'review' | 'approval' | 'all' | 'needsYou';
 
@@ -144,7 +146,45 @@ export function createBoard(): Page {
     return parts.join(' · ');
   }
 
+  /** The actions of an intel "research is ready" / "stopped early" note. Acting on it closes it (it stops counting as for you). */
+  function intelActions(n: Note, actions: IntelNoteAction[], inRow: boolean): HTMLElement {
+    const close = () => (n.open ? run(api.closeNote(n.id)) : Promise.resolve(true));
+    const go = (hash: string) => async (e: MouseEvent) => { e.stopPropagation(); await close(); location.hash = hash; };
+    const btn = (label: string, cls: string, onclick: (e: MouseEvent) => void) =>
+      inRow ? h('span.in-btn', { class: cls, role: 'button', tabindex: '0', onclick, onkeydown: (e: KeyboardEvent) => { if (e.key === 'Enter') onclick(e as unknown as MouseEvent); } }, label)
+        : h('button.btn.sm', { class: cls === 'primary' ? 'primary' : '', onclick }, label);
+    return h('div.in-actions', null, actions.map((a) => {
+      switch (a) {
+        case 'open': return btn('Open Intel →', actions.includes('gaps') ? 'primary' : '', go('#/intel'));
+        case 'gaps': return btn('See gaps', '', go('#/intel/opportunities'));
+        case 'dismiss': return btn('Dismiss', 'quiet', (e) => { e.stopPropagation(); void dismiss(n.id); });
+        case 'again': return btn('Run again', '', async (e) => {
+          e.stopPropagation();
+          const job = await run(startJob(runAgainBody(n.intel!)), 'scout will run it again');
+          if (job) await close();
+        });
+      }
+    }));
+  }
+
+  function intelRow(n: Note & { intel: NonNullable<Note['intel']> }): HTMLElement {
+    const v = intelNoteView(n);
+    return h('div.note-row.in-note', {
+      class: [v.tone, n.id === selected && 'sel', !n.open && 'closed'],
+      role: 'button',
+      tabindex: '0',
+      onclick: () => { selected = n.id; render(); },
+    },
+    h('div.in-icon', null, v.tone === 'ready' ? icon('radar', 16) : null),
+    h('div.body', null,
+      h('div.in-head', null, h('span.in-from', null, displayName(n.from)), h('span.in-title', null, v.title), h('span.in-age', null, ageShort(n.createdAt))),
+      v.body ? h('div.in-body', null, v.body) : null,
+      v.chips.length ? h('div.in-chips', null, v.chips.map((c) => h('span.in-chip', { class: c.tone }, c.text))) : null,
+      intelActions(n, v.actions, true)));
+  }
+
   function row(state: MusterState, n: Note): HTMLElement {
+    if (isIntelJobNote(n)) return intelRow(n as Note & { intel: NonNullable<Note['intel']> });
     const t = n.type;
     const selColor = isUsageNote(n) ? 'var(--color-warm)' : t === 'stuck' ? 'var(--color-stuck)' : t === 'question' ? 'var(--color-captain)' : t === 'waiting' ? 'var(--color-design)' : t === 'review' ? 'var(--color-crew)' : (t as string) === 'approval' ? 'var(--color-warm)' : t === 'escalation' ? 'var(--color-warm)' : 'var(--color-muted)';
     const task = taskById(state, n.taskId);
@@ -217,6 +257,10 @@ export function createBoard(): Page {
     if (!n.replies.length) items.push(h('div.faint', { style: 'font-size:13px' }, 'No replies yet.'));
     if (n.open && (n.type === 'stuck' || n.type === 'question' || n.type === 'waiting') && !isEscalated(state, n)) {
       items.push(h('div.banner', null, icon('users', 16), h('div.flex1', null, 'Being handled by the crew. This only reaches you if the Captain escalates it.')));
+    } else if (isIntelJobNote(n)) {
+      const v = intelNoteView(n as Note & { intel: NonNullable<Note['intel']> });
+      items.push(h('div.banner', null, icon('radar', 16), h('div.flex1', null, v.tone === 'ready' ? 'scout finished. Open Intel to read it, or see the gaps it found.' : 'scout stopped before it finished. What it found is kept on the Intel page.'),
+        intelActions(n, v.actions.filter((a) => a !== 'dismiss'), false)));
     } else if (n.type === 'system') {
       items.push(h('div.banner', null, icon('alert', 16), h('div.flex1', null, 'Posted by Muster. Nothing to answer: dismiss it once you have read it.')));
     } else if (isNeedsYou(n) || (n.open && isEscalated(state, n))) {

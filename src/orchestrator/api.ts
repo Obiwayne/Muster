@@ -711,7 +711,7 @@ ${pushed ? `Pushed ${base} to origin.` : `Push to origin failed: ${(r.stderr || 
     isHuman: (a) => a === board.HUMAN,
     isResearcher: (a) => research.isResearcher(state(), a),
     currentWork: () => ctx.intel.currentWork(),
-    countPage: (id) => ctx.intel.countPage(id),
+    countPage: (id, page) => ctx.intel.countPage(id, page),
     shotsDir: (id) => ctx.intel.shotsDir(id),
     probe: ctx.probe,
     publicRead: ctx.publicRead,

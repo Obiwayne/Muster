@@ -41,6 +41,7 @@ import {
 } from '../types.js';
 import { findAgent, HUMAN, isCaptain, nowIso } from './board.js';
 import { badRequest, conflict, forbidden, notFound } from './errors.js';
+import { jobView, trackClaim } from './intelprogress.js';
 import type { MusterPaths } from './paths.js';
 import { writeAtomic, type StoreOptions } from './store.js';
 
@@ -1153,6 +1154,12 @@ export function recordIntel(store: IntelStore, state: MusterState, actor: string
   const k = oneOf(kind, RECORD_KINDS, 'kind');
   const it = obj(item, 'item');
   const ctx: Ctx = { state, jobId: job?.id };
+  const stored = recordKind(store, k, it, ctx);
+  trackClaim(job, k, it, stored);
+  return stored;
+}
+
+function recordKind(store: IntelStore, k: RecordKind, it: Record<string, any>, ctx: Ctx): unknown {
   switch (k) {
     case 'profile':
       return recordProfile(store, it);
@@ -1242,6 +1249,8 @@ export function intelSummary(store: IntelStore, state: MusterState): IntelSummar
   const live = tracked(store);
   const swept = live.map((c) => c.lastSweptAt).filter((x): x is string => !!x).sort();
   const running = runningJob(store);
+  const queued = queuedJobs(store);
+  const waiting = waitingOn(store, state);
   return {
     rev: store.rev,
     competitors: live.length,
@@ -1252,9 +1261,21 @@ export function intelSummary(store: IntelStore, state: MusterState): IntelSummar
     open: store.capabilities.filter((c) => c.verdict === 'open').length,
     newIdeas: (state.research?.ideas ?? []).filter((i) => i.origin === 'intel' && i.status === 'new').length,
     alerts: store.changes.filter((c) => !c.seen && c.planImpact === 'respond').length,
-    ...(running ? { runningJob: { id: running.id, kind: running.kind, label: jobLabel(store, running), startedAt: running.startedAt ?? running.queuedAt } } : {}),
-    queuedJobs: queuedJobs(store).length,
+    ...(running ? { runningJob: { id: running.id, kind: running.kind, label: jobLabel(store, running), startedAt: running.startedAt ?? running.queuedAt, ...jobView(store, running) } } : {}),
+    queuedJobs: queued.length,
+    ...(queued.length ? { queue: queued.map((j) => ({ id: j.id, kind: j.kind, label: jobLabel(store, j), queuedAt: j.queuedAt, ...jobView(store, j) })) } : {}),
+    ...(queued.length && waiting ? { waitingOn: waiting } : {}),
   };
+}
+
+/** Why queued jobs aren't starting: the running job, a research run, or the 5-hour pause. */
+function waitingOn(store: IntelStore, state: MusterState): string | undefined {
+  const job = runningJob(store);
+  if (job) return `${job.id} ${jobLabel(store, job)}`;
+  const run = runningRun(state);
+  if (run) return `research run ${run.id}`;
+  if (state.usage.paused) return 'paused by the 5-hour limit';
+  return undefined;
 }
 
 /**

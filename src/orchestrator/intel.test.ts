@@ -166,6 +166,10 @@ describe('intel API', () => {
     const ev = events.filter((e) => e.type === 'intel').at(-1) as Extract<MusterEvent, { type: 'intel' }>;
     expect(ev.rev).toBe(intel().rev);
     expect(ev.summary).toMatchObject({ competitors: 1, edges: 1, alerts: 1, runningJob: { id: 'IJ1' } });
+    // per-job progress for the research-in-progress overlay, carried by the summary
+    expect(intel().jobs[0].progress).toMatchObject({ claims: 3, areas: { features: 1, reviews: 1, pricing: 1 }, current: 'pricing', latest: { text: 'Pro to £8/mo', label: 'fact' } });
+    const sum = await ok<IntelSummary>('you', 'GET', '/api/intel/summary');
+    expect(sum.runningJob).toMatchObject({ id: 'IJ1', names: ['Padlet'], areas: ['features', 'roadmap'], pages: 0, progress: { claims: 3, current: 'pricing' } });
   });
 
   it('scout raises an opportunity and checks it; finishing the last job stops scout', async () => {
@@ -178,6 +182,11 @@ describe('intel API', () => {
     const job = await ok<IntelJob>('scout', 'POST', '/api/intel/finish', { summary: 'Read 14 pages.', sourcesRead: 14 });
     expect(job).toMatchObject({ status: 'done', sourcesRead: 14 });
     expect(intel().competitors.find((c) => c.id === 'padlet')!.lastSweptAt).toBeDefined();
+    // "research is ready" note for you: Needs you, from scout, with the counts the board shows
+    const note = state().notes.find((n) => n.intel?.jobId === 'IJ1')!;
+    expect(note).toMatchObject({ type: 'system', topic: 'intel', from: 'scout', to: 'you', open: true });
+    expect(note.text).toMatch(/^Padlet research is ready\nRead 14 sources in \d+s\. 4 claims across 4 areas\.$/);
+    expect(note.intel).toMatchObject({ outcome: 'ready', kind: 'competitor', names: ['Padlet'], sources: 14, claims: 4, areas: 4, edges: 1, gaps: 0, ideas: 1 });
     await until(() => scout()!.status === 'stopped');
     expect((await call('scout', 'POST', '/api/intel/record', { kind: 'finding', item: { area: 'pricing', title: 'late', ...claim } })).status).toBe(409);
   });
@@ -199,6 +208,9 @@ describe('intel API', () => {
     await until(() => orch.agents.isRunning('scout'));
     await ok('scout', 'POST', `/api/intel/checks/${r2.id}`, { rows: [row('features'), row('plans', { finding: 'Nothing announced', signal: 'neutral' })], verdictText: 'Our edge holds.', confidence: 'high', capabilityIds: ['F1'], watchFor: 'Padlet announces approval' });
     await ok('scout', 'POST', '/api/intel/finish', { summary: 'Checked.' });
+    const checkJob = intel().jobs.find((j) => j.kind === 'check' && j.ideaId === r2.id)!;
+    expect(checkJob.status).toBe('done');
+    expect(state().notes.some((n) => n.intel?.jobId === checkJob.id)).toBe(false); // check-only jobs post no ready note
     const approved = await ok<ResearchIdea>('you', 'POST', `/api/research/ideas/${r2.id}/approve`);
     expect(approved).toMatchObject({ status: 'approved', checkId: 'IC2', watchId: expect.stringMatching(/^W\d+$/) });
     expect(intel().watches.find((w) => w.id === approved.watchId)).toMatchObject({ subject: { kind: 'idea', ideaId: 'R2' }, cadence: 'weekly', alertOn: 'alert if Padlet announces approval', active: true });
@@ -225,7 +237,7 @@ describe('intel API', () => {
     const change = intel().changes.at(-1)!;
     expect(change).toMatchObject({ planImpact: 'respond', ideaId: 'R2', goalId: 'G3', seen: false });
     const notes = await ok<Note[]>('you', 'GET', '/api/notes?needsYou=1');
-    expect(notes.find((n) => n.topic === 'intel')).toMatchObject({ type: 'system', open: true, text: expect.stringMatching(/^Intel: R2 Approval queue for paid walls verdict edge → edge at risk\./) });
+    expect(notes.find((n) => n.topic === 'intel' && !n.intel)).toMatchObject({ type: 'system', open: true, text: expect.stringMatching(/^Intel: R2 Approval queue for paid walls verdict edge → edge at risk\./) });
     expect(captainInbox().at(-1)).toBe(`Re-check of R2 Approval queue for paid walls (G3): verdict edge → edge at risk; plans: Padlet building approval (threat). Does the plan need to respond? Suggest it with intel_suggest(${change.id}, text).`);
     await ok('scout', 'POST', '/api/intel/finish', { summary: 'Re-checked.' });
     expect(watch.lastAt).toBeDefined();
@@ -243,11 +255,22 @@ describe('intel API', () => {
     await until(() => intel().jobs.find((j) => j.id === job.id)!.status === 'failed');
     expect(intel().jobs.find((j) => j.id === job.id)!.error).toMatch(/exited \(code 1\) before finish_intel_job/);
     expect(intel().findings.map((f) => f.title)).toContain('Pro £8/mo');
+    const stopped = state().notes.find((n) => n.intel?.jobId === job.id)!;
+    expect(stopped.intel).toMatchObject({ outcome: 'stopped', claims: 1 });
+    expect(stopped.text).toMatch(/^Padlet research stopped early\nKept 1 claim\. scout stopped: .*exited \(code 1\)/);
+    expect(stopped.open).toBe(true);
     const next = await ok<IntelJob>('captain', 'POST', '/api/intel/jobs', { kind: 'sweep' });
     await until(() => orch.agents.isRunning('scout') && intel().jobs.find((j) => j.id === next.id)!.status === 'running');
     expect(await ok<IntelJob>('captain', 'POST', `/api/intel/jobs/${next.id}/cancel`)).toMatchObject({ status: 'cancelled' });
     await until(() => scout()!.status === 'stopped');
     expect((await call('you', 'POST', `/api/intel/jobs/${next.id}/cancel`)).status).toBe(409);
+    expect(state().notes.find((n) => n.intel?.jobId === next.id)!.text).toMatch(/research stopped early\n.*The Captain cancelled it\.$/);
+    // you cancelling your own job: no note
+    const mine = await ok<IntelJob>('you', 'POST', '/api/intel/jobs', { kind: 'competitor', competitorIds: ['padlet'] });
+    await until(() => orch.agents.isRunning('scout') && intel().jobs.find((j) => j.id === mine.id)!.status === 'running');
+    await ok('you', 'POST', `/api/intel/jobs/${mine.id}/cancel`);
+    await until(() => scout()!.status === 'stopped');
+    expect(state().notes.some((n) => n.intel?.jobId === mine.id)).toBe(false);
   });
 
   it('ask and reply on the gaps; per-idea ask goes to the idea thread', async () => {

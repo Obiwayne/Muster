@@ -8,6 +8,7 @@
 //   MOCK_ROADMAP=none|draft …                    → no roadmap / a draft waiting for approval (default: approved, M3 active)
 //   MOCK_RESEARCH=none|running …                 → no research yet / scout still researching (default: a finished run, 4 new ideas)
 //   MOCK_INTEL=none|running …                    → no competitors yet / an intel sweep running (default: Padlet, Wakelet, Linoit swept)
+//   MOCK_INTEL=researching …                     → scout researching Figma (the progress overlay; advances every MOCK_INTEL_STEP_MS, 4000) + intel ready / stopped notes
 //   MOCK_BROWSER=off …                           → GET /api/browser: playwright-core missing
 //   MOCK_SANDBOX=<dir> …                       → research, roadmap, intel store and intel config read from <dir>/.muster (a live run's data; read only)
 //   MOCK_WEEKLY=84 …                             → weekly usage % (default 38; at 75+ an open weekly usage alert note)

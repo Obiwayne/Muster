@@ -13,6 +13,10 @@
 
 /* nav badge: blue, not red */
 .nav-badge.intel { background: var(--color-research-text); color: var(--color-on-accent); }
+.nav-live { display: inline-flex; align-items: center; gap: 5px; padding: 1px 7px; border-radius: 9px; background: color-mix(in oklab, var(--color-glow-blue) 18%, transparent); font-size: 11px; font-weight: 600; color: #a9beff; }
+.nav-live-dot { width: 6px; height: 6px; border-radius: 3px; background: #7fa0ff; box-shadow: 0 0 0 3px color-mix(in oklab, #7fa0ff 30%, transparent); animation: nav-live 1.6s ease-in-out infinite; }
+@keyframes nav-live { 50% { box-shadow: 0 0 0 1px color-mix(in oklab, #7fa0ff 10%, transparent); opacity: .6; } }
+@media (prefers-reduced-motion: reduce) { .nav-live-dot { animation: none; } }
 
 /* ---------- label dots (Fact white, Opinion orange, Prediction violet) ---------- */
 .ld-fact { --ld: var(--color-text); }
@@ -414,3 +418,48 @@
 .it-scn-v { font-family: var(--font-mono); font-size: 18px; color: var(--color-text); }
 .it-scn-s { font-size: 11px; color: var(--color-faint); }
 .it-overview .it-matrix .it-mx-name { min-width: 120px; }
+
+/* ---- research in progress (Vellum "Intel — researching (overlay)", 7031-0) ---- */
+.ip-overlay { position: absolute; inset: 0; z-index: 20; display: flex; justify-content: center; align-items: flex-start; padding: clamp(24px, 12vh, 130px) 20px 20px; overflow-y: auto; }
+.ip-overlay[hidden] { display: none; }
+.ip-scrim { position: absolute; inset: 0; background: rgba(8, 8, 10, 0.72); }
+.ip-card {
+  position: relative; width: 500px; max-width: 100%; display: flex; flex-direction: column; border-radius: var(--radius-lg); background: var(--color-surface);
+  border: 1px solid color-mix(in oklab, var(--color-glow-blue) 40%, var(--color-line));
+  box-shadow: 0 30px 90px rgba(0, 0, 0, 0.6), 0 0 60px color-mix(in oklab, var(--color-glow-blue) 18%, transparent);
+}
+.ip-head { display: flex; flex-direction: column; align-items: center; gap: 12px; padding: 30px 28px 22px; text-align: center; }
+.ip-title { font-size: 18px; font-weight: 600; color: var(--color-text); }
+.ip-line { font-size: 13px; line-height: 19px; color: var(--color-muted); }
+.ip-radar { position: relative; width: 72px; height: 72px; border-radius: 36px; border: 1px solid color-mix(in oklab, #7fa0ff 35%, transparent); display: flex; align-items: center; justify-content: center; flex-shrink: 0; }
+.ip-ring { position: absolute; left: 12px; top: 12px; width: 46px; height: 46px; border-radius: 23px; border: 1px solid color-mix(in oklab, #7fa0ff 50%, transparent); animation: ip-ring 2.4s ease-in-out infinite; }
+.ip-sweep { position: absolute; left: 35px; top: 6px; width: 2px; height: 30px; background: linear-gradient(180deg, transparent, #7fa0ff); transform-origin: bottom center; transform: rotate(40deg); animation: ip-sweep 3.2s linear infinite; }
+.ip-dot { width: 10px; height: 10px; border-radius: 5px; background: #7fa0ff; box-shadow: 0 0 14px #7fa0ff; }
+.ip-card.queued .ip-sweep { animation: none; opacity: .45; }
+.ip-card.queued .ip-dot { background: var(--color-faint); box-shadow: none; }
+@keyframes ip-sweep { from { transform: rotate(40deg); } to { transform: rotate(400deg); } }
+@keyframes ip-ring { 50% { transform: scale(1.08); opacity: .55; } }
+.ip-progress { display: flex; flex-direction: column; gap: 8px; padding: 0 28px 18px; }
+.ip-row { display: flex; align-items: baseline; gap: 8px; }
+.ip-count { font-family: var(--font-mono); font-size: 12px; color: var(--color-text); }
+.ip-meta { font-family: var(--font-mono); font-size: 11px; color: var(--color-faint); white-space: nowrap; }
+.ip-bar { height: 6px; border-radius: 3px; background: var(--color-surface-2); display: flex; overflow: hidden; }
+.ip-fill { border-radius: 3px; background: linear-gradient(90deg, var(--color-glow-blue), #a9beff); transition: width .4s ease; }
+.ip-chips { display: flex; flex-wrap: wrap; gap: 6px; padding: 0 28px 20px; }
+.ip-chip { height: 26px; padding: 0 9px; display: flex; align-items: center; gap: 6px; border-radius: 6px; font-size: 12px; border: 1px solid transparent; }
+.ip-chip.done { background: color-mix(in oklab, var(--color-success) 12%, transparent); color: var(--color-text); }
+.ip-chip.done svg { width: 10px; height: 10px; color: #34c77b; stroke: #34c77b; }
+.ip-chip.current { border-color: color-mix(in oklab, #7fa0ff 55%, transparent); background: color-mix(in oklab, var(--color-glow-blue) 14%, transparent); color: var(--color-text); font-weight: 550; }
+.ip-chip.pending { border-color: var(--color-line); color: var(--color-muted); }
+.ip-chip-dot { width: 7px; height: 7px; border-radius: 4px; flex-shrink: 0; }
+.ip-chip.current .ip-chip-dot { background: #7fa0ff; box-shadow: 0 0 8px #7fa0ff; animation: it-pulse 1.4s ease-in-out infinite; }
+.ip-chip.pending .ip-chip-dot { border: 1px solid var(--color-faint); }
+.ip-foot { display: flex; align-items: center; gap: 8px; padding: 14px 28px; border-top: 1px solid var(--color-line); }
+.ip-latest { flex: 1; min-width: 0; font-size: 12px; line-height: 16px; color: var(--color-faint); display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical; overflow: hidden; }
+.ip-latest.warn { color: var(--color-text); }
+.ip-btn { height: 32px; padding: 0 12px; font-size: 12px; color: var(--color-muted); flex-shrink: 0; }
+.ip-btn.strong { color: var(--color-text); }
+@media (prefers-reduced-motion: reduce) {
+  .ip-sweep, .ip-ring, .ip-chip.current .ip-chip-dot { animation: none; }
+  .ip-fill { transition: none; }
+}

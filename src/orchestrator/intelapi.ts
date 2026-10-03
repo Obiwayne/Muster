@@ -5,6 +5,7 @@ import * as board from '../core/board.js';
 import { badRequest, forbidden } from '../core/errors.js';
 import * as intel from '../core/intel.js';
 import * as intelcheck from '../core/intelcheck.js';
+import * as intelprogress from '../core/intelprogress.js';
 import type { MusterPaths } from '../core/paths.js';
 import * as research from '../core/research.js';
 import type { Store } from '../core/store.js';
@@ -16,6 +17,8 @@ export interface IntelRuntimeOptions {
   paths: MusterPaths;
   config(): MusterConfig;
   log?: (msg: string) => void;
+  /** A desktop notification (the "research is ready" / "stopped early" note). */
+  notify?: (title: string, text: string) => void;
 }
 
 /** What the research browser routes (src/orchestrator/browserapi.ts) need to know about scout's current work. */
@@ -74,8 +77,17 @@ export class IntelRuntime implements ScoutIntel {
     const job = intel.failJob(this.store, reason);
     if (!job) return;
     board.feedEvent(this.state, board.SYSTEM, `intel job ${job.id} failed: ${reason} (findings kept)`);
+    this.postJobNote(job, 'stopped');
     this.o.store.commit();
     this.commit();
+  }
+
+  /** The Bulletin board note for you when a competitor / sweep / watch job ends (none for checks), plus a desktop notification. */
+  postJobNote(job: IntelJob, outcome: 'ready' | 'stopped'): void {
+    const note = intelprogress.postJobNote(this.store, this.state, job, outcome);
+    if (!note) return;
+    const [title, ...rest] = note.text.split('\n');
+    this.o.notify?.(`Muster: ${title}`, rest.join(' '));
   }
 
   // ---- dispatcher
@@ -132,10 +144,10 @@ export class IntelRuntime implements ScoutIntel {
     return null;
   }
 
-  countPage(id: string): void {
+  countPage(id: string, page?: { url?: string; blocked?: string; loggedIn?: boolean; mode?: string }): void {
     const job = this.store.jobs.find((j) => j.id === id);
     if (job) {
-      job.pagesBrowsed++;
+      intelprogress.trackPage(job, page);
       this.file.commit();
     } else this.runPages.set(id, (this.runPages.get(id) ?? 0) + 1);
   }
@@ -205,7 +217,13 @@ export function registerIntelRoutes(route: (method: string, path: string, handle
   );
   route('POST', '/api/intel/jobs', ({ body }) => write(() => intel.requestJob(st(), state(), str(body.actor, 'actor'), body, ctx.config())));
   route('POST', '/api/intel/jobs/:id/cancel', async ({ params, body }) => {
-    const { job, wasRunning } = write(() => intel.cancelJob(st(), state(), str(body.actor, 'actor'), params.id));
+    const actor = str(body.actor, 'actor');
+    const { job, wasRunning } = write(() => {
+      const r = intel.cancelJob(st(), state(), actor, params.id);
+      // You cancelled it yourself: no note. The Captain stopping a job that had started is worth telling you.
+      if (r.wasRunning && actor !== board.HUMAN) runtime.postJobNote(r.job, 'stopped');
+      return r;
+    }, true);
     if (wasRunning) await agents.stopScout(`intel job ${job.id} cancelled`);
     return job;
   });
@@ -221,6 +239,7 @@ export function registerIntelRoutes(route: (method: string, path: string, handle
   route('POST', '/api/intel/opportunities', ({ body }) =>
     write(() => {
       const idea = research.addOpportunity(state(), st(), str(body.actor, 'actor'), body as research.IdeaInput & { opportunity: unknown });
+      intelprogress.trackClaim(intel.runningJob(st()), 'opportunity', body, idea);
       intelcheck.recomputeVerdicts(st(), state());
       return idea;
     }, true),
@@ -238,6 +257,7 @@ export function registerIntelRoutes(route: (method: string, path: string, handle
     const job = write(() => {
       const j = intel.finishJob(st(), state(), str(body.actor, 'actor'), { summary: body.summary, sourcesRead: body.sourcesRead });
       board.feedEvent(state(), str(body.actor, 'actor'), `finished intel job ${j.id}: ${intel.jobLabel(st(), j)}`);
+      runtime.postJobNote(j, 'ready');
       return j;
     }, true);
     if (job.kind === 'competitor' || job.kind === 'sweep') ctx.toast('info', `scout finished ${intel.jobLabel(st(), job)}`);

@@ -26,7 +26,7 @@ export interface BrowserRouteDeps {
   isResearcher(actor: string): boolean;
   /** The running intel job or research run scout is browsing for, or null (→ 409). */
   currentWork(): { id: string; mode: BrowseMode; pagesLeft: number } | null;
-  countPage(id: string): void; // job.pagesBrowsed++ / run counter
+  countPage(id: string, page?: { url?: string; blocked?: string; loggedIn?: boolean; mode?: string }): void; // job.pagesBrowsed++ (and its progress: what it reads, blocks, missing sign-ins) / run counter
   shotsDir(id: string): string; // .muster/intel/shots/<id>
   /** Test seam for POST /api/intel/probe. */
   probe?: (url: string, opts: ProbeOptions) => Promise<IntelProbe>;
@@ -98,7 +98,7 @@ export function registerBrowserRoutes(route: RouteFn, deps: BrowserRouteDeps): v
         : action === 'scroll'
           ? await browser.scroll(body.url, { mode, by: body.by === undefined ? undefined : Number(body.by) })
           : await browser.read(body.url, { mode, links: body.links === true });
-    deps.countPage(work.id);
+    deps.countPage(work.id, { url: out.url || body.url, blocked: out.blocked, loggedIn: out.loggedIn, mode });
     const done: BrowseResult = { ...out, via: work.mode, pagesLeft: Math.max(0, work.pagesLeft - 1) };
     if (!done.blocked) return done;
     // The site answered with a bot check: no getting past it. Read the public page another way and say so.
