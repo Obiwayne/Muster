@@ -185,7 +185,7 @@ export function checkGate(store: IntelStore, idea: ResearchIdea, config: Pick<Mu
   if (isFresh(check, config, now)) return check!;
   if (!trackedIds(store).length && check?.status !== 'queued' && check?.status !== 'running') return skipCheck(store, idea);
   const ref = `${idea.id} ${idea.title}`;
-  if (!check) throw conflict(`${ref} needs an intel check before you approve it. Run intel check (POST /api/intel/checks { ideaId: "${idea.id}" }), then approve when it is done.`);
+  if (!check) throw conflict(`Run the intel check first: ${ref} has none yet. Use Run intel check (POST /api/intel/checks { ideaId: "${idea.id}" }), then approve when it is done.`);
   if (check.status === 'queued' || check.status === 'running') throw conflict(`The intel check ${check.id} of ${ref} is still ${check.status}; approve once it is done.`);
   if (check.status === 'failed') throw conflict(`The intel check ${check.id} of ${ref} failed${check.skippedReason ? ` (${check.skippedReason})` : ''}. Run intel check again, then approve.`);
   const days = Math.floor((now - Date.parse(check.doneAt ?? check.createdAt)) / DAY_MS);

@@ -113,7 +113,7 @@ describe('the approval gate', () => {
 
   it('409 without a check, while it runs, when it is stale; passes when done and fresh', () => {
     addCompetitor(store, 'you', { name: 'Padlet', url: 'https://padlet.com' }, config);
-    expect(status(() => approveIdea(s, 'you', idea.id, intel()))).toEqual([409, 'R1 Moderation queue needs an intel check before you approve it. Run intel check (POST /api/intel/checks { ideaId: "R1" }), then approve when it is done.']);
+    expect(status(() => approveIdea(s, 'you', idea.id, intel()))).toEqual([409, 'Run the intel check first: R1 Moderation queue has none yet. Use Run intel check (POST /api/intel/checks { ideaId: "R1" }), then approve when it is done.']);
     const check = requestCheck(store, s, 'you', idea.id, config);
     expect(check).toMatchObject({ status: 'queued', ideaId: 'R1' });
     expect(requestCheck(store, s, 'captain', idea.id, config)).toBe(check);

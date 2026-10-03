@@ -186,7 +186,7 @@ describe('intel API', () => {
     await ok('scout', 'POST', '/api/intel/finish', { summary: 'Swept.' });
     const refused = await call('you', 'POST', `/api/research/ideas/${r2.id}/approve`);
     expect(refused.status).toBe(409);
-    expect(refused.data.error).toMatch(/needs an intel check before you approve it/);
+    expect(refused.data.error).toMatch(/^Run the intel check first: /);
     expect((await call('scout', 'POST', '/api/intel/checks', { ideaId: r2.id })).status).toBe(403);
     const queued = await ok<IntelCheck>('captain', 'POST', '/api/intel/checks', { ideaId: r2.id });
     expect(queued).toMatchObject({ id: 'IC2', status: 'queued', ideaId: 'R2' });

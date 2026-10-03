@@ -434,7 +434,7 @@ export function createIntelMock(deps) {
       store.checks.push(c); idea.checkId = c.id; saved();
       return null;
     }
-    if (!c) return `${idea.id} has no intel check yet. Run one (Run intel check), then approve.`;
+    if (!c) return `Run the intel check first: ${idea.id} has none yet. Use Run intel check, then approve when it is done.`;
     if (c.status === 'queued' || c.status === 'running') return `The intel check ${c.id} for ${idea.id} is still ${c.status}. Approve when it is done.`;
     if (c.status === 'failed') return `The intel check ${c.id} for ${idea.id} failed. Run it again, then approve.`;
     const max = config.intel?.checkMaxAgeDays ?? 14;

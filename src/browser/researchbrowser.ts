@@ -189,6 +189,7 @@ export class ResearchBrowser {
   private requested = new WeakMap<PwPage, string>(); // the URL asked for (before redirects), so a scroll after a read reuses the page
   private userAgent?: string; // the installed browser's own UA minus "Headless" ('' = no override needed)
   private tools?: { at: number; list: ResearchBrowserStatus['tools'] };
+  private firstLookAt = -Infinity; // last time status() launched the profile just to read which sites are signed in
   private saved: SavedState;
 
   constructor(private readonly opts: ResearchBrowserOptions) {
@@ -213,7 +214,10 @@ export class ResearchBrowser {
     const cfg = this.opts.config();
     const problem = await this.problem(cfg);
     // First look, or the profile is open anyway: read which sites are signed in (cookie names only).
-    if (!problem && !this.loginCtx && this.inFlight === 0 && (this.profileCtx || !Object.keys(this.saved.sites).length)) {
+    // A failed first look isn't retried for a minute, so polling GET /api/browser never launches Chrome per call.
+    const firstLook = !Object.keys(this.saved.sites).length && this.now() - this.firstLookAt > 60_000;
+    if (!problem && !this.loginCtx && this.inFlight === 0 && (this.profileCtx || firstLook)) {
+      if (!this.profileCtx) this.firstLookAt = this.now();
       await this.exclusive(async () => this.refreshSites(await this.profileContext())).catch(() => undefined);
     }
     const sites: ResearchSiteStatus[] = SITES.map((s) => {
