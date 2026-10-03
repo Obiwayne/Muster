@@ -292,7 +292,7 @@ export function createIntelMock(deps) {
     const live = store.competitors.filter((c) => !c.isUs && !c.removed);
     const job = {
       id, kind: body.kind, status: 'queued', competitorIds: body.competitorIds ?? live.map((c) => c.id),
-      areas: body.areas ?? [...new Set(live.flatMap((c) => c.areas))], browse: body.browse ?? config.researchBrowser.mode, depth: body.depth ?? 'thorough',
+      areas: body.areas ?? [...new Set(live.flatMap((c) => c.areas))], browse: body.browse ?? config.researchBrowser.mode, depth: body.depth ?? 'quick', // the orchestrator's default
       by, queuedAt: new Date().toISOString(), pagesBrowsed: 0, ...(body.ideaId ? { ideaId: body.ideaId } : {}),
     };
     store.jobs.push(job);
@@ -424,9 +424,16 @@ export function createIntelMock(deps) {
     }
     if (m === 'POST' && p === '/api/intel/ask') {
       const b = await body();
+      // Like the orchestrator: about one idea → that idea (its thread); else the updated Captain thread.
+      if (b.ideaId) {
+        const idea = state.research?.ideas?.find((i) => i.id === b.ideaId);
+        need(idea, 404, `No idea ${b.ideaId}`);
+        (idea.thread ??= []).push({ at: new Date().toISOString(), from: 'you', text: b.text });
+        return { body: idea };
+      }
       store.captainThread.push({ at: new Date().toISOString(), from: 'you', text: b.text });
       saved();
-      return { body: store.captainThread };
+      return { body: { captainThread: store.captainThread } };
     }
     if (m === 'POST' && p === '/api/intel/changes/seen') {
       const b = await body();

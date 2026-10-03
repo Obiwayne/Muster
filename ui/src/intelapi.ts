@@ -60,11 +60,14 @@ export interface StartJobBody {
 }
 
 /** The answer to POST /api/intel/ask: with an ideaId it is the idea (like /api/research/ideas/:id/ask), else the updated thread. */
-export type AskIntelResult = ResearchIdea | { ok: boolean } | IntelStore['captainThread'];
+export type AskIntelResult = ResearchIdea | { captainThread: IntelStore['captainThread'] };
 
-/** GET /api/intel/report is Markdown; `reportUrl()` is a link that carries the token (for the Export report button). */
+/**
+ * GET /api/intel/report (Markdown). The API takes the token only in the x-muster-token header, so a bare link to this
+ * path gets 401: download with `getReport()` (fetch + Blob), as Export report does.
+ */
 export function reportUrl(): string {
-  return `/api/intel/report?token=${enc(getToken())}`;
+  return '/api/intel/report';
 }
 
 export const getIntel = () => req<IntelStore>('GET', '/api/intel');
