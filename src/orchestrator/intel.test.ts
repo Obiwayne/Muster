@@ -284,4 +284,18 @@ describe('intel API', () => {
     await ok('scout', 'POST', `/api/research/runs/${(run as { id: string }).id}/finish`, { summary: 'done' });
     expect(await ok<ResearchIdea>('you', 'POST', `/api/research/ideas/${idea.id}/approve`)).toMatchObject({ status: 'approved' });
   });
+
+  it('a job queued behind a research run starts when the run is cancelled, in a fresh scout', async () => {
+    await ok('you', 'POST', '/api/intel/competitors', { name: 'Wakelet', url: 'https://wakelet.com' });
+    const run = await ok<{ id: string }>('you', 'POST', '/api/research/runs', { sources: { competitors: ['Wakelet'], reviews: true, forums: [], ownApp: false }, depth: 'quick' });
+    const job = await ok<IntelJob>('captain', 'POST', '/api/intel/jobs', { kind: 'sweep' });
+    await new Promise((r) => setTimeout(r, 30));
+    expect(intel().jobs.find((j) => j.id === job.id)!.status).toBe('queued');
+    await ok('you', 'POST', `/api/research/runs/${run.id}/cancel`);
+    await until(() => intel().jobs.find((j) => j.id === job.id)!.status === 'running' && orch.agents.isRunning('scout'));
+    await new Promise((r) => setTimeout(r, 50));
+    expect(intel().jobs.find((j) => j.id === job.id)!.status).toBe('running');
+    await ok('scout', 'POST', '/api/intel/finish', { summary: 'Swept.' });
+    await until(() => scout()!.status === 'stopped');
+  });
 });

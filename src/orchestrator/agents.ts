@@ -460,6 +460,7 @@ export class AgentManager {
   async stop(id: string, reason?: string): Promise<Agent> {
     const agent = requireAgent(this.state, id);
     const rt = this.runtimes.get(id);
+    const heldJob = agent.role === 'research' ? this.o.intel?.runningJob()?.id : undefined; // a job started meanwhile isn't this stop's
     if (rt) {
       rt.stopping = true;
       rt.pty.kill();
@@ -475,7 +476,7 @@ export class AgentManager {
       this.o.store.commit();
     }
     // Stopped on purpose (not a shutdown, which keeps work for the resume): an intel job it held can't finish.
-    if (agent.role === 'research' && reason !== undefined && this.o.intel?.runningJob()) this.o.intel.onScoutExit(`${id} stopped: ${reason}`);
+    if (heldJob && reason !== undefined && this.o.intel?.runningJob()?.id === heldJob) this.o.intel.onScoutExit(`${id} stopped: ${reason}`);
     return agent;
   }
 
@@ -714,7 +715,10 @@ export class AgentManager {
     if (!existing) return this.create({ name: SCOUT_ID, role: 'research', actor: SYSTEM });
     if (existing.role !== 'research') throw conflict(`An agent called "${SCOUT_ID}" already exists and isn't the research agent; rename or remove it first`);
     existing.model = modelFor('research', this.o.config());
-    if (this.runtimes.has(existing.id)) {
+    const rt = this.runtimes.get(existing.id);
+    // Being stopped (a run just ended): let the stop finish, then start it afresh below (start() handles a survivor).
+    if (rt?.stopping) await this.until(() => this.runtimes.get(existing.id) !== rt, this.timings.stopConfirmMs * 3);
+    else if (rt) {
       const prompt = this.firstPromptFor(existing);
       if (prompt) void this.type(existing.id, prompt).catch(() => {});
       return existing;
