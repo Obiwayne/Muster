@@ -126,7 +126,9 @@ export function createIntel(): Page {
     const companies = trackedCompanies(store);
     const tracked = companies.filter((c) => !c.isUs && c.id !== 'us');
     const swept = tracked.map((c) => c.lastSweptAt).filter(Boolean).sort().pop() ?? events.intel?.lastSweptAt;
-    titleSub.textContent = `${tracked.length} tracked${swept ? ` · swept ${ago(swept)} ago` : ' · not swept yet'}`;
+    sweepBtn.disabled = !tracked.length;
+    sweepBtn.title = tracked.length ? 'Research every tracked competitor again, looking for changes' : 'Add a competitor first';
+    titleSub.textContent = `${tracked.length} tracked${swept ? ` · swept ${ago(swept)}` : ' · not swept yet'}`;
     setChildren(chips,
       companies.map((c) => {
         const us = c.isUs || c.id === 'us';
@@ -164,7 +166,7 @@ export function createIntel(): Page {
       h('span.it-job-pulse', { class: !job && 'idle' }),
       h('div.flex1.ellipsis', null,
         job ? jobLine(job, store) : `${queued.length} intel job${queued.length === 1 ? '' : 's'} queued`,
-        job?.startedAt ? h('span.faint', null, ` · started ${ago(job.startedAt)} ago`) : null,
+        job?.startedAt ? h('span.faint', null, ` · started ${ago(job.startedAt)}`) : null,
         job && queued.length ? h('span.faint', null, ` · ${queued.length} queued`) : null,
         snap?.state.usage.paused ? h('span.it-job-warn', null, ' · paused by the 5-hour limit') : null),
       job ? h('button.btn.sm', { onclick: () => void runAction(cancelJob(job.id), `Cancelled ${job.id}`).then(refetch) }, 'Cancel') : null);

@@ -107,7 +107,7 @@ export function createBrowseChoice(opts: {
       h('div.bc-body', null,
         h('div.bc-title', null, o.title, o.recommended ? h('span.bc-rec', null, 'Recommended') : null),
         h('div.bc-sub', null, o.sub),
-        o.warning && !o.disabled ? h('div.bc-warn', null, icon('alert', 12), h('span', null, o.warning)) : null,
+        o.warning ? h('div.bc-warn', null, icon('alert', 12), h('span', null, o.warning)) : null,
         o.disabled ? h('div.bc-off', null, o.disabled) : null));
     }));
   }
