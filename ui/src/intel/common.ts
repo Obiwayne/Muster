@@ -36,9 +36,10 @@ export function predictionBlock(p: NonNullable<IntelClaim['prediction']>): HTMLE
  * of the card it sits in, with `title` as their heading. Put `line` in the card's foot and `panel` (set when it is open
  * on this render) last in the card.
  */
-export function claimLine(claim: IntelClaim, title: string, key: string, opts: { group?: string; omit?: DetailsOpts['omit'] } = {}): { line: HTMLElement; panel: HTMLElement | null } {
+// No heading: the claim line sits inside the card whose title it would repeat.
+export function claimLine(claim: IntelClaim, _title: string, key: string, opts: { group?: string; omit?: DetailsOpts['omit'] } = {}): { line: HTMLElement; panel: HTMLElement | null } {
   const line = h('button.it-claim', null, labelDot(claim.label), h('span', null, claimMeta(claim)));
-  const panel = details(line, { group: opts.group ?? 'claim', key, heading: title, sources: claim.sources, claim, omit: opts.omit, cls: 'xp-card', place: appendTo('.it-card, .it-theme, .it-panel') });
+  const panel = details(line, { group: opts.group ?? 'claim', key, sources: claim.sources, claim, omit: opts.omit, cls: 'xp-card', place: appendTo('.it-card, .it-theme, .it-panel') });
   return { line, panel };
 }
 
