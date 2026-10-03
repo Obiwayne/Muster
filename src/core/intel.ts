@@ -890,6 +890,9 @@ function recordTheme(store: IntelStore, item: Record<string, any>, ctx: Ctx): In
   const byCompetitor: Record<string, number> = {};
   for (const [id, n] of Object.entries(item.byCompetitor === undefined ? {} : obj(item.byCompetitor, 'byCompetitor'))) byCompetitor[requireCompetitor(store, id, `byCompetitor.${id}`).id] = int(n, `byCompetitor.${id}`);
   const mentions = int(item.mentions, 'mentions');
+  if ((item.sampleSize === undefined || item.sampleSize === null) && !store.sample?.total) {
+    throw badRequest('Missing sampleSize: send it, or record the sample (kind sample) first; themes default to its total');
+  }
   const sampleSize = int(item.sampleSize ?? store.sample?.total, 'sampleSize', 1);
   if (mentions > sampleSize) throw badRequest('mentions can not be more than sampleSize');
   const theme: IntelTheme = {
@@ -1258,6 +1261,7 @@ const RULES = [
   'Rules:',
   '- Record as you go: one claim per record_intel call. Every claim has label, confidence, sources (title, url, publishedAt when the page has a date), asOf.',
   '- Labels: fact = you saw it on a primary source; opinion = what customers say; prediction = your inference, with prediction { signals, timeframe, wouldChange }.',
+  "- Capabilities: fill the us cell too, from our own app (README, code, roadmap; source kind own_app, no url). Leave it out only when you can't tell: a missing us cell counts as not having it, so it shows as a gap.",
   '- Themes: count mentions within the stated sample (record the sample first); never generalise from a few loud complaints. Fewer than 5 independent sources is thin evidence.',
   `- Quotes at most ${MAX_QUOTE} characters, at most ${MAX_QUOTES} per theme, public usernames at most.`,
   '- Audience: separate claimed (their marketing) from evidenced (reviews, case studies). AI: verified (seen working) vs claimed.',
@@ -1309,7 +1313,7 @@ export function intelBrief(store: IntelStore, state: MusterState, config: Pick<M
   }
   const r = state.roadmap;
   out.push('', 'Product:');
-  if (!r) out.push(`${store.competitors.find((c) => c.isUs)?.name ?? 'our app'}: no roadmap yet.`);
+  if (!r) out.push(`${store.competitors.find((c) => c.isUs)?.name ?? 'our app'}: no roadmap yet; read the README and code for what it does.`);
   else {
     out.push(`${r.title}${r.summary ? ` — ${r.summary}` : ''}`);
     for (const st of r.stages) out.push(`${st.id} ${st.title} (${st.status}): ${st.goalIds.map((g) => `${g} ${r.goals.find((x) => x.id === g)?.title ?? ''}`).join('; ')}`);

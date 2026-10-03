@@ -148,6 +148,9 @@ describe('record_intel', () => {
     expect(status(() => recordIntel(store, s, 'scout', 'theme', { ...theme, label: 'fact' }))[1]).toBe('theme.label must be "opinion" here');
     expect(status(() => recordIntel(store, s, 'scout', 'theme', { ...theme, quotes: [q('x'.repeat(301))] }))[1]).toBe('quotes[0].text is longer than 300 characters');
     expect(status(() => recordIntel(store, s, 'scout', 'theme', { ...theme, quotes: Array(7).fill(q('a')) }))[1]).toBe('quotes: at most 6 per theme');
+    // Live run: scout sent themes before the sample; the error has to say what to do.
+    const { sampleSize: _omit, ...noSize } = theme;
+    expect(status(() => recordIntel(store, s, 'scout', 'theme', { ...noSize, title: 'Laggy' }))).toEqual([400, 'Missing sampleSize: send it, or record the sample (kind sample) first; themes default to its total']);
   });
 
   it('plans: commitment is a fact, prediction needs its prediction block; upsert by title', () => {
@@ -283,6 +286,9 @@ describe('summary, brief, report, estimates', () => {
     expect(brief).toContain('- capabilities: F1 Approve posts');
     expect(brief).toContain('150 of 150 browse calls left');
     expect(brief).toContain('finish_intel_job');
+    // Live run: scout left every us cell empty, so all its rows read as gaps.
+    expect(brief).toContain('- Capabilities: fill the us cell too, from our own app');
+    expect(brief).toMatch(/no roadmap yet; read the README and code for what it does\./);
     const report = intelReport(store, s);
     expect(report).toContain('### F1 Approve posts — edge vs Padlet');
     expect(report).toContain('[fact · high · as of 2026-10-01] Sources: Padlet pricing (https://padlet.com/pricing)');
