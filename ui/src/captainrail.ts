@@ -1,8 +1,8 @@
 // "Talk to Captain" rail on Intel → Opportunities (Vellum 5547-0). Per idea it uses the idea's thread (ask/advise,
 // POST /api/intel/ask with ideaId); "All gaps" uses IntelStore.captainThread (POST /api/intel/ask without one).
 // Below the thread: "On approve, Captain will" (the Captain's plan lines + the re-check line from
-// config.intel.recheck and check.watchFor), quick prompts, the input, and Not now / Approve & add to roadmap
-// (disabled without a fresh intel check; a 409 from the server is shown with "Run intel check").
+// config.intel.recheck and check.watchFor), quick prompts, the input, and Not now (leaves the idea open: the page just
+// moves on) / Approve & add to roadmap (disabled without a fresh intel check; a 409 from the server is shown with "Run intel check").
 import './intelcheck.css';
 import type { IdeaMessage, IntelStore, MusterConfig, ResearchIdea } from '../../src/types';
 import { h, icon, setChildren } from './dom';
@@ -176,7 +176,7 @@ export function createCaptainRail(cb: CaptainRailCallbacks): { el: HTMLElement; 
           ? h('button.btn.sm', { disabled: !!s.busy, onclick: () => cb.onRunCheck(idea) }, 'Run intel check')
           : null);
       setChildren(actions,
-        h('button.cr-big', { disabled: !!s.busy, onclick: () => cb.onNotNow(idea), title: 'Reject it for now; Reopen brings it back' }, 'Not now'),
+        h('button.cr-big', { disabled: !!s.busy, onclick: () => cb.onNotNow(idea), title: 'Leave it open and move on; nothing is rejected' }, 'Not now'),
         h('button.cr-big.ok', {
           disabled: !!s.busy || !st.canApprove,
           title: st.canApprove ? 'Approve; the Captain adds it to the roadmap' : st.reason,

@@ -7,9 +7,7 @@ import '../intelcheck.css';
 import type { IntelStore, MusterConfig, ResearchIdea, ResearchState, Roadmap } from '../../../src/types';
 import { h, icon, setChildren } from '../dom';
 import type { Snapshot } from '../events';
-import { api } from '../api';
 import { askIntel } from '../intelapi';
-import { run as runAction } from '../actions';
 import { LABEL_TEXT, safeHref } from '../intelmodel';
 import { labelDot } from '../intel/common';
 import { approveIdea, checkStatus, fillIntelCheckPanel, runIntelCheck } from '../intelcheck';
@@ -48,6 +46,8 @@ let lastParam: string | null = null;
 let busy = false;
 const blocked = new Map<string, string>();
 const checking = new Set<string>();
+/** Ideas you answered "Not now" this session: left open on the server, just not auto-selected (and shown muted). */
+const later = new Set<string>();
 
 const research = () => ctx?.snapshot?.state.research ?? ctx?.research ?? { runs: [], ideas: [] };
 const config = (): MusterConfig | null => ctx?.snapshot?.config ?? null;
@@ -55,6 +55,7 @@ const roadmap = (): Roadmap | null => ctx?.snapshot?.state.roadmap ?? null;
 
 function select(id: string): void {
   selected = id;
+  later.delete(id);
   mode = 'idea';
   lastParam = id;
   history.replaceState(null, '', `#/intel/opportunities?idea=${encodeURIComponent(id)}`);
@@ -75,7 +76,7 @@ function ensureView(host: HTMLElement): View {
       draw();
     },
     onApprove: (i) => void approve(i),
-    onNotNow: (i) => void notNow(i),
+    onNotNow: (i) => notNow(i),
     onRunCheck: (i) => void runCheck(i),
   });
   const root = h('div.op', null, list, h('div.op-mid', null, detail, check), rail.el);
@@ -96,14 +97,13 @@ async function approve(i: ResearchIdea): Promise<void> {
   draw();
 }
 
-async function notNow(i: ResearchIdea): Promise<void> {
-  if (busy) return;
-  busy = true;
-  draw();
-  const r = await runAction(api.rejectIdea(i.id, 'Not now (Intel → Opportunities)'), `${i.id} set aside. Reopen it on Roadmap → Research`);
-  busy = false;
-  if (r) { selected = null; blocked.delete(i.id); }
-  ctx?.refresh();
+/** "Not now" leaves the idea open and untouched (no rejection): it closes the detail and moves on to the next one. */
+function notNow(i: ResearchIdea): void {
+  later.add(i.id);
+  blocked.delete(i.id);
+  if (selected === i.id) selected = null;
+  lastParam = null;
+  history.replaceState(null, '', '#/intel/opportunities');
   draw();
 }
 
@@ -135,7 +135,7 @@ function draw(): void {
   const pickable = selectable(groups);
   if (!selected || !pickable.some((i) => i.id === selected)) {
     // a linked idea that isn't listed (e.g. rejected) can still be opened from the matrix chip
-    if (!(selected && ideas.some((i) => i.id === selected))) selected = pickable[0]?.id ?? null;
+    if (!(selected && ideas.some((i) => i.id === selected))) selected = pickable.find((i) => !later.has(i.id))?.id ?? null;
   }
   const idea = selected ? ideas.find((i) => i.id === selected) : undefined;
   const item = pickable.find((i) => i.id === selected);
@@ -183,7 +183,7 @@ function drawList(g: OppGroups): void {
     }, p.label)));
 
   const gapRow = (i: OppItem) => h('button.op-row.gap', {
-    class: [i.id === selected && 'sel', i.status?.cls === 'parked' && 'parked', (i.status?.cls === 'none' || i.status?.cls === 'test') && 'edge-red'],
+    class: [i.id === selected && 'sel', (i.status?.cls === 'parked' || later.has(i.id)) && 'parked', (i.status?.cls === 'none' || i.status?.cls === 'test') && 'edge-red'],
     onclick: () => select(i.id),
   },
   h('span.op-id', null, i.id),
