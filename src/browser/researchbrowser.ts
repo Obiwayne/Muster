@@ -412,13 +412,13 @@ export class ResearchBrowser {
         .catch(() => ({ html: '', text: '' }));
       const blocked = detectBlock({ status: out.status, title, html: seen.html, text: out.text ?? seen.text });
       this.noteBlocked(final, blocked);
+      // A blocked page is not a signed-in page, whatever cookies the profile holds: the site never served it.
       return {
         url: final,
         title,
         ...out,
-        ...(loggedIn !== undefined ? { loggedIn } : {}),
+        ...(blocked ? { loggedIn: false, blocked } : loggedIn !== undefined ? { loggedIn } : {}),
         via: mode,
-        ...(blocked ? { blocked } : {}),
       } as BrowseOut;
     });
   }

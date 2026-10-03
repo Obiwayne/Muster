@@ -369,6 +369,16 @@ describe('read-only browsing', () => {
     expect(other.loggedIn).toBeUndefined();
   });
 
+  it('reports loggedIn false on a blocked page even with a login cookie', async () => {
+    world.persisted.push(sessionCookie('reddit_session', '.reddit.com'));
+    world.sites['https://www.reddit.com/r/Teachers/'] = { status: 403, title: 'Just a moment...', text: 'reddit.com\nChecking if the site connection is secure' };
+    const r = await make().read('https://www.reddit.com/r/Teachers/', { mode: 'profile' });
+    expect(r).toMatchObject({ blocked: 'bot check (Cloudflare)', loggedIn: false });
+    const shot = await made[0].screenshot('https://www.reddit.com/r/Teachers/', { mode: 'profile', path: join(dir, 'shots', 'b.png') });
+    expect(shot).toMatchObject({ loggedIn: false });
+    expect(shot.blocked).toBeTruthy();
+  });
+
   it('marks a bot check as blocked (never solving it), lists the site in the status until a good load', async () => {
     world.sites['https://padlet.com/'] = { status: 403, title: 'Just a moment...', text: 'padlet.com\nChecking if the site connection is secure' };
     world.sites['https://www.reddit.com/r/x/'] = { status: 429, title: 'Too Many Requests', text: 'whoa there, pardner!' };
