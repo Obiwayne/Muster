@@ -1,14 +1,14 @@
 // "Talk to Captain" rail on Intel → Opportunities (Vellum 5547-0). Per idea it uses the idea's thread (ask/advise,
 // POST /api/intel/ask with ideaId); "All gaps" uses IntelStore.captainThread (POST /api/intel/ask without one).
-// Below the thread: "On approve, Captain will" (the Captain's plan lines + the re-check line from
-// config.intel.recheck and check.watchFor), quick prompts, the input, and Not now (leaves the idea open: the page just
+// Below the thread: "On approve, Captain will" (the Captain's plan lines minus any re-check line of his + the re-check
+// line from config.intel.recheck and check.watchFor; once approved, from the idea's watch), quick prompts, the input, and Not now (leaves the idea open: the page just
 // moves on) / Approve & add to roadmap (disabled without a fresh intel check; a 409 from the server is shown with "Run intel check").
 import './intelcheck.css';
 import type { IdeaMessage, IntelStore, MusterConfig, ResearchIdea } from '../../src/types';
 import { h, icon, setChildren } from './dom';
 import { displayName } from './util';
 import { parsePlanItem, splitAdvice } from './research';
-import { checkStatus, recheckLine } from './intelcheck';
+import { checkStatus, planLines, recheckLine, watchLine } from './intelcheck';
 
 export type RailMode = 'idea' | 'all';
 
@@ -139,13 +139,13 @@ export function createCaptainRail(cb: CaptainRailCallbacks): { el: HTMLElement; 
     if (idea && idea.status === 'new') {
       const st = checkStatus(idea, s.store, s.config);
       const re = recheckLine(st.check, s.config);
-      const lines = (idea.plan ?? []).map((line) => {
+      const lines = planLines(idea.plan).map((line) => {
         const p = parsePlanItem(line);
         const start = /^start\b/i.test(p.text);
         const keep = /\bstays\b|\bunchanged\b/i.test(p.text) && p.sign === '•';
         const sign = start ? '▶' : keep ? '=' : p.sign;
         const cls = sign === '+' || sign === '▶' ? 'add' : sign === '~' ? 'move' : sign === '−' ? 'drop' : 'keep';
-        return h('div.cr-plan-row', null, h('span.cr-sign', { class: cls }, sign), h('span.cr-plan-text', { class: cls === 'keep' && 'muted' }, p.text), p.meta ? h('span.cr-meta', null, p.meta) : null);
+        return h('div.cr-plan-row', null, h('span.cr-sign', { class: cls }, sign), h('span.cr-plan-text', { class: cls === 'keep' && 'muted' }, p.text), p.meta ? h('span.cr-meta', { title: p.meta }, p.meta) : null);
       });
       setChildren(plan, h('div.cr-plan', null,
         h('div.cr-plan-t', null, 'ON APPROVE, CAPTAIN WILL'),
@@ -153,10 +153,15 @@ export function createCaptainRail(cb: CaptainRailCallbacks): { el: HTMLElement; 
         re ? h('div.cr-plan-row', null, h('span.cr-sign.watch', null, '◉'), h('span.cr-plan-text', null, re.text), re.meta ? h('span.cr-meta.watch', null, re.meta) : null) : null,
         st.check ? h('div.cr-plan-row', null, h('span.cr-sign.keep', null, '↳'), h('span.cr-plan-text.muted', null, `Attach intel check ${st.check.id} to the new goal`)) : null));
     } else if (idea && idea.status === 'approved') {
+      const watched = watchLine(idea, s.store);
       setChildren(plan, h('div.cr-plan.done', null,
         h('div.cr-plan-t', null, idea.goalId ? `ON THE ROADMAP AS ${idea.goalId}` : 'APPROVED · CAPTAIN IS ADDING IT'),
-        (idea.plan ?? []).map((line) => { const p = parsePlanItem(line); return h('div.cr-plan-row', null, h('span.cr-sign.add', null, p.sign), h('span.cr-plan-text', null, p.text), p.meta ? h('span.cr-meta', null, p.meta) : null); }),
-        idea.watchId ? h('div.cr-plan-row', null, h('span.cr-sign.watch', null, '◉'), h('span.cr-plan-text', null, `Re-check watch ${idea.watchId} is on`)) : null));
+        planLines(idea.plan).map((line) => {
+          const p = parsePlanItem(line);
+          const cls = p.sign === '+' ? 'add' : p.sign === '~' ? 'move' : p.sign === '−' ? 'drop' : 'keep';
+          return h('div.cr-plan-row', null, h('span.cr-sign', { class: cls }, p.sign), h('span.cr-plan-text', null, p.text), p.meta ? h('span.cr-meta', { title: p.meta }, p.meta) : null);
+        }),
+        watched ? h('div.cr-plan-row', null, h('span.cr-sign.watch', null, '◉'), h('span.cr-plan-text', null, watched.text), watched.meta ? h('span.cr-meta.watch', null, watched.meta) : null) : null));
     } else setChildren(plan);
 
     setChildren(prompts, s.prompts.map((q) => h('button.cr-prompt', { disabled: sending, onclick: () => void send(q.text, q.ideaId) }, q.label)));

@@ -19,7 +19,7 @@ import {
 } from '../research';
 import { browseFootnote, createBrowseChoice, initialBrowseMode } from '../browsechoice';
 import { getBrowserStatus, getIntel } from '../intelapi';
-import { approveIdea, checkChip, checkStatus, chipEl, fillIntelCheckPanel, recheckLine, runIntelCheck } from '../intelcheck';
+import { approveIdea, checkChip, checkStatus, chipEl, fillIntelCheckPanel, planLines, recheckLine, runIntelCheck, watchLine } from '../intelcheck';
 
 const go = (hash: string) => { location.hash = hash; };
 const errText = (e: unknown) => (e instanceof Error ? e.message : String(e));
@@ -444,8 +444,8 @@ export function createResearch(): Page {
   function planIntelLines(check: IntelCheck | undefined): HTMLElement[] {
     const out: HTMLElement[] = [];
     const re = recheckLine(check, snap?.config);
-    if (re) out.push(h('div.rs-plan-row', null, h('span.rs-plan-sign.watch', null, '◉'), h('span.flex1', null, re.text), re.meta ? h('span.rs-mono', null, re.meta) : null));
-    if (check) out.push(h('div.rs-plan-row', null, h('span.rs-plan-sign', null, '↳'), h('span.flex1.muted', null, `Attach intel check ${check.id} to the new goal`)));
+    if (re) out.push(h('div.rs-plan-row', null, h('span.rs-plan-sign.watch', null, '◉'), h('span.rs-plan-text', null, re.text), re.meta ? h('span.rs-plan-meta', null, re.meta) : null));
+    if (check) out.push(h('div.rs-plan-row', null, h('span.rs-plan-sign', null, '↳'), h('span.rs-plan-text.muted', null, `Attach intel check ${check.id} to the new goal`)));
     return out;
   }
 
@@ -490,14 +490,17 @@ export function createResearch(): Page {
     if (!i.thread.length) items.push(h('div.rs-hint', null, 'Ask what it would cost, where it fits, or what it would push back. The Captain answers here.'));
     const waiting = i.thread.length > 0 && i.thread[i.thread.length - 1].from === 'you';
     if (waiting) items.push(h('div.rs-hint', null, h('span.rs-typing'), 'The Captain will answer here.'));
-    if (i.plan?.length) {
+    const plan = planLines(i.plan);
+    const watched = i.status === 'approved' ? watchLine(i, intel) : null;
+    if (plan.length || watched) {
       items.push(h('div.rs-plan', null,
         h('div.rs-plan-t', null, i.status === 'approved' ? 'CAPTAIN IS MAKING THESE CHANGES' : 'ON APPROVE, CAPTAIN WILL'),
-        i.plan.map((line) => {
+        plan.map((line) => {
           const p = parsePlanItem(line);
           return h('div.rs-plan-row', null, h('span.rs-plan-sign', { class: p.sign === '+' ? 'add' : p.sign === '~' ? 'move' : p.sign === '−' ? 'drop' : '' }, p.sign),
-            h('span.flex1', null, p.text), p.meta ? h('span.rs-mono', null, p.meta) : null);
+            h('span.rs-plan-text', null, p.text), p.meta ? h('span.rs-plan-meta', { title: p.meta }, p.meta) : null);
         }),
+        watched ? h('div.rs-plan-row', null, h('span.rs-plan-sign.watch', null, '◉'), h('span.rs-plan-text', null, watched.text), watched.meta ? h('span.rs-plan-meta', null, watched.meta) : null) : null,
         i.status === 'new' && intel ? planIntelLines(st?.check) : null));
     }
     setChildren(railThread, items);

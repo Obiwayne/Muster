@@ -6,7 +6,7 @@
 import './intelcheck.css';
 import {
   INTEL_CHECK_AREAS, type IntelCapability, type IntelCheck, type IntelCheckArea, type IntelCheckRow, type IntelStore, type MusterConfig,
-  type ResearchIdea,
+  type IntelWatch, type ResearchIdea,
 } from '../../src/types';
 import { h, icon, setChildren, toast } from './dom';
 import { ApiError, api } from './api';
@@ -214,6 +214,32 @@ export function recheckLine(check: Pick<IntelCheck, 'watchFor' | 'rows'> | undef
     text: `Re-check ${cadence}${watch ? `; alert if ${watch}` : ''}`,
     meta: check ? `intel ${coverage(check)}/${INTEL_CHECK_AREAS.length}` : '',
   };
+}
+
+/**
+ * A Captain plan line about the re-check ("Re-check monthly; alert if …"). The rail leaves these out and shows the
+ * re-check from the real watch (or, before approval, from config.intel.recheck) instead of the Captain's free text.
+ */
+export function isRecheckPlanLine(line: string): boolean {
+  return /^\s*[+~\-−•=▶]?\s*re-?check(?:s|ed|ing)?\b/i.test(line);
+}
+
+/** The Captain's plan lines without re-check lines. */
+export function planLines(plan: string[] | undefined): string[] {
+  return (plan ?? []).filter((l) => l.trim() && !isRecheckPlanLine(l));
+}
+
+/**
+ * The re-check line of an approved idea, from its watch: "Re-check weekly; alert if Padlet ships …" + "W2", or
+ * "Re-check watch W2 stopped". Null when the idea has no watch (re-checks off when it was approved).
+ */
+export function watchLine(idea: Pick<ResearchIdea, 'watchId'>, store: Pick<IntelStore, 'watches'> | null | undefined): { text: string; meta: string } | null {
+  if (!idea.watchId) return null;
+  const w: IntelWatch | undefined = store?.watches?.find((x) => x.id === idea.watchId);
+  if (!w) return { text: `Re-check watch ${idea.watchId} is on`, meta: '' };
+  if (!w.active || w.cadence === 'off') return { text: `Re-check watch ${w.id} stopped`, meta: '' };
+  const alert = w.alertOn?.trim().replace(/^alert if\s+/i, '').replace(/\.$/, '');
+  return { text: `Re-check ${w.cadence}${alert ? `; alert if ${alert}` : ''}`, meta: w.id };
 }
 
 /** The 409 the approve route answers with when the check is missing, running or stale. */

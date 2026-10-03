@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import type { IntelCapability, IntelCheck, IntelCheckRow, IntelCompetitor, IntelJob, IntelStore, ResearchIdea } from '../../src/types';
-import { checkChip, checkStatus, checksFor, confidenceLine, coverage, recheckLine, rowsByArea } from './intelcheck';
+import { checkChip, checkStatus, checksFor, confidenceLine, coverage, isRecheckPlanLine, planLines, recheckLine, rowsByArea, watchLine } from './intelcheck';
 
 const NOW = Date.parse('2026-10-03T12:00:00Z');
 const daysAgo = (n: number) => new Date(NOW - n * 86_400_000).toISOString();
@@ -155,5 +155,30 @@ describe('rows, coverage and lines', () => {
   it('confidence line', () => {
     expect(confidenceLine({ confidence: 'high', sourceCount: 214 })).toBe('High · 214 sources');
     expect(confidenceLine({ confidence: 'low', sourceCount: 1 })).toBe('Low · 1 source');
+  });
+});
+
+describe('re-check from the watch, not the Captain', () => {
+  // Live run: the Captain wrote "Re-check monthly; …" into the plan while the idea's watch W2 was weekly.
+  const plan = [
+    '+ Add goal Pupil join by class code + picture login to M1 (no email, no open link)',
+    '- Video uploads deferred to a later stage',
+    'Re-check monthly; alert if Padlet ships performance fixes or changes free-tier upload limits',
+  ];
+  it('drops the Captain re-check lines from the plan', () => {
+    expect(isRecheckPlanLine(plan[2])).toBe(true);
+    expect(isRecheckPlanLine('• Recheck weekly')).toBe(true);
+    expect(isRecheckPlanLine('+ Add goal Recheck tooling')).toBe(false);
+    expect(planLines(plan)).toEqual(plan.slice(0, 2));
+    expect(planLines(undefined)).toEqual([]);
+  });
+  it("reads the cadence and alert from the idea's watch", () => {
+    const watches = [
+      { id: 'W2', subject: { kind: 'idea' as const, ideaId: 'R1' }, cadence: 'weekly' as const, nextAt: '2026-10-10T12:51:19.723Z', active: true, alertOn: 'alert if Padlet shipping app performance fixes.' },
+      { id: 'W3', subject: { kind: 'idea' as const, ideaId: 'R2' }, cadence: 'daily' as const, nextAt: '2026-10-04', active: false },
+    ];
+    expect(watchLine({ watchId: 'W2' }, { watches })).toEqual({ text: 'Re-check weekly; alert if Padlet shipping app performance fixes', meta: 'W2' });
+    expect(watchLine({ watchId: 'W3' }, { watches })?.text).toBe('Re-check watch W3 stopped');
+    expect(watchLine({}, { watches })).toBeNull();
   });
 });
