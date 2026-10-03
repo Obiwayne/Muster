@@ -270,7 +270,11 @@ export function goalCount(p: { done: number; total: number }, status: string): s
 }
 
 /** The line under OVERALL. */
-export function overallText(o: { done: number; total: number; unlinked?: number }): string {
-  const tasks = o.total ? `${o.done} / ${o.total} tasks` : 'no tasks linked yet';
-  return o.unlinked ? `${tasks} · ${o.unlinked} not on the roadmap` : tasks;
+export function overallText(o: { done: number; total: number }): string {
+  return o.total ? `${o.done} / ${o.total} tasks` : 'no tasks linked yet';
+}
+
+/** Second line under OVERALL when some tasks have no goal; '' when none. */
+export function unlinkedText(o: { unlinked?: number }): string {
+  return o.unlinked ? `${o.unlinked} task${o.unlinked === 1 ? '' : 's'} not on the roadmap` : '';
 }

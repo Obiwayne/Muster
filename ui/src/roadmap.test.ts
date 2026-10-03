@@ -184,14 +184,16 @@ describe('tasks and feed', () => {
 
 describe('progress labels', () => {
   it('say what a percent is based on', async () => {
-    const { stageCount, stageBasis, goalCount, overallText } = await import('./roadmap');
+    const { stageCount, stageBasis, goalCount, overallText, unlinkedText } = await import('./roadmap');
     const base = { done: 0, total: 0, percent: 75, criteriaDone: 3, criteriaTotal: 4 };
     expect(stageCount(base)).toBe('75%');
     expect(stageCount({ ...base, done: 1, total: 4 })).toBe('1/4');
     expect(stageBasis({ ...base, basis: 'criteria' })).toBe('no tasks linked yet · 3/4 exit criteria met');
     expect(goalCount({ done: 0, total: 0 }, 'done')).toBe('✓');
     expect(goalCount({ done: 0, total: 0 }, 'active')).toBe('–');
-    expect(overallText({ done: 0, total: 0, unlinked: 21 })).toBe('no tasks linked yet · 21 not on the roadmap');
+    expect(overallText({ done: 0, total: 0 })).toBe('no tasks linked yet');
+    expect(unlinkedText({ unlinked: 21 })).toBe('21 tasks not on the roadmap');
+    expect(unlinkedText({ unlinked: 0 })).toBe('');
     expect(overallText({ done: 2, total: 5 })).toBe('2 / 5 tasks');
   });
 });

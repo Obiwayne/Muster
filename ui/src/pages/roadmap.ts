@@ -13,7 +13,7 @@ import { createResearchModal } from './research';
 import {
   DAY, HEALTH, average, barSpan, currentStageId, frac, labelStep, launchText, localDay, mergedPerDay, nextStage, parseDay,
   recentlyLanded, shortDate, shortDay, spanStyle, stageById, stageFeed, stageGoals, stageOfTask, stageWeights, stationWord,
-  timelineScale, todayFrac, stageCount, stageBasis, goalCount, overallText, columnIndex, columnStarts, type Scale, type Span,
+  timelineScale, todayFrac, stageCount, stageBasis, goalCount, overallText, unlinkedText, columnIndex, columnStarts, type Scale, type Span,
 } from '../roadmap';
 
 type View = 'timeline' | 'stages';
@@ -195,7 +195,8 @@ ${rm.summary}` : summary }, summary),
     return h('div.rm-summary', null,
       h('div.rm-overall', null,
         h('div.section-label', null, 'OVERALL'),
-        h('div.rm-overall-row', null, h('div.rm-big', null, `${pg.overall.percent}%`), h('div.rm-of', { title: pg.overall.unlinked ? 'Tasks with no goal are left out of the counts; the Captain links them with link_tasks' : undefined }, overallText(pg.overall)))),
+        h('div.rm-overall-row', null, h('div.rm-big', null, `${pg.overall.percent}%`), h('div.rm-of', null, overallText(pg.overall))),
+        pg.overall.unlinked ? h('div.rm-unlinked', { title: 'Tasks with no goal are left out of the counts; the Captain links them to their goals' }, unlinkedText(pg.overall)) : null),
       h('div.rm-segs', null,
         h('div.rm-segbar', null, rm.stages.map((s, i) => {
           const p = sp(s.id);

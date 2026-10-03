@@ -639,7 +639,8 @@ textarea.field { height: auto; min-height: 40px; padding: 10px 14px; resize: ver
 .rm-overall { display: flex; flex-direction: column; gap: 4px; width: 180px; flex-shrink: 0; }
 .rm-overall-row { display: flex; align-items: baseline; gap: 8px; }
 .rm-big { font-size: 40px; font-weight: 600; letter-spacing: -0.03em; line-height: 44px; }
-.rm-of { font-family: var(--font-mono); font-size: 12px; color: var(--color-muted); white-space: nowrap; }
+.rm-of { font-family: var(--font-mono); font-size: 12px; color: var(--color-muted); min-width: 0; overflow-wrap: anywhere; }
+.rm-unlinked { font-size: 12px; line-height: 16px; color: var(--color-warm); }
 .rm-segs { flex: 1; min-width: 0; display: flex; flex-direction: column; gap: 10px; }
 .rm-segbar { display: flex; gap: 4px; height: 8px; }
 .rm-segbar-s { border-radius: 3px; background: var(--color-surface-2); display: flex; min-width: 6px; overflow: hidden; }
