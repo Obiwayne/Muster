@@ -238,6 +238,11 @@ function slashLower(s: string): string {
   return s.replace(/\\/g, '/').toLowerCase();
 }
 
+// Cookie extraction, browser profiles and driving a browser directly: browsing goes through Muster's
+// read-only browse tool (src/browser), whose profile also sits under the secrets base.
+const BROWSER_TOOLING = /browser_cookie3|rookiepy|cookie_extract|opera-cookies\.py|opera\W{1,3}software|--remote-debugging|--user-data-dir|launchpersistentcontext|playwright/i;
+const BROWSER_DENY = 'Browsing goes through the browse tool: agents may not read browser cookies or profiles, or drive a browser themselves.';
+
 /** Rules that hold for any agent, whatever its role. */
 function commonShell(command: string, env: GuardEnv): Decision {
   const lower = slashLower(command);
@@ -248,6 +253,7 @@ function commonShell(command: string, env: GuardEnv): Decision {
   if (/appdata\/local\/muster|localappdata[^\n]*muster|~\/\.muster\b|\$home\/\.muster\b/i.test(lower))
     return deny("That folder holds the human's Muster token; agents may not touch it.");
   if (/\.muster\/agents\b/.test(lower)) return deny("Other agents' Muster config is off limits.");
+  if (BROWSER_TOOLING.test(lower)) return deny(BROWSER_DENY);
   if (/\bMUSTER_\w*\s*=|\bunset\b[^;&|\n]*\bMUSTER_|\benv\b[^;&|\n]*\s(-i|-u|--unset|--ignore-environment)\b|Remove-Item\b[^;&|\n]*env:|SetEnvironmentVariable/i.test(command))
     return deny('Agents may not change or clear their Muster environment.');
   if (/(^|[\s;&|(`$])(\$env:)?GIT_(DIR|WORK_TREE|COMMON_DIR|INDEX_FILE|CONFIG\w*|OBJECT_DIRECTORY)\s*=/i.test(command))

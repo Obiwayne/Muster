@@ -32,3 +32,6 @@ project's own python stays first) and sets `AGENT_REACH_PYTHON`. The skill never
 its plain `doctor` copies Agent Reach's own "MUST USE" skill into `~/.claude/skills`. Logged-in channels
 (Twitter/X, Reddit, LinkedIn, Facebook, Instagram, Xiaohongshu) are left out on purpose: they read browser
 cookies or drive the logged-in browser, which unattended agents shouldn't do with the user's accounts.
+Pages behind a login go through Muster's research browser instead (the research agent's read-only `browse`
+tool, Settings → Research browser): its own Chrome profile that you sign in to, never your everyday one.
+The skill's "Logged-in sites" section tells agents to use only that tool for them.
