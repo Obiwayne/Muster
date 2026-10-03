@@ -1,6 +1,7 @@
 // Pure formatting helpers for muster-mcp tool results. Agents read these, so keep them short.
 import { formatEvidence } from '../core/evidence.js';
-import type { Agent, IdeaEvidence, InboxItem, Note, NoteType, ResearchIdea, Roadmap, RoadmapHealth, RoadmapProgress, Task } from '../types.js';
+import { INTEL_CHECK_AREAS } from '../types.js';
+import type { Agent, IdeaEvidence, InboxItem, IntelCheck, IntelJob, IntelStore, Note, NoteType, ResearchIdea, Roadmap, RoadmapHealth, RoadmapProgress, Task } from '../types.js';
 
 export function relTime(iso: string | undefined, now: number = Date.now()): string {
   if (!iso) return '?';
@@ -229,6 +230,8 @@ function ideaStatus(i: ResearchIdea): string {
 /** `R7 [new] Moderation queue · impact high · effort M · fits M3 · 4 evidence · advised` */
 export function formatIdeaLine(i: ResearchIdea): string {
   const parts = [`${i.id} [${ideaStatus(i)}] ${clip(i.title, 80)}`, `impact ${i.impact}`, `effort ${i.effort}`];
+  if (i.origin === 'intel' && i.opportunity) parts.push(`intel ${i.opportunity.kind} (value ${i.opportunity.valueScore}/5, effort ${i.opportunity.effortScore}/5)`);
+  if (i.checkId) parts.push(`check ${i.checkId}`);
   if (i.stageId) parts.push(`fits ${i.stageId}`);
   if (i.overlapsGoalId) parts.push(`overlaps ${i.overlapsGoalId}`);
   parts.push(`${i.evidence?.length ?? 0} evidence`);
@@ -258,5 +261,84 @@ export function formatIdeaDetail(i: ResearchIdea, now: number = Date.now()): str
     for (const m of i.thread) lines.push(`- ${m.from} · ${relTime(m.at, now)}: ${m.text.trim()}`);
   }
   if (i.plan?.length) lines.push('', 'Plan on approval:', ...i.plan.map((p) => `- ${p}`));
+  const o = i.opportunity;
+  if (o) {
+    lines.push(
+      '',
+      `Opportunity (${o.kind}, priority ${o.priority}${o.testFirst ? ', test first' : ''}${o.atRisk ? `, at risk: ${o.atRisk}` : ''}) on ${o.capabilityIds.join(', ') || 'no capability'}:`,
+      `- Problem: ${o.problem}`,
+      `- Today they: ${o.alternatives}`,
+      `- Proposal: ${o.proposal}`,
+      `- Value: ${o.value} (${o.valueScore}/5)`,
+      `- Effort: ${o.effortNote} (${o.effortScore}/5)`,
+      `- Validate: ${o.validation}`,
+      `- ${o.claim.label}, ${o.claim.confidence}: ${o.claim.implication ?? ''}`,
+    );
+  }
   return lines.join('\n');
+}
+
+// ---- competitive intelligence ----------------------------------------------------
+
+const verdictWords = (v: string) => v.replace(/_/g, ' ');
+
+/** `IJ3 [running] competitor · padlet · by you · 12 pages` */
+export function formatJobLine(j: IntelJob): string {
+  const parts = [`${j.id} [${j.status}] ${j.kind}`];
+  if (j.ideaId) parts.push(j.ideaId);
+  if (j.competitorIds.length) parts.push(j.competitorIds.join(', '));
+  parts.push(`by ${j.by}`);
+  if (j.pagesBrowsed) parts.push(`${j.pagesBrowsed} pages`);
+  if (j.error) parts.push(`error: ${clip(j.error, 80)}`);
+  return parts.join(' · ');
+}
+
+/** An idea's intel check: verdict, confidence, coverage, rows, what it watches for and its history. */
+export function formatCheck(c: IntelCheck, idea?: ResearchIdea): string {
+  const head = `${c.id} for ${c.ideaId}${idea ? ` ${clip(idea.title, 60)}` : ''} · rev ${c.revision} · ${c.status}`;
+  if (c.status === 'skipped') return `${head} (${c.skippedReason ?? 'skipped'}). Approval may go ahead.`;
+  if (c.status === 'queued' || c.status === 'running') return `${head}. Scout is on it${c.jobId ? ` (${c.jobId})` : ''}; approval waits for it.`;
+  if (c.status === 'failed') return `${head}${c.skippedReason ? ` (${c.skippedReason})` : ''}. Request a new one with request_intel_check.`;
+  const lines = [
+    head,
+    `Verdict: ${verdictWords(c.verdict)} (${c.confidence} confidence, ${c.sourceCount} source${c.sourceCount === 1 ? '' : 's'}, coverage ${c.rows.length} of ${INTEL_CHECK_AREAS.length})${c.doneAt ? ` · checked ${c.doneAt.slice(0, 10)}` : ''}`,
+    c.verdictText,
+  ];
+  if (c.capabilityIds.length) lines.push(`Capabilities: ${c.capabilityIds.join(', ')}`);
+  for (const r of c.rows) lines.push(`- ${r.area}: ${clip(r.finding, 120)} [${r.signal}, ${r.label}, ${r.confidence}]${r.changed ? ' (changed)' : ''}`);
+  if (c.watchFor) lines.push(`Watch for: ${c.watchFor}`);
+  if (c.goalId) lines.push(`Goal: ${c.goalId}`);
+  if (c.history.length) lines.push(`History: ${c.history.map((h) => `rev ${h.revision} ${verdictWords(h.verdict)} (${h.confidence}, ${h.doneAt.slice(0, 10)})`).join('; ')}`);
+  return lines.join('\n');
+}
+
+/** intel_overview: competitors, gaps / edges / open spaces with their idea ids, unseen changes, jobs, your thread. */
+export function formatIntelOverview(store: IntelStore, ideas: ResearchIdea[], now: number = Date.now()): string {
+  const name = (id: string) => store.competitors.find((c) => c.id === id)?.name ?? id;
+  const live = store.competitors.filter((c) => !c.isUs && !c.removed);
+  const out: string[] = [];
+  out.push(live.length ? `Tracking ${live.length}: ${live.map((c) => `${c.name} (${c.id}${c.lastSweptAt ? `, swept ${relTime(c.lastSweptAt, now)}` : ', not swept yet'})`).join(', ')}.` : 'No competitors tracked yet.');
+  const ideaTag = (id?: string) => {
+    const i = id ? ideas.find((x) => x.id === id) : undefined;
+    return i ? ` · ${i.id} [${i.status}${i.goalId ? ` → ${i.goalId}` : ''}]` : ' · no idea yet';
+  };
+  for (const [verdict, title] of [['gap', 'Gaps (they have it, we don\'t)'], ['edge', 'Edges (where we win)'], ['open', 'Open (nobody does it)']] as const) {
+    const caps = store.capabilities.filter((c) => c.verdict === verdict);
+    out.push('', `${title}: ${caps.length}`);
+    for (const c of caps) out.push(`- ${c.id} ${clip(c.name, 70)}${c.verdictVs.length ? ` vs ${c.verdictVs.map(name).join(', ')}` : ''}${c.verdictStage ? ` (${verdict === 'gap' ? 'closing' : 'at'} ${c.verdictStage})` : ''}${ideaTag(c.ideaId)}`);
+  }
+  const intelIdeas = ideas.filter((i) => i.origin === 'intel' && i.status === 'new');
+  if (intelIdeas.length) out.push('', 'Intel ideas waiting for a decision:', ...intelIdeas.map((i) => `- ${formatIdeaLine(i)}`));
+  const unseen = store.changes.filter((c) => !c.seen);
+  if (unseen.length) {
+    out.push('', `Unseen changes: ${unseen.length}`);
+    for (const c of unseen.slice(-10)) out.push(`- ${c.id} ${c.at} ${name(c.competitorId)} [${c.area}] ${clip(c.title, 90)} · plan ${c.planImpact}${c.suggestion ? ` · you suggested: ${clip(c.suggestion, 80)}` : c.planImpact === 'respond' ? ' · needs your intel_suggest' : ''}`);
+  }
+  const running = store.jobs.find((j) => j.status === 'running');
+  const queued = store.jobs.filter((j) => j.status === 'queued');
+  out.push('', running ? `Running: ${formatJobLine(running)}` : 'No intel job running.');
+  if (queued.length) out.push(`Queued: ${queued.map((j) => `${j.id} ${j.kind}`).join(', ')}`);
+  const last = store.captainThread.at(-1);
+  if (last && last.from !== 'captain') out.push('', `The user asked about the gaps (${relTime(last.at, now)}): ${clip(last.text, 300)} — answer with intel_reply.`);
+  return out.join('\n');
 }

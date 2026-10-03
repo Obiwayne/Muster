@@ -2,9 +2,11 @@
 // reject or ask the Captain about each one. An approved idea goes onto the roadmap through the Captain
 // (addGoal with ideaId) without a second roadmap approval.
 // Pure state mutations; the caller commits the store, starts/stops scout and toasts/notifies (see the API layer).
-import type { IdeaEvidence, IdeaImpact, MusterState, ResearchIdea, ResearchRun, ResearchSources, ResearchState } from '../types.js';
+import type { BrowseMode, IdeaEvidence, IdeaImpact, IntelOpportunity, IntelStore, MusterConfig, MusterState, ResearchIdea, ResearchRun, ResearchSources, ResearchState } from '../types.js';
 import { addFeed, addInbox, captainOf, findAgent, HUMAN, isCaptain, nowIso, SYSTEM } from './board.js';
 import { badRequest, conflict, forbidden, notFound } from './errors.js';
+import { BROWSE_MODES, checkClaim, oneOf, runningJob, tracked } from './intel.js';
+import { checkGate, onApproved } from './intelcheck.js';
 import { nextId } from './store.js';
 import { assertNotPaused } from './usage.js';
 
@@ -30,6 +32,7 @@ export interface RunInput {
   sources: unknown;
   focus?: unknown;
   depth: unknown;
+  browse?: unknown; // BrowseMode; default config.researchBrowser.mode
 }
 
 export interface IdeaInput {
@@ -164,16 +167,22 @@ function roadmapRef(state: MusterState, v: unknown, kind: 'stage' | 'goal'): str
 const describeSources = (s: ResearchSources) =>
   [s.competitors.length ? s.competitors.join(', ') : '', s.reviews ? 'reviews' : '', s.forums.length ? s.forums.join(', ') : '', s.ownApp ? 'own app' : ''].filter(Boolean).join('; ');
 
-/** POST /api/research/runs: you only, one run at a time, refused while paused. The caller then starts scout. */
-export function startRun(state: MusterState, actor: string, input: RunInput): ResearchRun {
+/**
+ * POST /api/research/runs: you only, one run at a time, refused while paused and while scout runs an intel job
+ * (pass the intel store). The caller then starts scout.
+ */
+export function startRun(state: MusterState, actor: string, input: RunInput, defaultBrowse: BrowseMode = 'profile', intel?: IntelStore): ResearchRun {
   requireHuman(actor, 'start research');
   assertNotPaused(state);
   const busy = runningRun(state);
   if (busy) throw conflict(`${busy.id} is still running; cancel it or wait for scout to finish`);
+  const job = intel ? runningJob(intel) : undefined;
+  if (job) throw conflict(`scout is busy with ${job.id} (${job.kind}); start research when it is done, or cancel it on the Intel page`);
   const sources = checkSources(input?.sources);
   const depth = input?.depth as ResearchRun['depth'];
   if (!DEPTHS.includes(depth)) throw badRequest('depth must be "quick" or "thorough"');
   const focus = text(input?.focus, 'focus', MAX_FOCUS, false);
+  const browse = input?.browse === undefined || input.browse === null ? defaultBrowse : oneOf(input.browse, BROWSE_MODES, 'browse');
   const run: ResearchRun = {
     id: nextId(state, 'run'),
     status: 'running',
@@ -183,6 +192,7 @@ export function startRun(state: MusterState, actor: string, input: RunInput): Re
     agentId: SCOUT_ID,
     startedAt: nowIso(),
     ideaIds: [],
+    browse,
   };
   researchOf(state).runs.push(run);
   addFeed(state, { kind: 'event', from: actor, text: `started research ${run.id} (${depth}: ${describeSources(sources)})${focus ? `: ${focus.slice(0, 120)}` : ''}` });
@@ -232,7 +242,7 @@ export function failRun(state: MusterState, reason: string): ResearchRun | undef
 // ------------------------------------------------------------------ brief
 
 /** GET /api/research/brief: what scout works from — the running run, the product and roadmap, ideas already found, the rules. */
-export function researchBrief(state: MusterState, repoRoot = state.repoRoot): string {
+export function researchBrief(state: MusterState, repoRoot = state.repoRoot, intel?: IntelStore): string {
   const run = runningRun(state);
   if (!run) return 'No research run is running. Nothing to do: wait until you are given a run.';
   const s = run.sources;
@@ -259,6 +269,15 @@ export function researchBrief(state: MusterState, repoRoot = state.repoRoot): st
     }
   }
 
+  const comps = intel ? tracked(intel) : [];
+  out.push('', 'Competitors tracked on the Intel page:');
+  if (!comps.length) out.push('none: ideas need no intel check (the server marks them skipped).');
+  else {
+    for (const c of comps) out.push(`- ${c.name} (${c.id}) ${c.url}`);
+    out.push('After every add_idea, write intel_check for that idea (intel_brief and record_intel are yours too; record what you learn about these competitors as you go).');
+  }
+  if (run.browse) out.push('', `Browsing: mode ${run.browse}. The browse tool is read-only; prefer official feeds and the web-research tools for public pages.`);
+
   const ideas = state.research?.ideas ?? [];
   out.push('', 'Ideas already found (never post them again):');
   if (!ideas.length) out.push('none yet');
@@ -279,11 +298,8 @@ export function researchBrief(state: MusterState, repoRoot = state.repoRoot): st
 
 // ------------------------------------------------------------------ ideas
 
-/** POST /api/research/ideas (add_idea): the research agent only, while a run is running. */
-export function addIdea(state: MusterState, actor: string, input: IdeaInput): ResearchIdea {
-  requireResearcher(state, actor, 'add research ideas');
-  const run = runningRun(state);
-  if (!run) throw conflict('No research run is running; ideas can only be added during one');
+/** Validated idea fields shared by add_idea and add_opportunity (400 per field, 409 on a duplicate title). */
+function ideaFields(state: MusterState, input: IdeaInput): Pick<ResearchIdea, 'title' | 'summary' | 'impact' | 'effort' | 'stageId' | 'overlapsGoalId' | 'evidence'> {
   const title = text(input?.title, 'title', MAX_IDEA_TITLE);
   const summary = text(input?.summary, 'summary', MAX_SUMMARY);
   const impact = input?.impact as IdeaImpact;
@@ -293,19 +309,23 @@ export function addIdea(state: MusterState, actor: string, input: IdeaInput): Re
   const stageId = roadmapRef(state, input?.stageId, 'stage');
   const overlapsGoalId = roadmapRef(state, input?.overlapsGoalId, 'goal');
   const evidence = checkEvidence(input?.evidence);
-  const research = researchOf(state);
-  const same = research.ideas.find((i) => i.title.toLowerCase() === title.toLowerCase());
+  const same = state.research?.ideas.find((i) => i.title.toLowerCase() === title.toLowerCase());
   if (same) throw conflict(`${same.id} "${same.title}" is already an idea; add new evidence to a different problem, or skip it`);
+  return { title, summary, impact, effort, ...(stageId ? { stageId } : {}), ...(overlapsGoalId ? { overlapsGoalId } : {}), evidence };
+}
+
+/** POST /api/research/ideas (add_idea): the research agent only, while a run is running. */
+export function addIdea(state: MusterState, actor: string, input: IdeaInput): ResearchIdea {
+  requireResearcher(state, actor, 'add research ideas');
+  const run = runningRun(state);
+  if (!run) throw conflict('No research run is running; ideas can only be added during one');
+  const fields = ideaFields(state, input);
+  const research = researchOf(state);
+  const { impact, effort } = fields;
   const idea: ResearchIdea = {
     id: nextId(state, 'idea'),
     runId: run.id,
-    title,
-    summary,
-    impact,
-    effort,
-    ...(stageId ? { stageId } : {}),
-    ...(overlapsGoalId ? { overlapsGoalId } : {}),
-    evidence,
+    ...fields,
     status: 'new',
     thread: [],
     createdAt: nowIso(),
@@ -313,6 +333,77 @@ export function addIdea(state: MusterState, actor: string, input: IdeaInput): Re
   research.ideas.push(idea);
   run.ideaIds.push(idea.id);
   addFeed(state, { kind: 'event', from: actor, text: `found idea ${idea.id} ${idea.title} (${impact} impact, effort ${effort})` });
+  return idea;
+}
+
+const score = (v: unknown, what: string) => {
+  if (!Number.isInteger(v) || (v as number) < 1 || (v as number) > 5) throw badRequest(`${what} must be a whole number from 1 to 5`);
+  return v as number;
+};
+
+function checkOpportunity(intel: IntelStore, raw: unknown): IntelOpportunity {
+  if (!raw || typeof raw !== 'object' || Array.isArray(raw)) throw badRequest('opportunity must be an object');
+  const o = raw as Record<string, unknown>;
+  const kind = oneOf(o.kind, ['gap', 'open', 'edge'] as const, 'opportunity.kind');
+  if (!Array.isArray(o.capabilityIds)) throw badRequest('opportunity.capabilityIds must be a list of capability ids (F3)');
+  const capabilityIds = [
+    ...new Set(
+      o.capabilityIds.map((x, i) => {
+        const id = text(x, `opportunity.capabilityIds[${i}]`, 20).toUpperCase();
+        if (!intel.capabilities.some((c) => c.id === id)) throw badRequest(`opportunity.capabilityIds[${i}]: no capability "${x}" (record it first)`);
+        return id;
+      }),
+    ),
+  ];
+  const field = (k: string, max = 1000) => text(o[k], `opportunity.${k}`, max);
+  const op: IntelOpportunity = {
+    kind,
+    capabilityIds,
+    problem: field('problem'),
+    alternatives: field('alternatives'),
+    proposal: field('proposal'),
+    value: field('value'),
+    effortNote: field('effortNote', 300),
+    priority: oneOf(o.priority, ['now', 'next', 'later', 'parked'] as const, 'opportunity.priority'),
+    validation: field('validation'),
+    valueScore: score(o.valueScore, 'opportunity.valueScore'),
+    effortScore: score(o.effortScore, 'opportunity.effortScore'),
+    claim: checkClaim(o.claim, 'opportunity.claim', { implication: true }),
+  };
+  if (o.testFirst === true) op.testFirst = true;
+  const atRisk = text(o.atRisk, 'opportunity.atRisk', 200, false);
+  if (atRisk) {
+    if (kind !== 'edge') throw badRequest('opportunity.atRisk is for an edge only');
+    op.atRisk = atRisk;
+  }
+  return op;
+}
+
+/**
+ * POST /api/intel/opportunities (add_opportunity): the research agent raises a gap, open space or edge as a research
+ * idea (origin 'intel', runId = the intel job, or the research run). Links each capability's ideaId.
+ */
+export function addOpportunity(state: MusterState, intel: IntelStore, actor: string, input: IdeaInput & { opportunity: unknown }): ResearchIdea {
+  requireResearcher(state, actor, 'add opportunities');
+  const job = runningJob(intel);
+  const run = runningRun(state);
+  if (!job && !run) throw conflict('Nothing is running: add opportunities during an intel job or a research run');
+  const fields = ideaFields(state, input);
+  const opportunity = checkOpportunity(intel, input?.opportunity);
+  const idea: ResearchIdea = {
+    id: nextId(state, 'idea'),
+    runId: job?.id ?? run!.id,
+    ...fields,
+    status: 'new',
+    thread: [],
+    origin: 'intel',
+    opportunity,
+    createdAt: nowIso(),
+  };
+  researchOf(state).ideas.push(idea);
+  if (!job && run) run.ideaIds.push(idea.id);
+  for (const cap of intel.capabilities) if (opportunity.capabilityIds.includes(cap.id) && !cap.ideaId) cap.ideaId = idea.id;
+  addFeed(state, { kind: 'event', from: actor, text: `raised ${opportunity.kind} ${idea.id} ${idea.title} from competitive intelligence (value ${opportunity.valueScore}/5, effort ${opportunity.effortScore}/5)` });
   return idea;
 }
 
@@ -332,7 +423,7 @@ export function askIdea(state: MusterState, actor: string, id: string, question:
 }
 
 /** POST /api/research/ideas/:id/advice (advise_idea): the Captain only. `plan` = the roadmap changes it would make on approval. */
-export function adviseIdea(state: MusterState, actor: string, id: string, input: { text: unknown; plan?: unknown }): ResearchIdea {
+export function adviseIdea(state: MusterState, actor: string, id: string, input: { text: unknown; plan?: unknown; effort?: unknown }): ResearchIdea {
   if (!isCaptain(state, actor)) throw forbidden('Only the Captain advises on ideas');
   const idea = requireIdea(state, id);
   const body = text(input?.text, 'text', MAX_THREAD_TEXT);
@@ -343,17 +434,25 @@ export function adviseIdea(state: MusterState, actor: string, id: string, input:
     if (plan.length > MAX_PLAN_ITEMS) throw badRequest(`plan: at most ${MAX_PLAN_ITEMS} changes`);
     for (const p of plan) if (p.length > MAX_QUOTE) throw badRequest(`plan: "${p.slice(0, 40)}…" is longer than ${MAX_QUOTE} characters`);
   }
+  const effort = input?.effort === undefined || input.effort === null ? undefined : score(input.effort, 'effort');
   idea.thread.push({ at: nowIso(), from: actor, text: body });
   if (plan?.length) idea.plan = plan;
+  if (effort !== undefined && idea.opportunity) idea.opportunity.effortScore = effort;
   addFeed(state, { kind: 'event', from: actor, text: `advised on ${idea.id} ${idea.title}` });
   return idea;
 }
 
-/** POST /api/research/ideas/:id/approve: you only, from new. The Captain adds it to the roadmap (no second approval). */
-export function approveIdea(state: MusterState, actor: string, id: string): ResearchIdea {
+/**
+ * POST /api/research/ideas/:id/approve: you only, from new. With the intel store, approval needs a fresh done/skipped
+ * intel check (409 otherwise; skipped is created when no competitors are tracked), sets up the re-check watch and
+ * tells the Captain about the check. The Captain adds it to the roadmap (no second approval).
+ */
+export function approveIdea(state: MusterState, actor: string, id: string, intel?: { store: IntelStore; config: Pick<MusterConfig, 'intel'>; now?: number }): ResearchIdea {
   requireHuman(actor, 'approve ideas');
   const idea = requireIdea(state, id);
   if (idea.status !== 'new') throw conflict(`${idea.id} is already ${idea.status}`);
+  const check = intel ? checkGate(intel.store, idea, intel.config, intel.now) : undefined;
+  const extra = intel && check ? ` ${onApproved(intel.store, idea, check, intel.config).line}` : '';
   idea.status = 'approved';
   idea.decidedAt = nowIso();
   addFeed(state, { kind: 'event', from: actor, text: `approved idea ${idea.id} ${idea.title}` });
@@ -361,7 +460,7 @@ export function approveIdea(state: MusterState, actor: string, id: string): Rese
   tellCaptain(
     state,
     actor,
-    `${idea.id} ${idea.title} approved. Add it to the roadmap now: add_goal(${stage}, …, idea: "${idea.id}") (or update_goal/link_tasks if it overlaps a goal${idea.overlapsGoalId ? ` — scout says ${idea.overlapsGoalId}` : ''}). That change is already approved — no second approval.`,
+    `${idea.id} ${idea.title} approved. Add it to the roadmap now: add_goal(${stage}, …, idea: "${idea.id}") (or update_goal/link_tasks if it overlaps a goal${idea.overlapsGoalId ? ` — scout says ${idea.overlapsGoalId}` : ''}). That change is already approved — no second approval.${extra}`,
   );
   return idea;
 }

@@ -404,3 +404,117 @@ describe('muster-mcp reactions', () => {
     expect(calls).toEqual([]);
   });
 });
+
+describe('muster-mcp intel tools', () => {
+  const src = { kind: 'site', title: 'Padlet features', url: 'https://padlet.com/features' };
+  const claim = { label: 'fact', confidence: 'high', sources: [src] };
+  const INTEL_RESEARCH = ['intel_brief', 'browse', 'record_intel', 'add_opportunity', 'intel_check', 'finish_intel_job'];
+  const INTEL_CAPTAIN = ['intel_overview', 'intel_check_status', 'request_intel_check', 'intel_reply', 'intel_suggest', 'run_sweep'];
+  const check = { id: 'IC4', ideaId: 'R12', revision: 1, status: 'done', rows: [{ area: 'features', finding: 'Padlet partial', signal: 'supports', ...claim, asOf: '2026-10-01' }], verdict: 'edge_at_risk', verdictText: 'Build before Padlet ships.', confidence: 'medium', sourceCount: 3, capabilityIds: ['F3'], watchFor: 'Padlet ships approval', createdAt: '', doneAt: '2026-10-01T10:00:00Z', history: [] };
+
+  it('scout gets the intel job tools, the Captain the intel decision tools, crew and design neither', async () => {
+    const names = async (role: Role) => (await (await connect(role, () => null)).client.listTools()).tools.map((t) => t.name);
+    const research = await names('research');
+    for (const n of INTEL_RESEARCH) expect(research).toContain(n);
+    for (const n of INTEL_CAPTAIN) expect(research).not.toContain(n);
+    const captain = await names('captain');
+    for (const n of INTEL_CAPTAIN) expect(captain).toContain(n);
+    for (const n of INTEL_RESEARCH) expect(captain).not.toContain(n);
+    for (const role of ['crew', 'design'] as Role[]) for (const n of [...INTEL_RESEARCH, ...INTEL_CAPTAIN]) expect(await names(role)).not.toContain(n);
+  });
+
+  it('record_intel takes every kind and posts kind + item', async () => {
+    const items: Record<string, Record<string, unknown>> = {
+      profile: { competitorId: 'padlet', tagline: 'Walls for classes' },
+      capability: { name: 'Approve posts', cells: { us: { status: 'yes', ...claim }, padlet: { status: 'none', ...claim } } },
+      theme: { title: 'Kids post first', mentions: 40, independentSources: 12, byCompetitor: { padlet: 40 }, severity: 'high', trend: 'rising', confidence: 'medium', sources: [src] },
+      sample: { window: 'last 12 months', counts: [{ kind: 'app_store', label: 'reviews', n: 412 }] },
+      social: { competitorId: 'padlet', channel: 'youtube', presence: 'active', ...claim },
+      social_insight: { kind: 'engagement', text: 'Tutorials get 8x views', ...claim },
+      plan: { competitorId: 'padlet', title: 'Approval queue', kind: 'commitment', ...claim },
+      finding: { area: 'pricing', title: 'Pro £8/mo', ...claim },
+      scenario: { name: '30 teachers', assumptions: ['one school'], costs: { padlet: { amount: 2000, currency: 'GBP', period: 'year' } }, ...claim },
+      filing: { competitorId: 'padlet', companyNumber: '123', status: 'Active', limits: 'Micro-entity: no revenue', ...claim },
+      positioning: { title: 'Price vs safety', x: { label: 'Price' }, y: { label: 'Safety' }, points: [{ competitorId: 'padlet', x: 0.5, y: 0.2 }], assumptions: ['list prices'], ...claim },
+      insight: { kind: 'match', title: 'Approval is table stakes', detail: 'Schools ask for it', implication: 'Build it', ...claim },
+      change: { competitorId: 'padlet', area: 'pricing', title: 'Pro to £8', planImpact: 'watch', implication: 'Price gap widens', ...claim },
+    };
+    for (const [kind, item] of Object.entries(items)) {
+      const { call, calls } = await connect('research', () => ({ id: 'X1', title: item.title, name: item.name, ...(kind === 'capability' ? { verdict: 'edge', verdictVs: ['padlet'] } : {}) }));
+      const r = await call('record_intel', { kind, item });
+      expect(r.isError, `${kind}: ${r.text}`).toBe(false);
+      expect(calls[0]).toEqual({ path: '/api/intel/record', method: 'POST', body: { actor: 'scout', kind, item: expect.objectContaining(item) } });
+      if (kind === 'capability') expect(r.text).toBe('Recorded capability X1 Approve posts → edge vs padlet.');
+    }
+  });
+
+  it('intel_brief, intel_check, add_opportunity and finish_intel_job call the intel routes', async () => {
+    const { call, calls } = await connect('research', (c) => {
+      if (c.path === '/api/intel/brief') return { text: 'Intel job IJ3 (competitor)\n' };
+      if (c.path.startsWith('/api/intel/checks/')) return check;
+      if (c.path === '/api/intel/opportunities') return { id: 'R12', title: 'Approval queue', impact: 'high', effort: 'S', evidence: [{}], status: 'new', origin: 'intel', opportunity: { kind: 'edge', valueScore: 4, effortScore: 2 }, thread: [] };
+      return { id: 'IJ3', status: 'done' };
+    });
+    expect((await call('intel_brief')).text).toBe('Intel job IJ3 (competitor)');
+    const opp = await call('add_opportunity', {
+      title: 'Approval queue', summary: 's', impact: 'high', effort: 'S', evidence: [{ kind: 'competitor', source: 'Padlet help' }],
+      opportunity: { kind: 'edge', capabilityIds: ['f3'], problem: 'p', alternatives: 'a', proposal: 'x', value: 'v', effortNote: 'e', priority: 'now', validation: 'v', valueScore: 4, effortScore: 2, claim: { ...claim, implication: 'i' } },
+    });
+    expect(opp.text).toBe('Added R12 [new] Approval queue · impact high · effort S · intel edge (value 4/5, effort 2/5) · 1 evidence. Now write intel_check(R12, …).');
+    expect((calls[1].body as { opportunity: { capabilityIds: string[] } }).opportunity.capabilityIds).toEqual(['F3']);
+    const c = await call('intel_check', { idea: 'r12', rows: [{ area: 'features', finding: 'Padlet partial', signal: 'supports', ...claim }], verdictText: 'Build before Padlet ships.', confidence: 'medium', capabilities: ['f3'], watchFor: 'Padlet ships approval' });
+    expect(calls[2]).toMatchObject({ path: '/api/intel/checks/R12', method: 'POST', body: { actor: 'scout', capabilityIds: ['F3'], verdictText: 'Build before Padlet ships.', watchFor: 'Padlet ships approval' } });
+    expect(c.text).toContain('Verdict: edge at risk (medium confidence, 3 sources, coverage 1 of 7)');
+    expect((await call('finish_intel_job', { summary: 'Read 9 pages', sourcesRead: 9 })).text).toMatch(/^Finished IJ3\./);
+    expect(calls[3]).toEqual({ path: '/api/intel/finish', method: 'POST', body: { actor: 'scout', summary: 'Read 9 pages', sourcesRead: 9 } });
+  });
+
+  it('browse posts /api/browser/read and falls back honestly while the browser routes are missing', async () => {
+    const missing = await connect('research', () => {
+      throw new Error('No route /api/browser/read');
+    });
+    expect((await missing.call('browse', { url: 'https://reddit.com/r/Teachers' })).text).toBe("The research browser isn't available yet; use the web-research tools.");
+    const { call, calls } = await connect('research', () => ({ url: 'https://reddit.com/r/Teachers', title: 'r/Teachers', status: 200, text: 'Posts…', via: 'profile', loggedIn: true, pagesLeft: 140 }));
+    const r = await call('browse', { url: 'https://reddit.com/r/Teachers', links: true });
+    expect(calls[0]).toEqual({ path: '/api/browser/read', method: 'POST', body: { actor: 'scout', url: 'https://reddit.com/r/Teachers', action: 'read', links: true } });
+    expect(r.text).toBe('r/Teachers (200, via profile, signed in) · 140 pages left\nhttps://reddit.com/r/Teachers\n\nPosts…');
+    const other = await connect('research', () => {
+      throw new Error('page budget used');
+    });
+    expect(await other.call('browse', { url: 'https://x.example' })).toEqual({ text: 'Error: page budget used', isError: true });
+  });
+
+  it('captain: overview, check status, request, reply, suggest, sweep, advise effort', async () => {
+    const store = {
+      competitors: [{ id: 'us', name: 'wall', isUs: true }, { id: 'padlet', name: 'Padlet', lastSweptAt: '2026-10-01T10:00:00Z' }],
+      capabilities: [{ id: 'F3', name: 'Approve posts', verdict: 'gap', verdictVs: ['padlet'], verdictStage: 'M5', ideaId: 'R12', cells: {} }],
+      changes: [{ id: 'IX5', at: '2026-10-02', competitorId: 'padlet', area: 'roadmap', title: 'Padlet building approval', planImpact: 'respond', seen: false }],
+      jobs: [{ id: 'IJ3', kind: 'sweep', status: 'queued', competitorIds: ['padlet'], by: 'captain' }],
+      checks: [check],
+      captainThread: [{ at: '2026-10-02T10:00:00Z', from: 'you', text: 'Which gap first?' }],
+    };
+    const ideas = [{ id: 'R12', title: 'Approval queue', impact: 'high', effort: 'S', evidence: [], status: 'new', origin: 'intel', opportunity: { kind: 'gap', valueScore: 5, effortScore: 3 }, checkId: 'IC4', thread: [] }];
+    const { call, calls } = await connect('captain', (c) => {
+      if (c.path === '/api/intel') return store;
+      if (c.path === '/api/research') return { runs: [], ideas };
+      if (c.path === '/api/intel/checks') return { ...check, status: 'queued', jobId: 'IJ4' };
+      if (c.path.endsWith('/suggest')) return { id: 'IX5', title: 'Padlet building approval' };
+      if (c.path === '/api/intel/jobs') return { id: 'IJ6', kind: 'sweep', status: 'queued', competitorIds: ['padlet'], by: 'captain', pagesBrowsed: 0 };
+      return ideas[0];
+    });
+    const o = (await call('intel_overview')).text;
+    expect(o).toContain('- F3 Approve posts vs Padlet (closing M5) · R12 [new]');
+    expect(o).toContain('IX5 2026-10-02 Padlet [roadmap] Padlet building approval · plan respond · needs your intel_suggest');
+    expect(o).toContain('Queued: IJ3 sweep');
+    expect(o).toContain('Which gap first? — answer with intel_reply.');
+    expect((await call('intel_check_status', { idea: 'r12' })).text).toContain('IC4 for R12 Approval queue · rev 1 · done');
+    expect((await call('request_intel_check', { idea: 'r12' })).text).toBe('IC4 for R12 · rev 1 · queued. Scout is on it (IJ4); approval waits for it.');
+    await call('intel_reply', { text: 'R12 first.' });
+    expect(calls.at(-1)).toEqual({ path: '/api/intel/reply', method: 'POST', body: { actor: 'captain', text: 'R12 first.' } });
+    expect((await call('intel_suggest', { change: 'ix5', text: 'Pull G4 into M2.' })).text).toBe('Suggestion saved on IX5 Padlet building approval.');
+    expect((await call('run_sweep', { competitors: ['Padlet'] })).text).toBe('Queued IJ6 [queued] sweep · padlet · by captain.');
+    expect(calls.at(-1)!.body).toEqual({ actor: 'captain', kind: 'sweep', competitorIds: ['padlet'] });
+    await call('advise_idea', { idea: 'R12', text: 'About a week.', plan: ['Re-check weekly; alert if Padlet ships approval'], effort: 3 });
+    expect(calls.at(-1)).toEqual({ path: '/api/research/ideas/R12/advice', method: 'POST', body: { actor: 'captain', text: 'About a week.', plan: ['Re-check weekly; alert if Padlet ships approval'], effort: 3 } });
+  });
+});
