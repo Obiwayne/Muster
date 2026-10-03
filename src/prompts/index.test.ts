@@ -159,10 +159,11 @@ describe('design crew and Vellum edits', () => {
 
 describe('researchPrompt', () => {
   const p = researchPrompt({ ...ctx, agentId: 'scout', worktree: ctx.repoRoot, branch: 'main' });
-  it('keeps scout to public pages and no code changes', () => {
+  it('keeps scout read-only, never signing in itself, and no code changes', () => {
     expect(p).toContain('# Muster — you are the research agent (scout)');
-    expect(p).toMatch(/Public pages only/);
-    expect(p).toMatch(/Never sign in/);
+    expect(p).toMatch(/Read-only, and never sign in yourself/);
+    expect(p).toMatch(/Pages behind a login only through `browse`/);
+    expect(p).toMatch(/Never touch cookies, browser profiles/);
     expect(p).toMatch(/Never change code/);
     expect(p).toContain('muster:web-research');
     expect(p).toMatch(/at most 300 characters/);
@@ -176,7 +177,22 @@ describe('researchPrompt', () => {
     expect(p).toContain('`finish_research`');
     expect(p).not.toContain('claim_task()');
   });
-  it('is short', () => expect(lines(p)).toBeLessThan(60));
+  it('is short', () => expect(lines(p)).toBeLessThan(90));
+  it('carries the intel duties', () => {
+    expect(p.indexOf('intel_brief()')).toBeLessThan(p.indexOf('record_intel(kind, item)'));
+    expect(p).toMatch(/one claim per `record_intel` call/);
+    expect(p).toMatch(/fact = you saw it on a primary source/);
+    expect(p).toMatch(/prediction = your inference, with `prediction \{ signals, timeframe, wouldChange \}`/);
+    expect(p).toMatch(/Count within the sample/);
+    expect(p).toMatch(/never generalise from a few loud complaints/i);
+    expect(p).toMatch(/partial public view/);
+    expect(p).toMatch(/Engagement is attention, not sales/);
+    expect(p).toMatch(/verified \(seen working\) vs claimed/);
+    expect(p).toMatch(/right after each `add_idea`, write `intel_check`/);
+    expect(p).toMatch(/`add_opportunity` linked to its capabilities, then `intel_check`/);
+    expect(p).toMatch(/Prefer official feeds/);
+    expect(p).toContain('`finish_intel_job`');
+  });
 });
 
 describe('captainPrompt research ideas', () => {
@@ -189,6 +205,17 @@ describe('captainPrompt research ideas', () => {
     expect(p).toContain('`add_goal(stage, title, description, idea: "R7")`');
     expect(p).toMatch(/no second one/);
     expect(p).toContain('`list_ideas(status?)`');
+  });
+  it('handles competitive intelligence: gaps thread, effort, re-check alerts', () => {
+    expect(p).toContain('## Competitive intelligence');
+    expect(p).toContain('**"You asked about the gaps …"**');
+    expect(p).toContain('`intel_reply(text)`');
+    expect(p).toMatch(/honest `effort` 1–5/);
+    expect(p).toContain('"Re-check weekly; alert if Wakelet ships post approval"');
+    expect(p).toContain('`add_goal(stage, …, idea: "R12")`');
+    expect(p).toContain('**"Re-check of R7 … (G4): …"**');
+    expect(p).toContain('`intel_suggest(IX5, text)`');
+    expect(p).toContain('`request_intel_check(idea)`');
   });
 });
 
