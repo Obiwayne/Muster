@@ -12,9 +12,10 @@ PATH and whose python is `$AGENT_REACH_PYTHON` (it has `feedparser`).
 
 ## Rules
 
-- **Public sources only.** Never log in to anything, never read or export browser cookies, never drive
-  the user's browser. If something is behind a login (Twitter/X, Reddit, LinkedIn, Facebook, Instagram,
-  Xiaohongshu), say so in your notes and work from public sources instead.
+- **Public sources only with these tools.** Never log in to anything, never read or export browser
+  cookies, never drive a browser of your own. If something is behind a login (Twitter/X, Reddit, LinkedIn,
+  Facebook, Instagram, Xiaohongshu), use the muster `browse` tool if you have it (see "Logged-in sites"
+  below); otherwise say so in your notes and work from public sources instead.
 - **Queries leave this PC.** Exa and Jina Reader are outside services: they see what you search and the
   URLs you read. Search for the topic, never paste the project's private code, names or plans into a query.
 - **Don't run the `agent-reach` command itself.** Its `doctor`/`install` copy a skill into the user's own
@@ -79,6 +80,26 @@ work from the description and chapters. Never download the video itself. Don't u
 ```bash
 "$AGENT_REACH_PYTHON" -c "import feedparser,sys; f=feedparser.parse(sys.argv[1]); [print(e.get('published',''), '|', e.title, '|', e.link) for e in f.entries[:10]]" "https://github.blog/feed/"
 ```
+
+## Logged-in sites (the muster `browse` tool)
+
+The research agent (scout) has a `browse` MCP tool during an intel job or research run. It reads pages
+through Muster's own research browser profile, which the human signed in to (Settings → Research browser),
+so Reddit threads, LinkedIn company pages and similar pages behind a login can be read.
+
+- **Pages behind a login go only through `browse`.** Never through cookies, cookie export tools
+  (browser_cookie3, rookiepy, `agent-reach` cookie commands), a browser profile, Playwright or a Chrome you
+  start yourself. The guard refuses those commands anyway.
+- **Read-only.** `browse(url, action)` with `read` (text, optional `links`), `screenshot` (a PNG you open
+  with Read) or `scroll` (then `read` again to see what loaded). It can't post, like, follow, message,
+  connect or fill in anything, and you never try to.
+- **Rate-limited and budgeted.** Pages on one site are spaced out and each job has a page budget; when it
+  says the budget is used, finish with what you have.
+- **Public pages still come first.** Use the tools above (Jina, Exa, `gh`, RSS) for anything public, and
+  official data before logged-in pages: Companies House, store pages, public roadmaps, RSS.
+- If a page needs a login the profile doesn't have (the result says `loggedIn: false`, or the page is a
+  sign-in or "prove you're human" screen), say so in your summary; don't work around it.
+- Sources read this way carry `via` (profile/opera) when you record them.
 
 ## When a channel fails
 
