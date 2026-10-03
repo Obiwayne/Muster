@@ -169,12 +169,13 @@ describe('research ideas vs intel ideas, browse and the estimate', () => {
     expect('browse' in (draftToRun({ ...d, browse: undefined }).body ?? {})).toBe(false);
   });
 
-  it('the estimate includes an intel check per idea when competitors are tracked', async () => {
+  it('the estimate is estimateResearch from the server, with intel checks when competitors are tracked', async () => {
     const { researchEstimate } = await import('./research');
-    expect(researchEstimate('quick', 0)).toEqual({ usage: '≈ 3% of 5-hour window', checks: 'No intel checks: no competitors tracked' });
+    const { estimateResearch } = await import('../../src/core/intelestimate');
+    expect(researchEstimate('quick', 0)).toEqual({ usage: estimateResearch('quick', 0).text, checks: 'No intel checks: no competitors tracked' });
     const t = researchEstimate('thorough', 3);
-    expect(t.usage).toBe('≈ 16% of 5-hour window');
-    expect(t.checks).toMatch(/intel check per idea \(~5 × 2% against 3 competitors\)/);
-    expect(researchEstimate('quick', 1).usage).toBe('≈ 6% of 5-hour window');
+    expect(t.usage).toBe(estimateResearch('thorough', 3).text);
+    expect(t.usage).toMatch(/incl\. 9 intel checks/);
+    expect(t.checks).toBe('each idea is checked against 3 competitors');
   });
 });

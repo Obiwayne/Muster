@@ -3,6 +3,7 @@
 import type {
   BrowseMode, FeedItem, IdeaEvidence, IdeaStatus, ResearchIdea, ResearchRun, ResearchSources, ResearchState, Roadmap,
 } from '../../src/types';
+import { estimateResearch } from '../../src/core/intelestimate';
 
 export type IdeaFilter = 'new' | 'roadmap' | 'rejected';
 
@@ -246,28 +247,14 @@ export function addChip(list: string[], value: string): string[] {
   return [...list, v];
 }
 
-/** Ideas a run usually brings back, for the intel-check part of the estimate. */
-export const IDEAS_PER_RUN = { quick: 3, thorough: 5 } as const;
-const BASE_PCT = { quick: 3, thorough: 6 } as const;
-
 /**
- * TODO(intel integration): package A added `estimateResearch(depth, competitorsTracked)` in src/core/intelestimate.ts
- * (not on this branch). At integration, make this return `estimateResearch(depth, summary.competitors).text` as `usage`
- * (and drop the local numbers below) so the dashboard and the server agree.
- *
- * The estimate line under Depth. With competitors tracked, scout writes an intel check after every idea, so the
- * line includes them: about half a percent of the 5-hour window per competitor per check (at least 1%).
+ * The estimate line under Depth, from the same `estimateResearch` the server uses. With competitors tracked, scout
+ * writes an intel check after every idea, so the line includes them.
  */
 export function researchEstimate(depth: 'quick' | 'thorough', competitors: number): { usage: string; checks: string } {
-  const base = BASE_PCT[depth];
-  if (competitors <= 0) return { usage: `≈ ${base}% of 5-hour window`, checks: 'No intel checks: no competitors tracked' };
-  const ideas = IDEAS_PER_RUN[depth];
-  const perCheck = Math.max(1, Math.round(competitors * 0.5));
-  const total = base + ideas * perCheck;
-  return {
-    usage: `≈ ${total}% of 5-hour window`,
-    checks: `includes an intel check per idea (~${ideas} × ${perCheck}% against ${competitors} competitor${competitors === 1 ? '' : 's'})`,
-  };
+  const est = estimateResearch(depth, competitors);
+  if (competitors <= 0) return { usage: est.text, checks: 'No intel checks: no competitors tracked' };
+  return { usage: est.text, checks: `each idea is checked against ${competitors} competitor${competitors === 1 ? '' : 's'}` };
 }
 
 /** Body for POST /api/research/runs, or an error to show in the modal. */

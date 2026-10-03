@@ -1,5 +1,5 @@
 // Pure view-model helpers for the Intel page (no DOM): labels, verdict chips, cell pills, theme shares,
-// the thin-evidence rule, roadmap status of an intel idea, job estimates and matrix filters.
+// the thin-evidence rule, roadmap status of an intel idea, and matrix filters.
 import type {
   BrowseMode, CapabilityCell, CapabilityVerdict, IntelArea, IntelCapability, IntelClaim, IntelCompetitor, IntelConfidence, IntelJob, IntelLabel,
   IntelSample, IntelSource, IntelStore, IntelTheme, ResearchIdea, Roadmap,
@@ -242,19 +242,6 @@ export function ideaRoadmapStatus(idea: Pick<ResearchIdea, 'goalId' | 'thread' |
 }
 
 // ---------------------------------------------------------------- jobs
-
-/**
- * Rough cost of a job, for the modal's estimate line: about 3⅓ minutes and 1% of the 5-hour window per area per
- * competitor on a thorough pass (9 areas ≈ 30 min · 9%), half that on a quick one.
- */
-export function jobEstimate(areas: number, competitors = 1, depth: 'quick' | 'thorough' = 'thorough'): string {
-  const units = Math.max(0, areas) * Math.max(1, competitors) * (depth === 'quick' ? 0.5 : 1);
-  if (!units) return 'pick at least one area';
-  const min = Math.max(5, Math.round((units * 10) / 3 / 5) * 5);
-  const pct = Math.max(1, Math.round(units));
-  const time = min >= 60 ? `${Math.floor(min / 60)} h${min % 60 ? ` ${min % 60} min` : ''}` : `${min} min`;
-  return `≈ ${time} · ${pct}% of 5-hour`;
-}
 
 const JOB_KIND: Record<IntelJob['kind'], string> = {
   competitor: 'researching', sweep: 'sweeping', check: 'checking', recheck: 're-checking', watch: 'watching for changes at',

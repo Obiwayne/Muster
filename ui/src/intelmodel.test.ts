@@ -1,7 +1,7 @@
 import { describe, expect, it } from 'vitest';
 import type { CapabilityCell, IntelCapability, IntelClaim, IntelJob, IntelSample, IntelSource, IntelStore, IntelTheme, ResearchIdea } from '../../src/types';
 import {
-  cellPill, claimMeta, companyColour, compact, complaintThemes, filterCapabilities, fmtDate, ideaRoadmapStatus, isThin, jobEstimate, jobLine,
+  cellPill, claimMeta, companyColour, compact, complaintThemes, filterCapabilities, fmtDate, ideaRoadmapStatus, isThin, jobLine,
   labelDotClass, matrixCounts, matrixSummary, parseTab, sampleLine, shareOfSample, sourceLine, themeTag, themesFor, trackedCompanies, verdictChip,
 } from './intelmodel';
 import { browseFootnote, browseOptions, initialBrowseMode } from './browsechoice';
@@ -174,12 +174,6 @@ describe('intel ideas on the roadmap', () => {
 });
 
 describe('jobs', () => {
-  it('estimate line', () => {
-    expect(jobEstimate(9)).toBe('≈ 30 min · 9% of 5-hour');
-    expect(jobEstimate(9, 3)).toBe('≈ 1 h 30 min · 27% of 5-hour');
-    expect(jobEstimate(2, 1, 'quick')).toBe('≈ 5 min · 1% of 5-hour');
-    expect(jobEstimate(0)).toBe('pick at least one area');
-  });
   it('job line', () => {
     const job: IntelJob = { id: 'IJ2', kind: 'competitor', status: 'running', competitorIds: ['padlet'], areas: ['features', 'pricing'], browse: 'profile', depth: 'thorough', by: 'you', queuedAt: '', pagesBrowsed: 12 };
     expect(jobLine(job, store)).toBe('scout is researching Padlet · 2 areas · 12 pages read');
