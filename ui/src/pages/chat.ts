@@ -45,7 +45,13 @@ export function createChat(): Page {
     replyChip, input, h('div.emoji-wrap', null, emojiBtn, emojiPick), send);
   const el = h('div.page', null, filterbar, feed, jump, composer);
 
-  feed.addEventListener('scroll', () => { if (atBottom()) jump.hidden = true; });
+  // Stay pinned to the bottom while rows grow after rendering (emoji fonts, wrapping) if the reader was at the bottom.
+  let pinned = true;
+  feed.addEventListener('scroll', () => {
+    pinned = atBottom(8);
+    if (atBottom()) jump.hidden = true;
+  });
+  const grow = new ResizeObserver(() => { if (pinned) feed.scrollTop = feed.scrollHeight; });
   document.addEventListener('mousedown', (e) => {
     if (!emojiPick.hidden && !(e.target as Element).closest?.('.emoji-wrap')) emojiPick.hidden = true;
   });
@@ -125,6 +131,7 @@ export function createChat(): Page {
   }
   function toBottom(): void {
     jump.hidden = true;
+    pinned = true;
     settle(() => { feed.scrollTop = feed.scrollHeight; });
   }
   function atBottom(slack = 60): boolean { return feed.scrollHeight - feed.scrollTop - feed.clientHeight < slack; }
@@ -365,6 +372,8 @@ export function createChat(): Page {
         h('span.tt', null, `${displayName(typing)} is writing…`)));
     }
     setChildren(feed, out);
+    grow.disconnect();
+    for (const c of out) grow.observe(c);
     if (stick) toBottom();
     else if (newItems) jump.hidden = false;
   }
