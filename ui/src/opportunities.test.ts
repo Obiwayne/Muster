@@ -1,7 +1,7 @@
 import { describe, expect, it } from 'vitest';
 import type { IntelCapability, IntelCompetitor, IntelOpportunity, IntelPlan, ResearchIdea } from '../../src/types';
 import {
-  atRiskOf, detailKicker, detailRows, evidenceLines, groupOpportunities, matrixPoints, priorityOf, quadrant, scores, selectable,
+  atRiskOf, detailKicker, detailRows, evidenceLines, groupOpportunities, hasScores, matrixIdeas, matrixPoints, unplacedIdeas, priorityOf, quadrant, scores, selectable,
 } from './opportunities';
 
 const NOW = Date.parse('2026-10-03T12:00:00Z');
@@ -74,9 +74,10 @@ describe('groupOpportunities', () => {
     expect(selectable(g).map((i) => i.id)).toEqual(['R14', 'R8', 'R10', 'R12', 'R16', 'R13', 'R7']);
   });
 
-  it('matrix points: gaps and open ideas, selected one labelled with its id', () => {
+  it('matrix points: gap, open and edge ideas, selected one labelled with its id', () => {
     const pts = matrixPoints(g, 'R14');
-    expect(pts.map((p) => p.item.id)).toEqual(['R14', 'R8', 'R10', 'R12', 'R16', 'R13']);
+    expect(pts.map((p) => p.item.id)).toEqual(['R14', 'R8', 'R10', 'R12', 'R16', 'R13', 'R7']);
+    expect(pts.find((p) => p.item.id === 'R7')?.tone).toBe('edge');
     const r14 = pts[0];
     expect(r14).toMatchObject({ label: 'R14', tone: 'sel' });
     expect(r14.x).toBeLessThan(0.5); // low effort
@@ -88,6 +89,45 @@ describe('groupOpportunities', () => {
     const a = pts.find((p) => p.item.id === 'R10')!;
     const b = pts.find((p) => p.item.id === 'R12')!;
     expect(a.x !== b.x || a.y !== b.y).toBe(true);
+  });
+});
+
+describe('value vs effort with live data (sandbox: one approved edge idea R1)', () => {
+  // Live run: R1 (origin intel, kind edge, approved, on the roadmap as G6) was listed under "Where we win" but the
+  // matrix said "0 ideas" and was empty, because only gaps and open spaces were plotted.
+  const store = {
+    competitors: [comp('us', { isUs: true }), comp('padlet')],
+    checks: [],
+    plans: [],
+    capabilities: [
+      cap('F1', { name: 'Free tier padlet/board limit', verdict: 'edge', verdictVs: ['padlet'], ideaId: 'R1' }),
+      cap('F2', { name: 'Content safety / moderation for classes', verdict: 'gap', verdictVs: ['padlet'] }),
+      cap('F3', { name: 'LMS integration and SSO', verdict: 'gap', verdictVs: ['padlet'] }),
+    ],
+  };
+  const r1 = idea('R1', {
+    origin: 'intel', status: 'approved', impact: 'high', goalId: 'G6', watchId: 'W2', checkId: 'IC1',
+    opportunity: opp('edge', { capabilityIds: ['F1'], valueScore: 4, effortScore: 3 }),
+  });
+
+  it('plots and counts an approved edge idea', () => {
+    const g = groupOpportunities([r1], store, { goals: [] } as never);
+    expect(g.edges.map((i) => i.id)).toEqual(['R1']);
+    expect(matrixIdeas(g).map((i) => i.id)).toEqual(['R1']);
+    const pts = matrixPoints(g, 'R1');
+    expect(pts).toHaveLength(1);
+    expect(pts[0]).toMatchObject({ label: 'R1', tone: 'sel' });
+    expect(pts[0].y).toBeLessThan(0.5); // value 4
+    expect(unplacedIdeas(g)).toEqual([]);
+  });
+
+  it('counts an idea without value or effort and lists it as not placed', () => {
+    const bare = idea('R2', { origin: 'intel', impact: undefined as never, effort: undefined as never, opportunity: opp('gap', { valueScore: undefined as never, effortScore: undefined as never }) });
+    expect(hasScores(bare)).toBe(false);
+    const g = groupOpportunities([r1, bare], store, { goals: [] } as never);
+    expect(matrixIdeas(g).map((i) => i.id)).toEqual(['R2', 'R1']);
+    expect(matrixPoints(g, null).map((p) => p.item.id)).toEqual(['R1']);
+    expect(unplacedIdeas(g).map((i) => i.id)).toEqual(['R2']);
   });
 });
 

@@ -13,7 +13,7 @@ import { labelDot } from '../intel/common';
 import { approveIdea, checkStatus, fillIntelCheckPanel, runIntelCheck } from '../intelcheck';
 import { createCaptainRail, quickPrompts, type RailMode } from '../captainrail';
 import {
-  detailKicker, detailRows, evidenceLines, groupOpportunities, matrixPoints, selectable, type OppGroups, type OppItem,
+  detailKicker, detailRows, evidenceLines, groupOpportunities, matrixIdeas, matrixPoints, selectable, unplacedIdeas, type OppGroups, type OppItem,
 } from '../opportunities';
 
 export interface OpportunitiesCtx {
@@ -167,7 +167,8 @@ function drawList(g: OppGroups): void {
   const v = view!;
   const scroll = v.list.scrollTop;
   const pts = matrixPoints(g, selected);
-  const count = pts.length;
+  const count = matrixIdeas(g).length;
+  const unplaced = unplacedIdeas(g);
   const matrix = h('div.op-matrix', null,
     h('div.op-q'),
     h('div.op-vline'), h('div.op-hline'),
@@ -205,6 +206,10 @@ function drawList(g: OppGroups): void {
     h('div.op-sec', null,
       h('div.op-sec-head', null, h('span.op-h', null, 'Value vs effort'), h('span.op-hs', null, `${count} ${count === 1 ? 'idea' : 'ideas'}`)),
       matrix,
+      unplaced.length
+        ? h('div.op-unplaced', null, 'Not placed yet (no value or effort): ',
+          unplaced.map((i, n) => [n ? ', ' : '', h('button.op-unplaced-id', { title: i.title, onclick: () => select(i.id) }, i.id)]))
+        : null,
       h('div.it-caption', null, "Value = scout's estimate from evidence. Effort = Captain's estimate once advised, scout's until then.")),
     h('div.op-sec', null,
       h('div.op-lab.gap', null, h('span.flex1', null, `WHAT WE'RE MISSING · ${g.gaps.length} ${g.gaps.length === 1 ? 'GAP' : 'GAPS'}`), h('span.op-sort', null, 'by priority')),

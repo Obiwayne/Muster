@@ -24,6 +24,8 @@ export interface OppItem {
   priority: IntelOpportunity['priority'];
   value: number; // 1–5
   effort: number; // 1–5
+  /** False when the idea gives no value or effort to place it by (it is counted, listed as "not placed yet"). */
+  placed: boolean;
 }
 
 export interface OppGroups {
@@ -44,6 +46,13 @@ export function scores(idea: Pick<ResearchIdea, 'impact' | 'effort' | 'opportuni
     value: clamp(idea.opportunity?.valueScore ?? IMPACT_VALUE[idea.impact] ?? 3),
     effort: clamp(idea.opportunity?.effortScore ?? EFFORT_SCORE[idea.effort] ?? 3),
   };
+}
+
+/** Whether an idea has a value and an effort to plot: scout's / Captain's scores, else a known impact and S/M/L. */
+export function hasScores(idea: Pick<ResearchIdea, 'impact' | 'effort' | 'opportunity'>): boolean {
+  const v = idea.opportunity?.valueScore ?? IMPACT_VALUE[idea.impact];
+  const e = idea.opportunity?.effortScore ?? EFFORT_SCORE[idea.effort];
+  return Number.isFinite(v) && Number.isFinite(e);
 }
 
 /** Priority of an idea: its opportunity's, else approved = now, else next. */
@@ -116,7 +125,7 @@ export function groupOpportunities(
     const s = scores(idea);
     const atRisk = kind === 'edge' ? atRiskOf(caps, store, idea.opportunity) : undefined;
     const item: OppItem = {
-      idea, caps, kind, id: idea.id, title: idea.title, priority: priorityOf(idea), value: s.value, effort: s.effort,
+      idea, caps, kind, id: idea.id, title: idea.title, priority: priorityOf(idea), value: s.value, effort: s.effort, placed: hasScores(idea),
       note: atRisk ?? capNote(kind, caps, store), ...(atRisk ? { atRisk } : {}),
       ...(kind === 'gap' ? { status: ideaRoadmapStatus(idea, roadmap) } : {}),
     };
@@ -128,7 +137,7 @@ export function groupOpportunities(
     if (c.verdict !== 'edge' && c.verdict !== 'open' && c.verdict !== 'gap') continue;
     const atRisk = c.verdict === 'edge' ? atRiskOf([c], store) : undefined;
     const item: OppItem = {
-      caps: [c], kind: c.verdict, id: c.id, title: c.name, priority: 'next', value: 3, effort: 3, note: atRisk ?? capNote(c.verdict, [c], store), ...(atRisk ? { atRisk } : {}),
+      caps: [c], kind: c.verdict, id: c.id, title: c.name, priority: 'next', value: 3, effort: 3, placed: false, note: atRisk ?? capNote(c.verdict, [c], store), ...(atRisk ? { atRisk } : {}),
       ...(c.verdict === 'gap' ? { status: { text: 'No idea yet', cls: 'none' as const } } : {}),
     };
     (c.verdict === 'gap' ? out.gaps : c.verdict === 'open' ? out.open : out.edges).push(item);
@@ -156,14 +165,25 @@ export function quadrant(value: number, effort: number): Quadrant {
   return hiV ? (loE ? 'quick_win' : 'big_bet') : (loE ? 'fill_in' : 'money_pit');
 }
 
-export interface MatrixPoint { item: OppItem; x: number; y: number; label: string; tone: 'on' | 'sel' | 'idle' | 'parked' | 'open' }
+export interface MatrixPoint { item: OppItem; x: number; y: number; label: string; tone: 'on' | 'sel' | 'idle' | 'parked' | 'open' | 'edge' }
+
+/** Every idea the matrix counts: gaps, open spaces and edges that have an idea (any status but rejected). */
+export function matrixIdeas(g: OppGroups): OppItem[] {
+  return [...g.gaps, ...g.open, ...g.edges].filter((i) => i.idea);
+}
+
+/** Ideas the matrix counts but can't place (no value or effort yet): shown as a "not placed yet" note. */
+export function unplacedIdeas(g: OppGroups): OppItem[] {
+  return matrixIdeas(g).filter((i) => !i.placed);
+}
 
 /**
- * Points on the 0..1 matrix (x = effort low→high, y = value high→low, inset so dots stay inside), for gaps and open
- * ideas. Dots sharing a cell are fanned out so none hides another.
+ * Points on the 0..1 matrix (x = effort low→high, y = value high→low, inset so dots stay inside), for every idea
+ * with a value and effort: gaps, open spaces and edges, approved or on the roadmap too. Dots sharing a cell are
+ * fanned out so none hides another.
  */
 export function matrixPoints(g: OppGroups, selectedId: string | null): MatrixPoint[] {
-  const items = [...g.gaps, ...g.open].filter((i) => i.idea);
+  const items = matrixIdeas(g).filter((i) => i.placed);
   const pos = (s: number) => 0.1 + ((s - 1) / 4) * 0.8;
   const used = new Map<string, number>();
   return items.map((item) => {
@@ -177,7 +197,7 @@ export function matrixPoints(g: OppGroups, selectedId: string | null): MatrixPoi
     const tone: MatrixPoint['tone'] = item.id === selectedId ? 'sel'
       : item.idea?.goalId || item.idea?.status === 'approved' ? 'on'
         : item.priority === 'parked' ? 'parked'
-          : item.kind === 'open' ? 'open' : 'idle';
+          : item.kind === 'open' ? 'open' : item.kind === 'edge' ? 'edge' : 'idle';
     return { item, x, y, label: item.id === selectedId ? item.id : String(num(item.id)), tone };
   });
 }
