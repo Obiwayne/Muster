@@ -99,6 +99,10 @@ so Reddit threads, LinkedIn company pages and similar pages behind a login can b
   official data before logged-in pages: Companies House, store pages, public roadmaps, RSS.
 - If a page needs a login the profile doesn't have (the result says `loggedIn: false`, or the page is a
   sign-in or "prove you're human" screen), say so in your summary; don't work around it.
+- **Bot checks:** when a site answers the research browser with a bot check ("Just a moment…", 403/429),
+  the result carries `blocked` and `browse` reads the public page through the Jina Reader (or a plain
+  cookie-less request) instead, with `readVia: "public_reader"`. Never retry to get past the check. Title
+  that source "… (read via public reader (site blocked the research browser))".
 - Sources read this way carry `via` (profile/opera) when you record them.
 
 ## When a channel fails

@@ -881,6 +881,7 @@ export interface ResearchSiteStatus {
   checkedAt: string;
   warning?: string; // LinkedIn: "restricts automated accounts; use a separate account"
   limits?: string; // honest limits: "Reddit's anonymous JSON is blocked; reads need the login"
+  blocked?: { reason: string; at: string }; // the site answered the research browser with a bot check last time (src/browser/botcheck.ts)
 }
 
 /** GET /api/browser: what the research browser can do on this PC. */
@@ -894,6 +895,8 @@ export interface ResearchBrowserStatus {
   sites: ResearchSiteStatus[];
   tools: { name: string; ok: boolean; note?: string }[]; // yt-dlp, Agent Reach python, browser_cookie3, Opera profile
   opera: { found: boolean; profileDir?: string; allow: string[]; lastImportAt?: string; imported?: Record<string, number> }; // imported: domain → cookie count (never values)
+  /** Domains whose last load was a bot check or block ("Just a moment…", 429); cleared by the next good load. Scout reads them via the public reader. */
+  blocked?: { domain: string; reason: string; at: string }[];
 }
 
 /** What the read-only browse tool returns to scout (POST /api/browser/read). */
@@ -908,4 +911,7 @@ export interface BrowseResult {
   loggedIn?: boolean; // a login cookie for this domain was present
   via: BrowseMode;
   pagesLeft: number; // of this job's budget
+  blocked?: string; // the site answered with a bot check / block instead of the page: "bot check (Cloudflare)", "rate limited (429)"
+  readVia?: 'public_reader'; // set when `text` came from the public reader (r.jina.ai, else a plain cookie-less request) because the site blocked the browser
+  note?: string; // for scout: "read via public reader (site blocked the research browser)"; put it on the source title
 }

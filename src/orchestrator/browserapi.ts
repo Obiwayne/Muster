@@ -3,6 +3,7 @@
 import { existsSync, readdirSync } from 'node:fs';
 import { join } from 'node:path';
 import type { ResearchBrowser } from '../browser/researchbrowser.js';
+import { PUBLIC_READER_NOTE, readPublic, type PublicRead } from '../browser/botcheck.js';
 import { badRequest, conflict, forbidden, HttpError } from '../core/errors.js';
 import { probeSite, type ProbeOptions } from '../core/intelprobe.js';
 import type { BrowseMode, BrowseResult, IntelProbe, MusterConfig } from '../types.js';
@@ -29,6 +30,8 @@ export interface BrowserRouteDeps {
   shotsDir(id: string): string; // .muster/intel/shots/<id>
   /** Test seam for POST /api/intel/probe. */
   probe?: (url: string, opts: ProbeOptions) => Promise<IntelProbe>;
+  /** Test seam: the public reader used when a site blocks the research browser (default readPublic). */
+  publicRead?: (url: string) => Promise<PublicRead>;
 }
 
 const ACTIONS = new Set(['read', 'screenshot', 'scroll']);
@@ -96,7 +99,26 @@ export function registerBrowserRoutes(route: RouteFn, deps: BrowserRouteDeps): v
           ? await browser.scroll(body.url, { mode, by: body.by === undefined ? undefined : Number(body.by) })
           : await browser.read(body.url, { mode, links: body.links === true });
     deps.countPage(work.id);
-    return { ...out, via: work.mode, pagesLeft: Math.max(0, work.pagesLeft - 1) };
+    const done: BrowseResult = { ...out, via: work.mode, pagesLeft: Math.max(0, work.pagesLeft - 1) };
+    if (!done.blocked) return done;
+    // The site answered with a bot check: no getting past it. Read the public page another way and say so.
+    if (action !== 'read') return { ...done, note: `The site blocked the research browser (${done.blocked}). Use action read to get its text through the public reader.` };
+    try {
+      const pub = await (deps.publicRead ?? ((u: string) => readPublic(u)))(body.url);
+      return {
+        ...done,
+        url: pub.url || done.url,
+        title: pub.title || done.title,
+        status: 200,
+        text: pub.text,
+        links: undefined,
+        loggedIn: false,
+        readVia: 'public_reader',
+        note: `${PUBLIC_READER_NOTE}: ${done.blocked}. Cite it as "${PUBLIC_READER_NOTE}".`,
+      };
+    } catch (e) {
+      return { ...done, note: `The site blocked the research browser (${done.blocked}) and the public reader failed too (${e instanceof Error ? e.message : e}). Use other sources for it.` };
+    }
   });
 
   route('POST', '/api/intel/probe', ({ body }) => {

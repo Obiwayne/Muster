@@ -164,6 +164,7 @@ describe('researchPrompt', () => {
     expect(p).toMatch(/Read-only, and never sign in yourself/);
     expect(p).toMatch(/Pages behind a login only through `browse`/);
     expect(p).toMatch(/Never touch cookies, browser profiles/);
+    expect(p).toMatch(/read via public reader \(site blocked the research browser\)/);
     expect(p).toMatch(/Never change code/);
     expect(p).toContain('muster:web-research');
     expect(p).toMatch(/at most 300 characters/);

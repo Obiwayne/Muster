@@ -49,8 +49,9 @@ let cfg: MusterConfig;
 let work: { id: string; mode: BrowseMode; pagesLeft: number } | null;
 let counted: string[];
 
-function setup() {
+function setup(over: Partial<BrowserRouteDeps> = {}, tweak?: (b: BrowserLike) => void) {
   const { browser, calls } = fakeBrowser();
+  tweak?.(browser);
   const call = harness({
     browser,
     config: () => cfg,
@@ -60,6 +61,7 @@ function setup() {
     countPage: (id) => void counted.push(id),
     shotsDir: (id) => join(dir, 'shots', id),
     probe: async (url, opts) => ({ url, found: true, legal: [], companies: [], sources: [], notes: [opts.companiesHouseKey ?? 'no key'] }),
+    ...over,
   });
   return { call, calls };
 }
@@ -163,5 +165,35 @@ describe('browser routes', () => {
     expect(await call('POST', '/api/intel/probe', { url: 'padlet.com' })).toMatchObject({ url: 'padlet.com', notes: ['no key'] });
     cfg.intel.companiesHouseKey = 'abc';
     expect(await call('POST', '/api/intel/probe', { url: 'padlet.com' })).toMatchObject({ notes: ['abc'] });
+  });
+
+  describe('a site that blocks the research browser', () => {
+    const blockedRead = (b: BrowserLike) => {
+      b.read = async (url: string, o: { mode: BrowseMode }) => ({ url, title: 'Just a moment...', status: 403, text: 'Checking if the site connection is secure', via: o.mode, blocked: 'bot check (Cloudflare)' });
+      b.screenshot = async (url: string, o: { mode: BrowseMode; path: string }) => ({ url, title: 'Just a moment...', status: 403, screenshot: o.path, via: o.mode, blocked: 'bot check (Cloudflare)' });
+    };
+
+    it('reads the page through the public reader instead, and says so', async () => {
+      const asked: string[] = [];
+      const { call } = setup({ publicRead: async (url) => (asked.push(url), { url, title: 'Padlet pricing', text: 'Gold $6.99', reader: 'jina' }) }, blockedRead);
+      const r = await call('POST', '/api/browser/read', { actor: 'scout', url: 'https://padlet.com/premium' });
+      expect(asked).toEqual(['https://padlet.com/premium']);
+      expect(r).toMatchObject({ text: 'Gold $6.99', title: 'Padlet pricing', status: 200, blocked: 'bot check (Cloudflare)', readVia: 'public_reader', loggedIn: false, pagesLeft: 149 });
+      expect((r as { note: string }).note).toMatch(/read via public reader \(site blocked the research browser\)/);
+      expect(counted).toEqual(['IJ3']);
+    });
+
+    it('reports the block when the public reader fails too', async () => {
+      const { call } = setup({ publicRead: async () => { throw new Error('public reader: HTTP 451'); } }, blockedRead);
+      const r = (await call('POST', '/api/browser/read', { actor: 'scout', url: 'https://padlet.com/' })) as { note: string; readVia?: string };
+      expect(r.readVia).toBeUndefined();
+      expect(r.note).toMatch(/public reader failed too .*HTTP 451.*other sources/);
+    });
+
+    it('a blocked screenshot points scout at action read', async () => {
+      const { call } = setup({ publicRead: async () => { throw new Error('never called'); } }, blockedRead);
+      const r = (await call('POST', '/api/browser/read', { actor: 'scout', url: 'https://padlet.com/', action: 'screenshot' })) as { note: string };
+      expect(r.note).toMatch(/Use action read/);
+    });
   });
 });

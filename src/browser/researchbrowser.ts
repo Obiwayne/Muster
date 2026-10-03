@@ -13,6 +13,7 @@ import { HttpError, badRequest, conflict, notFound } from '../core/errors.js';
 import { secretsBase } from '../core/tokens.js';
 import type { BrowseMode, BrowseResult, ResearchBrowserConfig, ResearchBrowserStatus, ResearchSiteStatus } from '../types.js';
 import { agentReachPython, exportOperaCookies, operaFound, operaProfileDir, realRunner, type OperaOptions, type PwCookie, type PythonRunner } from './opera.js';
+import { detectBlock } from './botcheck.js';
 import { cleanDomain, hostMatches, siteByName, siteDomains, siteForHost, SITES } from './sites.js';
 
 // ---- the slice of playwright-core this module uses ---------------------------------------------
@@ -92,6 +93,8 @@ export interface ResearchBrowserOptions {
 interface SavedState {
   sites: Record<string, { connected: boolean; via?: 'login' | 'opera'; checkedAt: string }>;
   opera: { lastImportAt?: string; imported?: Record<string, number> };
+  /** domain → the bot check it answered with last time (cleared by a good load). */
+  blocked?: Record<string, { reason: string; at: string }>;
 }
 
 export interface ReadOpts {
@@ -225,8 +228,10 @@ export class ResearchBrowser {
         checkedAt: st?.checkedAt ?? '',
         ...(s.warning ? { warning: s.warning } : {}),
         ...(s.limits ? { limits: s.limits } : {}),
+        ...(this.blockedFor(siteDomains(s)) ? { blocked: this.blockedFor(siteDomains(s)) } : {}),
       };
     });
+    const blocked = Object.entries(this.saved.blocked ?? {}).map(([domain, b]) => ({ domain, ...b }));
     const operaDir = operaProfileDir(this.env, this.platform);
     const found = operaFound(operaDir, this.exists);
     return {
@@ -245,7 +250,34 @@ export class ResearchBrowser {
         ...(this.saved.opera.lastImportAt ? { lastImportAt: this.saved.opera.lastImportAt } : {}),
         ...(this.saved.opera.imported ? { imported: { ...this.saved.opera.imported } } : {}),
       },
+      ...(blocked.length ? { blocked } : {}),
     };
+  }
+
+  /** The newest bot-check record for any of a site's domains (or their subdomains). */
+  private blockedFor(domains: string[]): { reason: string; at: string } | undefined {
+    const hits = Object.entries(this.saved.blocked ?? {}).filter(([d]) => domains.some((s) => hostMatches(d, s)));
+    return hits.sort((a, b) => b[1].at.localeCompare(a[1].at))[0]?.[1];
+  }
+
+  /** Remembers (or clears) that a domain answered with a bot check; saved only when it changes. */
+  private noteBlocked(url: string, reason: string | undefined): void {
+    let host: string;
+    try {
+      host = domainKey(new URL(url).hostname);
+    } catch {
+      return;
+    }
+    const all = (this.saved.blocked ??= {});
+    if (!reason) {
+      if (!all[host]) return;
+      delete all[host];
+    } else {
+      all[host] = { reason, at: new Date(this.now()).toISOString() };
+      const keys = Object.keys(all);
+      if (keys.length > 50) for (const k of keys.sort((a, b) => all[a].at.localeCompare(all[b].at)).slice(0, keys.length - 50)) delete all[k];
+    }
+    this.save();
   }
 
   /** Why the browser can't run, or undefined when it can. */
@@ -366,12 +398,22 @@ export class ResearchBrowser {
       const final = page.url();
       const title = await page.title().catch(() => '');
       const loggedIn = mode === 'public' ? false : await this.loggedIn(final);
+      // A bot check or block instead of the page: say so (the API falls back to the public reader); the page is left as it is.
+      const seen = await page
+        .evaluate(() => {
+          const doc = (globalThis as any).document;
+          return { html: String(doc?.documentElement?.outerHTML ?? '').slice(0, 60_000), text: String(doc?.body?.innerText ?? '').slice(0, 5000) };
+        }, undefined)
+        .catch(() => ({ html: '', text: '' }));
+      const blocked = detectBlock({ status: out.status, title, html: seen.html, text: out.text ?? seen.text });
+      this.noteBlocked(final, blocked);
       return {
         url: final,
         title,
         ...out,
         ...(loggedIn !== undefined ? { loggedIn } : {}),
         via: mode,
+        ...(blocked ? { blocked } : {}),
       } as BrowseOut;
     });
   }
@@ -590,10 +632,10 @@ export class ResearchBrowser {
     await pub?.close().catch(() => undefined);
   }
 
-  /** Closes everything (server shutdown). */
+  /** Closes everything (server shutdown). Never starts anything: no status refresh, no python check. */
   async close(): Promise<void> {
     if (this.idleTimer) clearTimeout(this.idleTimer);
-    await this.closeLogin().catch(() => undefined);
+    await this.closeLoginWindow().catch(() => undefined);
     await this.closeBrowsing();
   }
 
@@ -647,6 +689,11 @@ export class ResearchBrowser {
 
   /** Closes the login window and records which sites are now signed in. */
   async closeLogin(): Promise<ResearchBrowserStatus> {
+    await this.closeLoginWindow();
+    return this.status();
+  }
+
+  private async closeLoginWindow(): Promise<void> {
     const ctx = this.loginCtx;
     if (ctx) {
       if (!this.loginClosing) {
@@ -659,7 +706,6 @@ export class ResearchBrowser {
       }
       await this.loginClosing;
     }
-    return this.status();
   }
 
   private async loginGone(ctx: PwContext): Promise<void> {
@@ -740,7 +786,11 @@ export class ResearchBrowser {
   private loadSaved(): SavedState {
     try {
       const raw = JSON.parse(readFileSync(this.stateFile, 'utf8')) as Partial<SavedState>;
-      return { sites: raw.sites && typeof raw.sites === 'object' ? raw.sites : {}, opera: raw.opera && typeof raw.opera === 'object' ? raw.opera : {} };
+      return {
+        sites: raw.sites && typeof raw.sites === 'object' ? raw.sites : {},
+        opera: raw.opera && typeof raw.opera === 'object' ? raw.opera : {},
+        ...(raw.blocked && typeof raw.blocked === 'object' ? { blocked: raw.blocked } : {}),
+      };
     } catch {
       return { sites: {}, opera: {} };
     }

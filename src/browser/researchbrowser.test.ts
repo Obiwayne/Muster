@@ -369,6 +369,24 @@ describe('read-only browsing', () => {
     expect(other.loggedIn).toBeUndefined();
   });
 
+  it('marks a bot check as blocked (never solving it), lists the site in the status until a good load', async () => {
+    world.sites['https://padlet.com/'] = { status: 403, title: 'Just a moment...', text: 'padlet.com\nChecking if the site connection is secure' };
+    world.sites['https://www.reddit.com/r/x/'] = { status: 429, title: 'Too Many Requests', text: 'whoa there, pardner!' };
+    const b = make();
+    const r = await b.read('https://padlet.com/', { mode: 'profile' });
+    expect(r).toMatchObject({ status: 403, blocked: 'bot check (Cloudflare)' });
+    expect((await b.read('https://www.reddit.com/r/x/', { mode: 'profile' })).blocked).toBe('rate limited (429)');
+    let st = await b.status();
+    expect(st.blocked?.map((x) => [x.domain, x.reason])).toEqual([['padlet.com', 'bot check (Cloudflare)'], ['reddit.com', 'rate limited (429)']]);
+    expect(st.sites.find((s) => s.site === 'reddit')?.blocked?.reason).toBe('rate limited (429)');
+    // Saved with the rest of the status (no cookie values): a new instance still knows
+    expect(JSON.parse(readFileSync(join(dir, 'research-browser', 'status.json'), 'utf8')).blocked['padlet.com'].reason).toBe('bot check (Cloudflare)');
+    world.sites['https://padlet.com/'] = { title: 'Padlet', text: 'Make beautiful boards' };
+    expect((await b.read('https://padlet.com/', { mode: 'profile' })).blocked).toBeUndefined();
+    st = await b.status();
+    expect(st.blocked?.map((x) => x.domain)).toEqual(['reddit.com']);
+  });
+
   it('drops the HeadlessChrome marker from the user agent (sites block it)', async () => {
     world.userAgent = 'Mozilla/5.0 (Windows NT 10.0) HeadlessChrome/141.0.0.0 Safari/537.36';
     await make().read('https://a.com/', { mode: 'profile' });

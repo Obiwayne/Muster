@@ -778,7 +778,10 @@ ${r.output}`;
           if (/No route|\b404\b/.test(msg)) return "The research browser isn't available yet; use the web-research tools.";
           throw e;
         }
-        const head = `${r.title || r.url} (${r.status}, via ${r.via}${r.loggedIn ? ', signed in' : ''}) · ${r.pagesLeft} pages left`;
+        const via = r.readVia === 'public_reader' ? 'public reader' : r.via;
+        const head = `${r.title || r.url} (${r.status}, via ${via}${r.loggedIn ? ', signed in' : ''}) · ${r.pagesLeft} pages left${r.blocked ? `
+Blocked: ${r.blocked}.` : ''}${r.note ? `
+${r.note}` : ''}`;
         if (r.screenshot) return `${head}\nScreenshot: ${r.screenshot}`;
         if (r.scrolled) return `${head}\nScrolled to ${r.scrolled.y} of ${r.scrolled.height}px.`;
         const linkLines = r.links?.length ? `\n\nLinks:\n${r.links.map((l) => `- ${clip(l.text, 80)} ${l.url}`).join('\n')}` : '';
