@@ -20,7 +20,8 @@ export function createIntelMock(deps) {
   const iso = (minAgo) => new Date(now - minAgo * 60_000).toISOString();
   const today = ymd(0);
 
-  config.researchBrowser ??= { mode: 'profile', channel: 'chrome', operaAllow: [], minDelayMs: 3000, maxPagesPerJob: 150 };
+  config.researchBrowser ??= { mode: 'profile', channel: 'chrome', operaAllow: [], minDelayMs: 3000, maxPagesPerJob: 150, visibleSites: [] };
+  config.researchBrowser.visibleSites ??= [];
   config.intel ??= { recheck: 'weekly', checkMaxAgeDays: 14 };
 
   // ---------------------------------------------------------------- sources
@@ -518,7 +519,7 @@ export function createIntelMock(deps) {
       { site: 'linkedin', label: 'LinkedIn', domain: 'linkedin.com', loginUrl: 'https://www.linkedin.com/login', connected: true, via: 'login', checkedAt: iso(30), warning: 'LinkedIn restricts automated accounts; use a separate account' },
       { site: 'x', label: 'X', domain: 'x.com', loginUrl: 'https://x.com/login', connected: false, checkedAt: iso(30), limits: 'Not set up' },
       { site: 'youtube', label: 'YouTube', domain: 'youtube.com', loginUrl: 'https://accounts.google.com/', connected: false, checkedAt: iso(30), limits: 'yt-dlp is not on PATH: Agent Reach\'s YouTube channel is off' },
-      { site: 'g2', label: 'G2', domain: 'g2.com', loginUrl: 'https://www.g2.com/login', connected: false, checkedAt: iso(30) },
+      { site: 'g2', label: 'G2', domain: 'g2.com', loginUrl: 'https://www.g2.com/login', connected: false, checkedAt: iso(30), blocked: { reason: 'bot check (Cloudflare)', at: iso(95) } },
     ],
     opera: { found: true, profileDir: 'C:/Users/alex/AppData/Roaming/Opera Software/Opera Stable', imported: undefined, lastImportAt: undefined },
   };
@@ -527,7 +528,8 @@ export function createIntelMock(deps) {
     : {
         available: true, channel: 'chrome', profileDir: 'C:/Users/alex/AppData/Local/muster/research-browser/profile', state: browser.state,
         ...(browser.loginSite ? { loginSite: browser.loginSite } : {}),
-        sites: browser.sites,
+        sites: browser.sites.map((s) => ({ ...s, ...((config.researchBrowser.visibleSites ?? []).includes(s.domain) ? { visible: true } : {}) })),
+        blocked: browser.sites.filter((s) => s.blocked).map((s) => ({ domain: s.domain, ...s.blocked })),
         tools: [{ name: 'yt-dlp', ok: false, note: 'not on PATH' }, { name: 'Agent Reach python', ok: true }, { name: 'browser_cookie3', ok: true }, { name: 'Opera profile', ok: true }],
         opera: { ...browser.opera, allow: config.researchBrowser.operaAllow },
       });

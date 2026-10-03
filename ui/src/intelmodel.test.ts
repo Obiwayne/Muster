@@ -194,10 +194,10 @@ describe('browse choice', () => {
   it('without a research browser only public pages are usable', () => {
     const opts = browseOptions(['reddit.com'], status({ available: false, problem: 'playwright-core is not installed' }));
     expect(opts.filter((o) => !o.disabled).map((o) => o.mode)).toEqual(['public']);
-    expect(initialBrowseMode({ researchBrowser: { mode: 'profile', channel: 'chrome', operaAllow: [], minDelayMs: 0, maxPagesPerJob: 1 } }, status({ available: false }))).toBe('public');
+    expect(initialBrowseMode({ researchBrowser: { mode: 'profile', channel: 'chrome', operaAllow: [], minDelayMs: 0, maxPagesPerJob: 1, visibleSites: [] } }, status({ available: false }))).toBe('public');
   });
   it('starts from the config default, falling back when it is unusable', () => {
-    const cfg = (mode: 'profile' | 'public' | 'opera', operaAllow: string[] = []) => ({ researchBrowser: { mode, channel: 'chrome' as const, operaAllow, minDelayMs: 0, maxPagesPerJob: 1 } });
+    const cfg = (mode: 'profile' | 'public' | 'opera', operaAllow: string[] = []) => ({ researchBrowser: { mode, channel: 'chrome' as const, operaAllow, minDelayMs: 0, maxPagesPerJob: 1, visibleSites: [] } });
     expect(initialBrowseMode(cfg('public'))).toBe('public');
     expect(initialBrowseMode(cfg('opera'))).toBe('profile');
     expect(initialBrowseMode(cfg('opera', ['reddit.com']))).toBe('opera');

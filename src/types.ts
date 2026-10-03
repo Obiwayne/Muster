@@ -353,7 +353,7 @@ export const DEFAULT_CONFIG: MusterConfig = {
   requireEvidence: true,
   notify: true,
   weeklyAlerts: true,
-  researchBrowser: { mode: 'profile', channel: 'chrome', operaAllow: [], minDelayMs: 3000, maxPagesPerJob: 150 },
+  researchBrowser: { mode: 'profile', channel: 'chrome', operaAllow: [], minDelayMs: 3000, maxPagesPerJob: 150, visibleSites: [] },
   intel: { recheck: 'weekly', checkMaxAgeDays: 14 },
   allowedTools: [
     'Bash(npm *)', // no Bash(node *) / Bash(npx *): either runs arbitrary code without a prompt
@@ -497,6 +497,8 @@ export interface ResearchBrowserConfig {
   operaAllow: string[]; // registrable domains whose Opera cookies may be imported, e.g. ["reddit.com"]; empty = Opera mode imports nothing
   minDelayMs: number; // at least this long between two page loads on the same domain (default 3000)
   maxPagesPerJob: number; // browse calls allowed per intel job or research run (default 150)
+  /** Registrable domains ("reddit.com") the research profile reads in a visible, headed Chrome window instead of headless (default []). */
+  visibleSites: string[];
 }
 
 /** config.intel */
@@ -882,6 +884,7 @@ export interface ResearchSiteStatus {
   warning?: string; // LinkedIn: "restricts automated accounts; use a separate account"
   limits?: string; // honest limits: "Reddit's anonymous JSON is blocked; reads need the login"
   blocked?: { reason: string; at: string }; // the site answered the research browser with a bot check last time (src/browser/botcheck.ts)
+  visible?: boolean; // config.researchBrowser.visibleSites has it: the profile reads it in a visible window
 }
 
 /** GET /api/browser: what the research browser can do on this PC. */

@@ -121,7 +121,11 @@ describe('intel API', () => {
     expect((await call('you', 'PATCH', '/api/config', { researchBrowser: { operaAllow: ['not a domain'] } })).status).toBe(400);
     expect((await call('you', 'PATCH', '/api/config', { researchBrowser: { mode: 'sneaky' } })).status).toBe(400);
     const c = await ok<MusterConfig>('you', 'PATCH', '/api/config', { researchBrowser: { operaAllow: ['Reddit.com'] }, intel: { recheck: 'weekly' } });
-    expect(c.researchBrowser).toEqual({ mode: 'profile', channel: 'chrome', operaAllow: ['reddit.com'], minDelayMs: 3000, maxPagesPerJob: 150 });
+    expect(c.researchBrowser).toEqual({ mode: 'profile', channel: 'chrome', operaAllow: ['reddit.com'], minDelayMs: 3000, maxPagesPerJob: 150, visibleSites: [] });
+    expect((await call('you', 'PATCH', '/api/config', { researchBrowser: { visibleSites: ['reddit'] } })).status).toBe(400);
+    const v = await ok<MusterConfig>('you', 'PATCH', '/api/config', { researchBrowser: { visibleSites: ['Reddit.com', 'reddit.com'] } });
+    expect(v.researchBrowser).toMatchObject({ operaAllow: ['reddit.com'], visibleSites: ['reddit.com'] });
+    expect((await ok<MusterConfig>('you', 'PATCH', '/api/config', { researchBrowser: { visibleSites: null } })).researchBrowser.visibleSites).toEqual([]);
     expect(c.intel).toEqual({ recheck: 'weekly', checkMaxAgeDays: 14 });
     expect((await call('captain', 'PATCH', '/api/config', { intel: { recheck: 'off' } })).status).toBe(403);
   });

@@ -187,7 +187,7 @@ export class ResearchBrowser {
   private lastStatus = new WeakMap<PwPage, number>();
   private lastAction = new WeakMap<PwPage, 'read' | 'screenshot' | 'scroll'>();
   private requested = new WeakMap<PwPage, string>(); // the URL asked for (before redirects), so a scroll after a read reuses the page
-  private userAgent?: string; // the installed browser's own UA minus "Headless" ('' = no override needed)
+  private profileHeaded = false; // the profile context is a visible window (a site in config.visibleSites)
   private tools?: { at: number; list: ResearchBrowserStatus['tools'] };
   private firstLookAt = -Infinity; // last time status() launched the profile just to read which sites are signed in
   private saved: SavedState;
@@ -232,6 +232,7 @@ export class ResearchBrowser {
         checkedAt: st?.checkedAt ?? '',
         ...(s.warning ? { warning: s.warning } : {}),
         ...(s.limits ? { limits: s.limits } : {}),
+        ...((cfg.visibleSites ?? []).some((d) => siteDomains(s).some((x) => hostMatches(x, d) || hostMatches(d, x))) ? { visible: true } : {}),
         ...(this.blockedFor(siteDomains(s)) ? { blocked: this.blockedFor(siteDomains(s)) } : {}),
       };
     });
@@ -327,7 +328,7 @@ export class ResearchBrowser {
   /** Visible text of a page (≤ 40,000 chars), and its links when asked. */
   read(url: string, opts: ReadOpts): Promise<BrowseOut> {
     const target = checkUrl(url);
-    return this.browse(opts.mode, 'read', async (page) => {
+    return this.browse(opts.mode, target, 'read', async (page) => {
       // A read loads the page fresh, except right after a scroll of it (to see what the scroll loaded).
       const status = await this.navigate(page, target, this.lastAction.get(page) === 'scroll');
       const got = await page.evaluate(
@@ -357,7 +358,7 @@ export class ResearchBrowser {
   /** A PNG of the page at `path` (the API picks .muster/intel/shots/<id>/<n>.png). */
   screenshot(url: string, opts: { mode: BrowseMode; path: string; fullPage?: boolean }): Promise<BrowseOut> {
     const target = checkUrl(url);
-    return this.browse(opts.mode, 'screenshot', async (page) => {
+    return this.browse(opts.mode, target, 'screenshot', async (page) => {
       const status = await this.navigate(page, target, true);
       mkdirSync(dirname(opts.path), { recursive: true });
       await page.screenshot({ path: opts.path, fullPage: !!opts.fullPage });
@@ -369,7 +370,7 @@ export class ResearchBrowser {
   scroll(url: string, opts: { mode: BrowseMode; by?: number }): Promise<BrowseOut> {
     const target = checkUrl(url);
     const by = Number.isFinite(opts.by) ? Math.max(-20_000, Math.min(20_000, Number(opts.by))) : 2000;
-    return this.browse(opts.mode, 'scroll', async (page) => {
+    return this.browse(opts.mode, target, 'scroll', async (page) => {
       const status = await this.navigate(page, target, true);
       const where = () =>
         page.evaluate(() => {
@@ -391,12 +392,12 @@ export class ResearchBrowser {
   }
 
   /** Runs one browse call: one at a time, on the mode's page; adds url, title, loggedIn and via. */
-  private browse(mode: BrowseMode, action: 'read' | 'screenshot' | 'scroll', fn: (page: PwPage) => Promise<Partial<BrowseOut> & { status: number }>): Promise<BrowseOut> {
+  private browse(mode: BrowseMode, target: string, action: 'read' | 'screenshot' | 'scroll', fn: (page: PwPage) => Promise<Partial<BrowseOut> & { status: number }>): Promise<BrowseOut> {
     if (mode !== 'public' && this.loginCtx) return Promise.reject(conflict('The research browser login window is open: close the login window first.'));
     return this.exclusive(async () => {
       if (mode !== 'public' && this.loginCtx) throw conflict('The research browser login window is open: close the login window first.');
       await this.ensureAvailable();
-      const page = mode === 'public' ? await this.publicPageGet() : await this.profilePageGet();
+      const page = mode === 'public' ? await this.publicPageGet() : await this.profilePageGet(this.visibleFor(target));
       const out = await fn(page);
       this.lastAction.set(page, action);
       const final = page.url();
@@ -508,21 +509,21 @@ export class ResearchBrowser {
       acceptDownloads: false,
       permissions: [],
       ...(headless ? { viewport: { width: 1280, height: 900 } } : { viewport: null }),
-      ...(headless && this.userAgent ? { userAgent: this.userAgent } : {}),
     };
   }
 
   /**
-   * Headless Chrome says "HeadlessChrome" in its user agent, and sites like Reddit then block the page
-   * (403 "blocked by network security" even when signed in). Learn the installed browser's own UA once
-   * and use it without the Headless marker. Returns true when a relaunch with the override is needed.
+   * Sites you asked to read in a visible window (config.visibleSites): the research profile opens as a normal,
+   * headed Chrome window for them. The browser's own user agent is used everywhere; Muster never disguises it.
    */
-  private async learnUserAgent(ctx: PwContext): Promise<boolean> {
-    if (this.userAgent !== undefined) return false;
-    const page = ctx.pages()[0] ?? (await ctx.newPage());
-    const ua = String(await page.evaluate(() => (globalThis as any).navigator?.userAgent ?? '', undefined).catch(() => ''));
-    this.userAgent = /Headless/i.test(ua) ? ua.replace(/HeadlessChrome/g, 'Chrome').replace(/Headless/gi, '') : '';
-    return !!this.userAgent;
+  private visibleFor(url: string): boolean {
+    let host: string;
+    try {
+      host = new URL(url).hostname;
+    } catch {
+      return false;
+    }
+    return (this.opts.config().visibleSites ?? []).some((d) => hostMatches(host, d));
   }
 
   /** Launch with the configured channel; fall back to playwright's own Chromium when that fails and one is cached. */
@@ -552,16 +553,19 @@ export class ResearchBrowser {
     p.on('dialog', (d) => void d.dismiss().catch(() => undefined));
   }
 
-  private async profileContext(): Promise<PwContext> {
-    if (this.profileCtx) return this.profileCtx;
+  /** The research profile, headless unless `headed` (a visible-window site); switching closes and relaunches it. */
+  private async profileContext(headed?: boolean): Promise<PwContext> {
+    if (this.profileCtx && (headed === undefined || headed === this.profileHeaded)) return this.profileCtx;
+    if (this.profileCtx) {
+      const old = this.profileCtx;
+      this.profileCtx = this.profilePage = undefined;
+      await old.close().catch(() => undefined);
+    }
     const pw = await this.ensureAvailable();
     mkdirSync(this.profileDir, { recursive: true });
-    const open = () => this.launch((extra) => pw.chromium.launchPersistentContext(this.profileDir, { ...this.launchOpts(true), ...extra }));
-    let ctx = await open();
-    if (await this.learnUserAgent(ctx)) {
-      await ctx.close().catch(() => undefined);
-      ctx = await open();
-    }
+    const show = !!headed;
+    const ctx = await this.launch((extra) => pw.chromium.launchPersistentContext(this.profileDir, { ...this.launchOpts(!show), ...extra }));
+    this.profileHeaded = show;
     await this.guard(ctx);
     for (const p of ctx.pages()) this.guardPage(p);
     ctx.on('close', () => {
@@ -574,8 +578,8 @@ export class ResearchBrowser {
     return ctx;
   }
 
-  private async profilePageGet(): Promise<PwPage> {
-    const ctx = await this.profileContext();
+  private async profilePageGet(headed: boolean): Promise<PwPage> {
+    const ctx = await this.profileContext(headed);
     if (this.profilePage && !this.profilePage.isClosed()) return this.profilePage;
     const first = ctx.pages().find((p) => !p.isClosed());
     this.profilePage = first ?? (await ctx.newPage());
@@ -593,11 +597,7 @@ export class ResearchBrowser {
         const { headless: _h, ...opts } = this.launchOpts(true);
         return browser.newContext(opts);
       };
-      let ctx = await make();
-      if (await this.learnUserAgent(ctx)) {
-        await ctx.close().catch(() => undefined);
-        ctx = await make();
-      }
+      const ctx = await make();
       await this.guard(ctx);
       this.publicCtx = ctx;
     }

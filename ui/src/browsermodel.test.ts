@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import type { ResearchBrowserStatus } from '../../src/types';
-import { addAllowed, availabilityLine, honestLimits, normaliseDomain, operaSummary, siteLine } from './browsermodel';
+import { addAllowed, availabilityLine, blockedHint, honestLimits, normaliseDomain, operaSummary, setVisible, siteLine } from './browsermodel';
 
 const NOW = Date.parse('2026-10-03T12:00:00Z');
 const minsAgo = (n: number) => new Date(NOW - n * 60_000).toISOString();
@@ -16,6 +16,21 @@ const status = (over: Partial<ResearchBrowserStatus> = {}): ResearchBrowserStatu
 });
 
 describe('browser settings model', () => {
+  it('blocked sites say what to do: the visible window or public reading', () => {
+    const at = minsAgo(30);
+    expect(blockedHint({ label: 'Reddit' }, NOW)).toBeNull();
+    const off = blockedHint({ label: 'Reddit', blocked: { reason: 'blocked (403)', at } }, NOW)!;
+    expect(off.tag).toBe('blocked');
+    expect(off.text).toBe('Reddit blocks headless reading (blocked (403), 30 min ago). Turn on the visible window for it, or scout relies on public reading.');
+    expect(blockedHint({ label: 'Reddit', visible: true, blocked: { reason: 'blocked (403)', at } }, NOW)!.text).toMatch(/next read uses the window/);
+  });
+
+  it('visible-window sites toggle without duplicates', () => {
+    expect(setVisible(['reddit.com'], 'reddit.com', true)).toEqual(['reddit.com']);
+    expect(setVisible(['reddit.com'], 'x.com', true)).toEqual(['reddit.com', 'x.com']);
+    expect(setVisible(['reddit.com', 'x.com'], 'reddit.com', false)).toEqual(['x.com']);
+  });
+
   it('site lines', () => {
     expect(siteLine({ connected: true, via: 'login', checkedAt: minsAgo(30) }, NOW)).toBe('Signed in · checked 30 min ago');
     expect(siteLine({ connected: true, via: 'opera', checkedAt: minsAgo(120) }, NOW)).toBe('Signed in via Opera import · checked 2h ago');

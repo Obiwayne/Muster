@@ -9,6 +9,24 @@ export function siteLine(s: Pick<ResearchSiteStatus, 'connected' | 'via' | 'chec
   return s.checkedAt ? `${state} · checked ${agoText(s.checkedAt, now)}` : state;
 }
 
+/**
+ * A site that answered the headless research browser with a bot check: the "blocked" pill and what to do about it
+ * (read it in a visible window, or rely on public reading). Null when the last load went through.
+ */
+export function blockedHint(s: Pick<ResearchSiteStatus, 'blocked' | 'visible' | 'label'>, now = Date.now()): { tag: string; text: string } | null {
+  if (!s.blocked) return null;
+  const why = `${s.blocked.reason}, ${agoText(s.blocked.at, now)}`;
+  return s.visible
+    ? { tag: 'blocked', text: `Blocked the last read (${why}), before the visible window was on. The next read uses the window; until then scout relies on public reading.` }
+    : { tag: 'blocked', text: `${s.label} blocks headless reading (${why}). Turn on the visible window for it, or scout relies on public reading.` };
+}
+
+/** visibleSites with `domain` turned on or off (no duplicates). */
+export function setVisible(list: string[], domain: string, on: boolean): string[] {
+  const rest = list.filter((d) => d !== domain);
+  return on ? [...rest, domain] : rest;
+}
+
 /** One line for the whole browser: available or not, and what it is doing. */
 export function availabilityLine(st: ResearchBrowserStatus | null | undefined): { ok: boolean; text: string } {
   if (!st) return { ok: false, text: 'Checking…' };
@@ -52,7 +70,7 @@ export function honestLimits(st: ResearchBrowserStatus | null | undefined, cfg: 
 
   out.push({
     key: 'cloudflare', title: 'Cloudflare checks',
-    text: 'Some sites (Padlet, for one) show a Cloudflare check to an automated browser. scout then falls back to reading their public pages with its web tools.',
+    text: 'Some sites (Padlet, for one) show a Cloudflare check to an automated browser. scout then falls back to reading their public pages with its web tools, or you can turn on a visible window for that site above.',
     tone: 'info',
   });
   return out;

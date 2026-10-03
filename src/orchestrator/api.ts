@@ -85,7 +85,7 @@ const CONFIG_KEYS = new Set<string>([
 ]);
 const DOMAIN_RE = /^(?=.{1,253}$)([a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?\.)+[a-z]{2,63}$/;
 
-/** PATCH /api/config { researchBrowser }: a partial object; each field checked, null unsets it (back to the default). */
+/** PATCH /api/config { researchBrowser }: a partial object; each field checked, null unsets it (back to the default). operaAllow and visibleSites are lowercased and de-duplicated. */
 function checkResearchBrowser(v: unknown): void {
   if (v === null || v === undefined) return;
   if (typeof v !== 'object' || Array.isArray(v)) throw badRequest('researchBrowser must be an object');
@@ -94,9 +94,9 @@ function checkResearchBrowser(v: unknown): void {
     if (x === null) continue;
     if (k === 'mode') intel.oneOf(x, intel.BROWSE_MODES, 'researchBrowser.mode');
     else if (k === 'channel') intel.oneOf(x, ['chrome', 'msedge'] as const, 'researchBrowser.channel');
-    else if (k === 'operaAllow') {
-      if (!Array.isArray(x) || x.some((d) => typeof d !== 'string' || !DOMAIN_RE.test(d.trim().toLowerCase()))) throw badRequest('researchBrowser.operaAllow must be a list of domains like "reddit.com"');
-      if (x.length > 50) throw badRequest('researchBrowser.operaAllow: at most 50 domains');
+    else if (k === 'operaAllow' || k === 'visibleSites') {
+      if (!Array.isArray(x) || x.some((d) => typeof d !== 'string' || !DOMAIN_RE.test(d.trim().toLowerCase()))) throw badRequest(`researchBrowser.${k} must be a list of domains like "reddit.com"`);
+      if (x.length > 50) throw badRequest(`researchBrowser.${k}: at most 50 domains`);
       o[k] = [...new Set((x as string[]).map((d) => d.trim().toLowerCase()))];
     } else if (k === 'minDelayMs') {
       if (!Number.isInteger(x) || (x as number) < 0 || (x as number) > 60_000) throw badRequest('researchBrowser.minDelayMs must be a whole number of ms from 0 to 60000');

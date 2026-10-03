@@ -12,7 +12,7 @@ import { showStationEditor } from '../stationeditor';
 import { weeklyStatus } from '../usagealert';
 import { getBrowserStatus } from '../intelapi';
 import { closeLogin, forgetSite, openLogin, operaImport } from '../browserapi';
-import { addAllowed, availabilityLine, honestLimits, operaSummary, siteLine } from '../browsermodel';
+import { addAllowed, availabilityLine, blockedHint, honestLimits, operaSummary, setVisible, siteLine } from '../browsermodel';
 
 const BROWSE_MODES = [
   { value: 'profile', label: 'Research profile' },
@@ -311,7 +311,7 @@ export function createSettings(): Page {
   }
 
   function researchBrowserPanel(c: MusterConfig): HTMLElement {
-    const rb = c.researchBrowser ?? { mode: 'profile', channel: 'chrome', operaAllow: [], minDelayMs: 3000, maxPagesPerJob: 150 };
+    const rb = c.researchBrowser ?? { mode: 'profile', channel: 'chrome', operaAllow: [], minDelayMs: 3000, maxPagesPerJob: 150, visibleSites: [] };
     const st = browser;
     const avail = availabilityLine(st);
     const loginOpen = st?.state === 'login_open';
@@ -320,17 +320,27 @@ export function createSettings(): Page {
     const allow = rb.operaAllow ?? [];
 
     const sites = st?.sites ?? [];
+    const visibleSites = rb.visibleSites ?? [];
     const sitesEl = sites.length
-      ? h('div.rb-sites', null, sites.map((s) => h('div.rb-site', null,
-          h('span.rb-sdot', { class: s.connected ? 'on' : '' }),
+      ? h('div.rb-sites', null, sites.map((s) => {
+        const shown = visibleSites.includes(s.domain); // config is the truth; the status catches up on the next load
+        const blocked = blockedHint({ ...s, visible: shown });
+        const vis = h('input', { type: 'checkbox', checked: shown }) as HTMLInputElement;
+        vis.addEventListener('change', () => void Promise.resolve(saveRB({ visibleSites: setVisible(visibleSites, s.domain, vis.checked) })).then(() => loadBrowser()));
+        return h('div.rb-site', null,
+          h('span.rb-sdot', { class: [s.connected && 'on', blocked && 'blocked'] }),
           h('div.rb-site-body', null,
-            h('div.rb-site-t', null, s.label, h('span.rb-dom', null, s.domain)),
+            h('div.rb-site-t', null, s.label, h('span.rb-dom', null, s.domain), blocked ? h('span.rb-blocked', { title: blocked.text }, blocked.tag) : null),
             h('div.rb-site-s', null, siteLine(s)),
+            blocked ? h('div.rb-site-b', null, blocked.text) : null,
             s.warning ? h('div.rb-site-w', null, icon('alert', 11), s.warning) : null,
-            s.limits && !s.connected ? h('div.rb-site-l', null, s.limits) : null),
+            s.limits && !s.connected ? h('div.rb-site-l', null, s.limits) : null,
+            h('label.rb-vis', { title: 'scout reads this site in a normal Chrome window on the research profile (you will see it open), instead of a hidden one' },
+              vis, 'Use a visible browser window for this site')),
           s.connected
             ? h('button.btn.sm', { disabled: !!browserBusy, onclick: () => void browserAct(`forget:${s.site}`, forgetSite(s.site), `Forgot ${s.label}: its cookies are gone from the research profile`) }, 'Forget')
-            : h('button.btn.sm', { disabled: !usable || !!browserBusy || loginOpen, title: usable ? `Open ${s.label}'s login page in the research profile` : avail.text, onclick: () => void browserAct(`login:${s.site}`, openLogin({ site: s.site }), `Sign in to ${s.label} in the window that opened, then close it`) }, 'Connect'))))
+            : h('button.btn.sm', { disabled: !usable || !!browserBusy || loginOpen, title: usable ? `Open ${s.label}'s login page in the research profile` : avail.text, onclick: () => void browserAct(`login:${s.site}`, openLogin({ site: s.site }), `Sign in to ${s.label} in the window that opened, then close it`) }, 'Connect'));
+      }))
       : h('div.faint', { style: 'font-size:12px' }, st ? 'No known sites reported.' : 'Loading…');
 
     const limits = honestLimits(st, c);

@@ -387,11 +387,33 @@ describe('read-only browsing', () => {
     expect(st.blocked?.map((x) => x.domain)).toEqual(['reddit.com']);
   });
 
-  it('drops the HeadlessChrome marker from the user agent (sites block it)', async () => {
+  it("keeps the browser's own user agent (no disguise)", async () => {
     world.userAgent = 'Mozilla/5.0 (Windows NT 10.0) HeadlessChrome/141.0.0.0 Safari/537.36';
     await make().read('https://a.com/', { mode: 'profile' });
+    await make().read('https://b.com/', { mode: 'public' });
     expect(world.launches).toHaveLength(2);
-    expect(world.launches[1].opts.userAgent).toBe('Mozilla/5.0 (Windows NT 10.0) Chrome/141.0.0.0 Safari/537.36');
+    for (const l of world.launches) expect(l.opts.userAgent).toBeUndefined();
+    for (const c of world.contexts) expect(c.opts.userAgent).toBeUndefined();
+    const src = readFileSync(new URL('./researchbrowser.ts', import.meta.url), 'utf8');
+    expect(src).not.toMatch(/userAgent\s*:/);
+  });
+
+  it('reads visible-window sites in a headed profile window, others headless', async () => {
+    cfg = { ...cfg, visibleSites: ['reddit.com'] };
+    const b = make();
+    expect((await b.status()).sites.find((x) => x.site === 'reddit')?.visible).toBe(true);
+    expect((await b.status()).sites.find((x) => x.site === 'linkedin')?.visible).toBeUndefined();
+    const before = world.launches.length;
+    await b.read('https://www.reddit.com/r/Teachers/', { mode: 'profile' });
+    expect(world.launches[before]).toMatchObject({ dir: join(dir, 'research-browser', 'profile'), opts: { headless: false } });
+    await b.read('https://www.reddit.com/r/Teachers/top/', { mode: 'profile' });
+    expect(world.launches).toHaveLength(before + 1); // the window is reused
+    await b.read('https://padlet.com/', { mode: 'profile' });
+    expect(world.launches).toHaveLength(before + 2);
+    expect(world.launches.at(-1)!.opts.headless).toBe(true);
+    expect(world.contexts[world.contexts.length - 2].closed).toBe(true); // the window closed before the headless relaunch
+    await b.read('https://www.reddit.com/', { mode: 'public' });
+    expect(world.launches.at(-1)!.opts.headless).toBe(true); // public reading never uses the profile window
   });
 
   it('closes the browsing context after the idle time', async () => {
