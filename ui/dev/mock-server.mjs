@@ -11,6 +11,7 @@
 //   MOCK_INTEL=researching …                     → scout researching Figma (the progress overlay; advances every MOCK_INTEL_STEP_MS, 4000) + intel ready / stopped notes
 //   MOCK_BROWSER=off …                           → GET /api/browser: playwright-core missing
 //   MOCK_SANDBOX=<dir> …                       → research, roadmap, intel store and intel config read from <dir>/.muster (a live run's data; read only)
+//   MOCK_PHONE=down|empty …                      → /api/phone/*: gateway won't start / no linked phones, no Tailscale
 //   MOCK_WEEKLY=84 …                             → weekly usage % (default 38; at 75+ an open weekly usage alert note)
 //
 // With `npx vite ui` (dev), set VITE_MUSTER_TOKEN=dev-token; vite proxies /api and /ws here.
@@ -530,6 +531,62 @@ async function body(req) {
   try { return JSON.parse(Buffer.concat(chunks).toString('utf8')); } catch { throw new HttpError(400, 'Invalid JSON'); }
 }
 
+// /api/phone/* (docs/PHONE.md admin API, forwarded by the orchestrator). MOCK_PHONE=down: every call 503s (the banner);
+// MOCK_PHONE=empty: no linked phones, Tailscale not installed.
+const PHONE = process.env.MOCK_PHONE ?? '';
+const phoneDown = PHONE === 'down';
+const phone = {
+  pcName: 'WAYNE-PC', port: 47910, fingerprint: '3f9a1c07b2e4d85a6c1f0e93b7d24a58c6e1f3a907b2d4c85e6a1f30c9b7e2d4',
+  network: PHONE === 'empty'
+    ? { mode: 'lan', lanHosts: ['192.168.1.20'], tailscale: { installed: false, ip: null, dnsName: null, online: false } }
+    : { mode: 'tailscale', lanHosts: ['192.168.1.20'], tailscale: { installed: true, ip: '100.101.42.7', dnsName: 'wayne-pc.tail8c2e1.ts.net.', online: true } },
+  devices: PHONE === 'empty' ? [] : [
+    { id: 'dev-pixel8', name: 'Pixel 8 · Wayne', createdAt: new Date(new Date(now).setHours(9, 12, 0, 0)).toISOString(), lastSeenAt: iso(2), online: false },
+  ],
+};
+let phoneSend = { notify: { review: true, question: true, blocked: true, usage: false, stuck: false }, quiet: { on: true, from: '22:00', to: '07:00' }, projects: {} };
+const PAIR_ALPHABET = 'ABCDEFGHJKMNPQRSTUVWXYZ23456789';
+let pairCount = 0;
+async function phoneQr(text) {
+  try {
+    const QR = (await import('qrcode')).default;
+    return await QR.toString(text, { type: 'svg', margin: 0, errorCorrectionLevel: 'M', color: { dark: '#111113', light: '#ffffff' } });
+  } catch {
+    // qrcode not installed: a plain placeholder in the same shape
+    return '<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 25 25" shape-rendering="crispEdges"><path fill="#111113" d="M0 0h7v7h-7zM1 1v5h5v-5zM2 2h3v3h-3zM18 0h7v7h-7zM19 1v5h5v-5zM20 2h3v3h-3zM0 18h7v7h-7zM1 19v5h5v-5zM2 20h3v3h-3zM16 16h5v5h-5zM17 17v3h3v-3zM18 18h1v1h-1z"/></svg>';
+  }
+}
+async function phoneApi(req, m, p) {
+  need(!phoneDown, 503, 'Could not start the phone gateway (dist/phone/index.js exited). Port 47910 may be in use.');
+  if (m === 'GET' && p === '/api/phone/status') return phone;
+  if (m === 'POST' && p === '/api/phone/pair-code') {
+    // the first code matches the design (K7M-4QX, 1:52 left); later ones are random and get the full 2 minutes
+    const code = pairCount++ === 0 ? 'K7M4QX' : Array.from({ length: 6 }, () => PAIR_ALPHABET[Math.floor(Math.random() * PAIR_ALPHABET.length)]).join('');
+    const hosts = [...phone.network.lanHosts, ...(phone.network.mode === 'tailscale' && phone.network.tailscale.installed ? [phone.network.tailscale.ip, phone.network.tailscale.dnsName.replace(/\.$/, '')] : [])];
+    const qrText = `muster://pair?c=${code}&p=${phone.port}&f=${phone.fingerprint}&n=${phone.pcName}&h=${hosts.join(',')}`;
+    const ttl = pairCount === 1 ? 112_000 : 120_000;
+    return { code, display: `${code.slice(0, 3)}-${code.slice(3)}`, expiresAt: new Date(Date.now() + ttl).toISOString(), qrSvg: await phoneQr(qrText), qrText };
+  }
+  if (m === 'PUT' && p === '/api/phone/network') {
+    const { mode } = await body(req);
+    need(mode === 'lan' || mode === 'tailscale', 400, 'mode must be lan or tailscale');
+    need(mode === 'lan' || phone.network.tailscale.installed, 409, 'Tailscale is not installed on this PC');
+    phone.network.mode = mode;
+    return { ok: true, mode };
+  }
+  const dm = /^\/api\/phone\/devices\/([^/]+)$/.exec(p);
+  if (m === 'DELETE' && dm) {
+    const i = phone.devices.findIndex((d) => d.id === decodeURIComponent(dm[1]));
+    need(i >= 0, 404, 'No such phone');
+    phone.devices.splice(i, 1);
+    return { ok: true };
+  }
+  if (m === 'POST' && p === '/api/phone/test') return { ok: true, sent: phone.devices.filter((d) => d.online).length };
+  if (m === 'GET' && p === '/api/phone/send') return phoneSend;
+  if (m === 'PUT' && p === '/api/phone/send') { phoneSend = { ...phoneSend, ...(await body(req)) }; return phoneSend; }
+  throw new HttpError(404, `No phone route ${m} ${p}`);
+}
+
 // GET /api/project (T17 contract). MOCK_GH=missing|unauthed simulates a machine without gh.
 let ghRemote;
 const project = () => ({
@@ -616,6 +673,7 @@ async function api(req, url) {
     { id: 'muster', name: 'Muster', pages: 9, updated: iso(120) }, { id: 'scratch', name: 'Scratchpad', pages: 3, updated: iso(60 * 30) },
     { id: 'wall', name: 'Client Portal', pages: 16, updated: iso(60 * 50) }, { id: 'mayhem', name: 'MayhemDeck', pages: 5, updated: iso(60 * 24 * 6) }] };
   if (m === 'GET' && p === '/api/usage') return { ...state.usage, paused: !!paused() };
+  if (p.startsWith('/api/phone/')) return phoneApi(req, m, p);
 
   if (m === 'POST' && p === '/api/agents') {
     const b = await body(req);
