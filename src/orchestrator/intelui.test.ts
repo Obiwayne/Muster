@@ -44,6 +44,8 @@ const STATUS: ResearchBrowserStatus = {
   available: true, channel: 'chrome', profileDir: 'X', state: 'idle', sites: [], tools: [], opera: { found: false, allow: [] },
   blocked: [{ domain: 'padlet.com', reason: 'bot check (Cloudflare)', at: '2026-10-03T10:00:00.000Z' }],
 };
+const shared = new Set<string>(); // the fake browser's shared visible-window list
+const visibleCalls: [string, boolean][] = [];
 const browser: BrowserLike & { close(): Promise<void> } = {
   status: async () => STATUS,
   read: async (url, o) => ({ url, title: 'T', status: 200, text: 'hi', via: o.mode }),
@@ -53,6 +55,13 @@ const browser: BrowserLike & { close(): Promise<void> } = {
   closeLogin: async () => STATUS,
   operaImport: async () => STATUS,
   forget: async () => STATUS,
+  visibleSites: () => [...shared],
+  setVisibleSite: (d, on) => {
+    visibleCalls.push([d, on]);
+    shared.delete(d);
+    if (on) shared.add(d);
+    return [...shared];
+  },
   close: async () => undefined,
 };
 
@@ -117,6 +126,25 @@ describe('ui/src/intelapi.ts against the orchestrator', () => {
     const summary = await ui.getIntelSummary();
     expect(summary).toMatchObject({ rev: store.rev, competitors: 0, alerts: 0, queuedJobs: 0 });
     expect(await ui.getBrowserStatus()).toEqual(STATUS);
+  });
+
+  it('the visible-window checkbox posts to the shared list; agents are refused; PATCH /api/config visibleSites updates it too', async () => {
+    const { setSiteVisible } = await import('../../ui/src/browserapi');
+    expect(await setSiteVisible('reddit.com', true)).toEqual(STATUS);
+    expect(visibleCalls).toEqual([['reddit.com', true]]);
+    // an agent's token never changes it, whatever the body says (no agents run here, so 401; intel.test.ts has the 403 for a live captain)
+    for (const agent of ['scout', 'captain']) {
+      const res = await realFetch(orch.url + '/api/browser/visible', { method: 'POST', headers: { 'content-type': 'application/json', 'x-muster-token': orch.agentToken(agent) }, body: JSON.stringify({ actor: 'you', domain: 'padlet.com', visible: true }) });
+      expect([401, 403]).toContain(res.status);
+    }
+    expect(visibleCalls).toHaveLength(1);
+    // deprecated PATCH: what it adds or drops versus this project's old list goes to the shared list
+    const patch = (visibleSites: string[] | null) => realFetch(orch.url + '/api/config', { method: 'PATCH', headers: { 'content-type': 'application/json', 'x-muster-token': orch.token }, body: JSON.stringify({ actor: 'you', researchBrowser: { visibleSites } }) });
+    expect((await patch(['x.com', 'padlet.com'])).status).toBe(200);
+    expect((await patch(['padlet.com'])).status).toBe(200);
+    expect((await patch(null)).status).toBe(200);
+    expect(visibleCalls.slice(1)).toEqual([['x.com', true], ['padlet.com', true], ['x.com', false], ['padlet.com', false]]);
+    expect([...shared]).toEqual(['reddit.com']); // the one set from Settings stays
   });
 
   let ideaId = '';

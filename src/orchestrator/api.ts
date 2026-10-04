@@ -255,6 +255,22 @@ ${block}`;
       throw badRequest('weeklyAlerts must be true or false');
     }
     checkResearchBrowser(patch.researchBrowser);
+    // Deprecated: visibleSites lives in the research browser's shared list now (every project on this PC). The field is
+    // still accepted (and kept in this project's config); what it adds or drops versus this project's old list is applied there.
+    const rbPatch = patch.researchBrowser as Record<string, unknown> | null | undefined;
+    if (rbPatch && 'visibleSites' in rbPatch) {
+      const was = ctx.config().researchBrowser?.visibleSites ?? [];
+      const now = (rbPatch.visibleSites as string[] | null) ?? [];
+      for (const d of now) if (!was.includes(d)) ctx.browser.setVisibleSite(d, true);
+      for (const d of was) {
+        if (now.includes(d)) continue;
+        try {
+          ctx.browser.setVisibleSite(d, false);
+        } catch {
+          // an old entry that was never a domain: nothing shared to turn off
+        }
+      }
+    }
     checkIntelConfig(patch.intel);
     lineEdits(patch);
     const before = ctx.config().userName;

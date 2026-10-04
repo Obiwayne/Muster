@@ -12,8 +12,8 @@ import { stationRole } from '../util';
 import { showStationEditor } from '../stationeditor';
 import { weeklyStatus } from '../usagealert';
 import { getBrowserStatus } from '../intelapi';
-import { closeLogin, forgetSite, openLogin, operaImport } from '../browserapi';
-import { addAllowed, availabilityLine, blockedHint, honestLimits, operaSummary, setVisible, siteLine } from '../browsermodel';
+import { closeLogin, forgetSite, openLogin, operaImport, setSiteVisible } from '../browserapi';
+import { addAllowed, availabilityLine, blockedHint, honestLimits, operaSummary, siteLine } from '../browsermodel';
 import { SETTINGS_TABS, parseSettingsTab, type SettingsTab } from '../phonemodel';
 import { createPhoneSection } from './phone';
 
@@ -75,6 +75,7 @@ export function createSettings(): Page {
   let lineLabel = ''; // label of the default line preset, when the server has presets
   let browser: ResearchBrowserStatus | null = null; // GET /api/browser
   let browserBusy = '';
+  const visiblePending = new Map<string, boolean>(); // domain → the checkbox state while POST /api/browser/visible runs
   let visible = false;
   let pollTimer: number | undefined;
   let tab: SettingsTab = 'general';
@@ -270,6 +271,20 @@ export function createSettings(): Page {
     }
   }
 
+  /** The visible-window checkbox: shared by every project on this PC, so it goes to the research browser, not this project's config. */
+  async function toggleVisible(domain: string, on: boolean): Promise<void> {
+    visiblePending.set(domain, on);
+    if (cfg) render(cfg);
+    try {
+      browser = await setSiteVisible(domain, on);
+    } catch (e) {
+      errToast(e);
+    } finally {
+      visiblePending.delete(domain);
+      if (cfg) render(cfg);
+    }
+  }
+
   function numInput(value: number, min: number, max: number, onSave: (v: number) => void, unit = ''): HTMLElement {
     const input = h('input', { type: 'text', inputmode: 'numeric', value: String(value) }) as HTMLInputElement;
     input.addEventListener('change', () => {
@@ -325,23 +340,24 @@ export function createSettings(): Page {
     const allow = rb.operaAllow ?? [];
 
     const sites = st?.sites ?? [];
-    const visibleSites = rb.visibleSites ?? [];
     const sitesEl = sites.length
       ? h('div.rb-sites', null, sites.map((s) => {
-        const shown = visibleSites.includes(s.domain); // config is the truth; the status catches up on the next load
+        // The shared list (every project on this PC) is the truth; while a change is being saved, show what you clicked.
+        const shown = visiblePending.get(s.domain) ?? !!s.visible;
         const blocked = blockedHint({ ...s, visible: shown });
-        const vis = h('input', { type: 'checkbox', checked: shown }) as HTMLInputElement;
-        vis.addEventListener('change', () => void Promise.resolve(saveRB({ visibleSites: setVisible(visibleSites, s.domain, vis.checked) })).then(() => loadBrowser()));
+        const red = blocked?.tone === 'blocked';
+        const vis = h('input', { type: 'checkbox', checked: shown, disabled: visiblePending.has(s.domain) }) as HTMLInputElement;
+        vis.addEventListener('change', () => void toggleVisible(s.domain, vis.checked));
         return h('div.rb-site', null,
-          h('span.rb-sdot', { class: [s.connected && 'on', blocked && 'blocked'] }),
+          h('span.rb-sdot', { class: [s.connected && 'on', red && 'blocked'] }),
           h('div.rb-site-body', null,
-            h('div.rb-site-t', null, s.label, h('span.rb-dom', null, s.domain), blocked ? h('span.rb-blocked', { title: blocked.text }, blocked.tag) : null),
+            h('div.rb-site-t', null, s.label, h('span.rb-dom', null, s.domain), blocked && red ? h('span.rb-blocked', { title: blocked.text }, blocked.tag) : null),
             h('div.rb-site-s', null, siteLine(s)),
-            blocked ? h('div.rb-site-b', null, blocked.text) : null,
+            blocked ? h(red ? 'div.rb-site-b' : 'div.rb-site-p', red ? null : { title: `The last hidden read was blocked (${s.blocked?.reason ?? 'bot check'})` }, blocked.text) : null,
             s.warning ? h('div.rb-site-w', null, icon('alert', 11), s.warning) : null,
             s.limits && !s.connected ? h('div.rb-site-l', null, s.limits) : null,
-            h('label.rb-vis', { title: 'scout reads this site in a normal Chrome window on the research profile (you will see it open), instead of a hidden one' },
-              vis, 'Use a visible browser window for this site')),
+            h('label.rb-vis', { title: 'scout reads this site in a normal Chrome window on the research profile (you will see it open), instead of a hidden one. Applies to every project on this PC.' },
+              vis, 'Use a visible browser window for this site', h('span.rb-vis-n', null, '· every project on this PC'))),
           s.connected
             ? h('button.btn.sm', { disabled: !!browserBusy, onclick: () => void browserAct(`forget:${s.site}`, forgetSite(s.site), `Forgot ${s.label}: its cookies are gone from the research profile`) }, 'Forget')
             : h('button.btn.sm', { disabled: !usable || !!browserBusy, title: usable ? (loginOpen ? `Open ${s.label}'s login page as a new tab in the open login window` : `Open ${s.label}'s login page in a normal Chrome window on the research profile`) : avail.text, onclick: () => void browserAct(`login:${s.site}`, openLogin({ site: s.site }), `A normal Chrome window opens. Sign in to ${s.label}, then close the window.`) }, 'Connect'));

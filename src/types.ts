@@ -516,7 +516,11 @@ export interface ResearchBrowserConfig {
   operaAllow: string[]; // registrable domains whose Opera cookies may be imported, e.g. ["reddit.com"]; empty = Opera mode imports nothing
   minDelayMs: number; // at least this long between two page loads on the same domain (default 3000)
   maxPagesPerJob: number; // browse calls allowed per intel job or research run (default 150)
-  /** Registrable domains ("reddit.com") the research profile reads in a visible, headed Chrome window instead of headless (default []). */
+  /**
+   * Deprecated input only: the visible-window list is shared by every project on this PC (ResearchBrowserStatus.visibleSites,
+   * POST /api/browser/visible). A ResearchBrowser takes these domains over once when it starts; PATCH /api/config still
+   * accepts the field and applies its changes to the shared list.
+   */
   visibleSites: string[];
 }
 
@@ -927,8 +931,8 @@ export interface ResearchSiteStatus {
   checkedAt: string;
   warning?: string; // LinkedIn: "restricts automated accounts; use a separate account"
   limits?: string; // honest limits: "Reddit's anonymous JSON is blocked; reads need the login"
-  blocked?: { reason: string; at: string }; // the site answered the research browser with a bot check last time (src/browser/botcheck.ts)
-  visible?: boolean; // config.researchBrowser.visibleSites has it: the profile reads it in a visible window
+  blocked?: { reason: string; at: string; visible?: boolean }; // the site answered the research browser with a bot check last time (src/browser/botcheck.ts); visible: that read was in the visible window (absent = hidden)
+  visible?: boolean; // the shared visible-window list has it (every project on this PC): the profile reads it in a visible window
 }
 
 /** GET /api/browser: what the research browser can do on this PC. */
@@ -943,7 +947,9 @@ export interface ResearchBrowserStatus {
   tools: { name: string; ok: boolean; note?: string }[]; // yt-dlp, Agent Reach python, browser_cookie3, Opera profile
   opera: { found: boolean; profileDir?: string; allow: string[]; lastImportAt?: string; imported?: Record<string, number> }; // imported: domain → cookie count (never values)
   /** Domains whose last load was a bot check or block ("Just a moment…", 429); cleared by the next good load. Scout reads them via the public reader. */
-  blocked?: { domain: string; reason: string; at: string }[];
+  blocked?: { domain: string; reason: string; at: string; visible?: boolean }[];
+  /** Domains read in a visible window, shared by every project on this PC (<secretsBase()>/research-browser/visible.json). */
+  visibleSites?: string[];
 }
 
 /** What the read-only browse tool returns to scout (POST /api/browser/read). */

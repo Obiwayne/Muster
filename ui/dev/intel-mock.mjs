@@ -620,12 +620,17 @@ export function createIntelMock(deps) {
   const browser = {
     state: 'idle', loginSite: undefined,
     sites: [
-      { site: 'reddit', label: 'Reddit', domain: 'reddit.com', loginUrl: 'https://www.reddit.com/login', connected: true, via: 'login', checkedAt: iso(30), limits: "Reddit's anonymous JSON is blocked; reads need the login" },
+      // blocked in a hidden read, visible window on since: the muted "not checked in a visible window yet"
+      { site: 'reddit', label: 'Reddit', domain: 'reddit.com', loginUrl: 'https://www.reddit.com/login', connected: true, via: 'login', checkedAt: iso(30), limits: "Reddit's anonymous JSON is blocked; reads need the login", blocked: { reason: 'blocked (403)', at: iso(40), visible: false } },
       { site: 'linkedin', label: 'LinkedIn', domain: 'linkedin.com', loginUrl: 'https://www.linkedin.com/login', connected: true, via: 'login', checkedAt: iso(30), warning: 'LinkedIn restricts automated accounts; use a separate account' },
       { site: 'x', label: 'X', domain: 'x.com', loginUrl: 'https://x.com/login', connected: false, checkedAt: iso(30), limits: 'Not set up' },
-      { site: 'youtube', label: 'YouTube', domain: 'youtube.com', loginUrl: 'https://accounts.google.com/', connected: false, checkedAt: iso(30), limits: 'yt-dlp is not on PATH: Agent Reach\'s YouTube channel is off' },
-      { site: 'g2', label: 'G2', domain: 'g2.com', loginUrl: 'https://www.g2.com/login', connected: false, checkedAt: iso(30), blocked: { reason: 'bot check (Cloudflare)', at: iso(95) } },
+      // blocked in a hidden read, window off: red
+      { site: 'youtube', label: 'YouTube', domain: 'youtube.com', loginUrl: 'https://accounts.google.com/', connected: false, checkedAt: iso(30), limits: 'yt-dlp is not on PATH: Agent Reach\'s YouTube channel is off', blocked: { reason: 'rate limited (429)', at: iso(70), visible: false } },
+      // blocked even in the visible window: red
+      { site: 'g2', label: 'G2', domain: 'g2.com', loginUrl: 'https://www.g2.com/login', connected: false, checkedAt: iso(30), blocked: { reason: 'bot check (Cloudflare)', at: iso(95), visible: true } },
     ],
+    // the visible-window list shared by every project on this PC (POST /api/browser/visible)
+    visible: new Set(['reddit.com', 'g2.com', ...(config.researchBrowser.visibleSites ?? [])]),
     opera: { found: true, profileDir: 'C:/Users/alex/AppData/Roaming/Opera Software/Opera Stable', imported: undefined, lastImportAt: undefined },
   };
   const browserStatus = () => (process.env.MOCK_BROWSER === 'off'
@@ -633,7 +638,8 @@ export function createIntelMock(deps) {
     : {
         available: true, channel: 'chrome', profileDir: 'C:/Users/alex/AppData/Local/muster/research-browser/profile', state: browser.state,
         ...(browser.loginSite ? { loginSite: browser.loginSite } : {}),
-        sites: browser.sites.map((s) => ({ ...s, ...((config.researchBrowser.visibleSites ?? []).includes(s.domain) ? { visible: true } : {}) })),
+        sites: browser.sites.map((s) => ({ ...s, ...(browser.visible.has(s.domain) ? { visible: true } : {}) })),
+        visibleSites: [...browser.visible],
         blocked: browser.sites.filter((s) => s.blocked).map((s) => ({ domain: s.domain, ...s.blocked })),
         tools: [{ name: 'yt-dlp', ok: false, note: 'not on PATH' }, { name: 'Agent Reach python', ok: true }, { name: 'browser_cookie3', ok: true }, { name: 'Opera profile', ok: true }],
         opera: { ...browser.opera, allow: config.researchBrowser.operaAllow },
@@ -660,6 +666,12 @@ export function createIntelMock(deps) {
           if (site) { site.connected = true; site.via = 'login'; site.checkedAt = new Date().toISOString(); }
           browser.state = 'idle'; delete browser.loginSite;
         }, 8000);
+        return { body: browserStatus() };
+      }
+      if (p === '/api/browser/visible') {
+        need(typeof b.domain === 'string' && /^[a-z0-9-]+(\.[a-z0-9-]+)+$/.test(b.domain), 400, 'Missing domain');
+        need(typeof b.visible === 'boolean', 400, 'visible must be true or false');
+        if (b.visible) browser.visible.add(b.domain); else browser.visible.delete(b.domain);
         return { body: browserStatus() };
       }
       if (p === '/api/browser/login/close') { browser.state = 'idle'; delete browser.loginSite; return { body: browserStatus() }; }

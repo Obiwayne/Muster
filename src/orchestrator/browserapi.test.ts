@@ -1,4 +1,5 @@
-import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs';
+import { mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
+import { ResearchBrowser } from '../browser/researchbrowser.js';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
@@ -37,6 +38,11 @@ function fakeBrowser() {
     closeLogin: rec('closeLogin'),
     operaImport: rec('operaImport'),
     forget: rec('forget'),
+    visibleSites: () => [],
+    setVisibleSite: (domain: string, on: boolean) => {
+      calls.push({ fn: 'setVisibleSite', args: [domain, on] });
+      return on ? [domain] : [];
+    },
     read: rec('read', (url: string, o: { mode: BrowseMode }) => ({ url, title: 'T', status: 200, text: 'hello', via: o.mode })),
     screenshot: rec('screenshot', (url: string, o: { mode: BrowseMode; path: string }) => ({ url, title: 'T', status: 200, screenshot: o.path, via: o.mode })),
     scroll: rec('scroll', (url: string, o: { mode: BrowseMode }) => ({ url, title: 'T', status: 200, scrolled: { y: 2000, height: 9000 }, via: o.mode })),
@@ -78,6 +84,46 @@ describe('browser routes', () => {
   it('GET /api/browser is open to anyone', async () => {
     const { call } = setup();
     expect(await call('GET', '/api/browser')).toBe(STATUS);
+  });
+
+  it('the shared visible-window list is yours only: agents get 403, you get the fresh status', async () => {
+    const { call, calls } = setup();
+    for (const actor of ['scout', 'captain', 'crew-2', '']) {
+      await expect(call('POST', '/api/browser/visible', { actor, domain: 'reddit.com', visible: true })).rejects.toMatchObject({ status: 403 });
+    }
+    expect(calls).toEqual([]);
+    expect(await call('POST', '/api/browser/visible', { actor: 'you', domain: 'reddit.com', visible: true })).toBe(STATUS);
+    await call('POST', '/api/browser/visible', { actor: 'you', domain: 'reddit.com', visible: false });
+    expect(calls.map((c) => [c.fn, ...c.args])).toEqual([
+      ['setVisibleSite', 'reddit.com', true],
+      ['status'],
+      ['setVisibleSite', 'reddit.com', false],
+      ['status'],
+    ]);
+    await expect(call('POST', '/api/browser/visible', { actor: 'you', visible: true })).rejects.toMatchObject({ status: 400 });
+    await expect(call('POST', '/api/browser/visible', { actor: 'you', domain: 'reddit.com', visible: 'yes' })).rejects.toMatchObject({ status: 400 });
+  });
+
+  it('POST /api/browser/visible on a real research browser: shared list in visible.json, GET shows it', async () => {
+    const browser = new ResearchBrowser({
+      config: () => cfg.researchBrowser,
+      baseDir: join(dir, 'research-browser'),
+      loadPlaywright: async () => {
+        throw new Error('Cannot find package playwright-core');
+      },
+      exists: () => false,
+      run: async () => ({ code: 1, stdout: '', stderr: '' }),
+    });
+    const { call } = setup({ browser });
+    const st = (await call('POST', '/api/browser/visible', { actor: 'you', domain: 'www.reddit.com', visible: true })) as ResearchBrowserStatus;
+    expect(st.visibleSites).toEqual(['reddit.com']);
+    expect(st.sites.find((s) => s.site === 'reddit')?.visible).toBe(true);
+    expect(((await call('GET', '/api/browser')) as ResearchBrowserStatus).visibleSites).toEqual(['reddit.com']);
+    expect(JSON.parse(readFileSync(join(dir, 'research-browser', 'visible.json'), 'utf8')).sites).toEqual(['reddit.com']);
+    await expect(call('POST', '/api/browser/visible', { actor: 'scout', domain: 'reddit.com', visible: false })).rejects.toMatchObject({ status: 403 });
+    await expect(call('POST', '/api/browser/visible', { actor: 'you', domain: 'nope', visible: true })).rejects.toMatchObject({ status: 400 });
+    expect(browser.visibleSites()).toEqual(['reddit.com']);
+    await browser.close();
   });
 
   it('login, close, Opera import and forget are yours only', async () => {
