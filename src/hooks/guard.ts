@@ -38,6 +38,12 @@ export const EDIT_TOOLS = new Set(['Edit', 'Write', 'MultiEdit', 'NotebookEdit']
 export const READ_TOOLS = new Set(['Read', 'Grep', 'Glob', 'NotebookRead']);
 export const SHELL_TOOLS = new Set(['Bash', 'PowerShell']);
 
+/** Claude Code's question menu. decide() allows it; hook.ts sends the Captain's to the board and turns anyone else's away. */
+export const ASK_TOOL = 'AskUserQuestion';
+export const ASK_NOT_CAPTAIN = "Don't ask the user directly. Use ask_captain(question), or post a question note.";
+export const askSentReason = (id: string): string =>
+  `Muster sent your question to the user as note ${id} (Bulletin board and phone). Do not ask again and do not wait: carry on with other work or end your turn. The answer reaches your inbox as a reply on ${id}.`;
+
 const GIT_WRITE = new Set([
   'add', 'am', 'apply', 'branch', 'checkout', 'cherry-pick', 'clean', 'commit', 'merge', 'mv', 'pull',
   'push', 'rebase', 'reset', 'restore', 'revert', 'rm', 'stash', 'switch', 'tag', 'worktree',

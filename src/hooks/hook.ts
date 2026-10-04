@@ -5,7 +5,7 @@ import { readFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { musterFetch } from '../client.js';
 import { secretsBase } from '../core/tokens.js';
-import { decide, denyOutput, realNearest, SHELL_TOOLS, type GuardEnv, type PreToolInput } from './guard.js';
+import { ASK_NOT_CAPTAIN, ASK_TOOL, askSentReason, decide, denyOutput, realNearest, SHELL_TOOLS, type GuardEnv, type PreToolInput } from './guard.js';
 
 const EVENTS = new Set(['prompt', 'stop', 'notification', 'session-start']);
 
@@ -74,6 +74,19 @@ function eventDetail(event: string, input: Record<string, unknown>): string | un
 async function main(): Promise<void> {
   const event = process.argv[2] ?? '';
   const input = parse(await readStdin());
+
+  const say = (out: string) => new Promise<void>((r) => process.stdout.write(out + '\n', () => r()));
+
+  if (event === 'pre-tool' && (input as PreToolInput).tool_name === ASK_TOOL) {
+    const role = process.env.MUSTER_ROLE;
+    if (!role) return;
+    if (role !== 'captain') return say(denyOutput(ASK_NOT_CAPTAIN));
+    // Any failure prints nothing, so the terminal menu shows as before.
+    const questions = (input as PreToolInput).tool_input?.questions;
+    const note = await musterFetch<{ id: string }>('/api/ask-user', { method: 'POST', body: { actor: process.env.MUSTER_AGENT, questions }, timeoutMs: 3000 });
+    if (note?.id) await say(denyOutput(askSentReason(note.id)));
+    return;
+  }
 
   if (event === 'pre-tool') {
     const pre = input as PreToolInput;
