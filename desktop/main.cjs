@@ -1,7 +1,7 @@
 // Muster desktop app: a project picker, then the dashboard of the chosen project in its own window.
 // The app drives the same CLI as the terminal (`muster up` / `muster down`), so behaviour is identical.
 const { app, BrowserWindow, dialog, ipcMain, Menu, nativeImage, shell } = require('electron');
-const { execFile, execFileSync } = require('node:child_process');
+const { execFile, execFileSync, spawn } = require('node:child_process');
 const fs = require('node:fs');
 const path = require('node:path');
 
@@ -326,6 +326,38 @@ function writeUserName(name) {
   return clean;
 }
 
+// ---------------------------------------------------------------- phone gateway
+// One per PC, shared by every project (docs/PHONE.md). Started detached and hidden like an orchestrator; a second copy
+// exits by itself when one is already running, so a check of the pid is enough here.
+function ensurePhoneGateway() {
+  try {
+    const entry = path.join(HOME, 'dist', 'phone', 'index.js');
+    if (!fs.existsSync(entry)) return;
+    const dir = path.join(path.dirname(userFile()), 'phone');
+    try {
+      const pid = JSON.parse(fs.readFileSync(path.join(dir, 'server.json'), 'utf8')).pid;
+      if (pid) {
+        process.kill(pid, 0);
+        return; // alive
+      }
+    } catch (e) {
+      if (e && e.code === 'EPERM') return; // alive, another user's handle
+    }
+    const node = findNode();
+    if (!node) return;
+    fs.mkdirSync(dir, { recursive: true });
+    const env = { ...process.env };
+    for (const k of Object.keys(env)) if ((k.startsWith('MUSTER_') && k !== 'MUSTER_SECRETS_DIR') || k.startsWith('ELECTRON_')) delete env[k];
+    const fd = fs.openSync(path.join(dir, 'gateway.log'), 'a');
+    const child = spawn(node.trim(), [entry], { cwd: HOME, detached: true, windowsHide: true, stdio: ['ignore', fd, fd], env });
+    fs.closeSync(fd);
+    child.on('error', () => {});
+    child.unref();
+  } catch {
+    /* best effort: each orchestrator also starts it */
+  }
+}
+
 // ---------------------------------------------------------------- needs-you badge
 
 function applyTitle() {
@@ -554,6 +586,7 @@ app.on('second-instance', () => {
 });
 app.whenReady().then(async () => {
   createWindow();
+  ensurePhoneGateway();
   // Relaunched by "Restart to update": reopen the project it was showing.
   const open = process.argv.find((a) => a.startsWith('--open='))?.slice(7);
   if (open && fs.existsSync(open)) {

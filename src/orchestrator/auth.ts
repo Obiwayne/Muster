@@ -63,6 +63,7 @@ const HUMAN_ONLY: [string, RegExp, string][] = [
   ['POST', /^\/api\/intel\/ask$/, 'ask the Captain about the gaps'],
   ['POST', /^\/api\/intel\/changes\/seen$/, 'mark intel changes seen'],
   ['DELETE', /^\/api\/intel\/watches\/[^/]+$/, 'stop intel watches'],
+  ...(['GET', 'POST', 'PUT', 'DELETE'] as const).map((m): [string, RegExp, string] => [m, /^\/api\/phone(?:\/|$)/, 'manage the phone link']),
 ];
 
 const agentParam = (path: string, re: RegExp): string | undefined => {
