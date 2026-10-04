@@ -146,10 +146,9 @@ describe('roadmap API', () => {
 
     const added = await ok<Reply & { goal: RoadmapGoal }>('captain', 'POST', '/api/roadmap/goals', { stageId: 'M2', title: 'Coupons', description: '' });
     expect(added.goal).toMatchObject({ id: 'G4', stageId: 'M2', status: 'planned' });
-    expect(added.roadmap).toMatchObject({ status: 'draft' });
-    expect(state().notes.find((n) => n.id === added.roadmap!.noteId)).toMatchObject({ type: 'approval', open: true });
-    await ok('you', 'POST', '/api/roadmap/approve');
-    expect(state().roadmap!.revision).toBe(2);
+    expect(added.roadmap).toMatchObject({ status: 'approved', revision: 2 }); // a replan, applied without asking you
+    expect(added.roadmap!.noteId).toBeUndefined();
+    expect((await call('you', 'POST', '/api/roadmap/approve')).status).toBe(409);
 
     const patched = await ok<Reply>('captain', 'PATCH', '/api/roadmap/goals/G4', { title: 'Coupon codes' });
     expect(patched.roadmap!.status).toBe('approved'); // a title isn't a replan

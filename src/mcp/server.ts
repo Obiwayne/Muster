@@ -461,7 +461,7 @@ ${r.output}`;
 
     tool(
       'set_roadmap',
-      'Draft or replan the whole roadmap: 1-12 stages in order, each with dates, exit criteria and up to 12 goals. Replaces the plan; pass the existing ids (M2, G3) of stages and goals you keep. Saving sends it to the user for approval; adding/removing stages or goals or changing dates on an approved roadmap makes it a draft again.',
+      'Draft or replan the whole roadmap: 1-12 stages in order, each with dates, exit criteria and up to 12 goals. Replaces the plan; pass the existing ids (M2, G3) of stages and goals you keep. The first draft goes to the user for approval; once they approved it, your changes apply straight away as a new revision (no approval).',
       {
         title: z.string().min(1).max(120).describe('e.g. "wall-education v1.0"'),
         summary: z.string().min(1).describe('What the product is, one paragraph'),
@@ -481,14 +481,14 @@ ${r.output}`;
         const head =
           r?.status === 'draft'
             ? `Saved roadmap draft rev ${r.revision}. The user has been asked to approve it; post no build tasks for new goals until then.`
-            : 'Saved the roadmap.';
+            : `Saved the roadmap (rev ${r?.revision ?? 0}, applied). Post roadmap_status so the user sees what changed.`;
         return `${head}\n${formatRoadmap(v)}`;
       },
     );
 
     tool(
       'update_stage',
-      'Edit one stage: title, description, dates or status. Changing dates on an approved roadmap sends it back for approval.',
+      'Edit one stage: title, description, dates or status. On an approved roadmap the change applies straight away.',
       {
         stage: z.string().describe('Stage id, e.g. M2'),
         title: z.string().min(1).max(120).optional(),
@@ -538,7 +538,7 @@ ${r.output}`;
 
     tool(
       'add_goal',
-      "Add a goal at the end of a stage, e.g. a goal the user gave that isn't on the roadmap yet. It is a plan change: an approved roadmap goes back to the user for approval. idea = the approved research idea (R7) this goal delivers: that change is already approved, so the roadmap stays approved.",
+      "Add a goal at the end of a stage, e.g. a goal the user gave that isn't on the roadmap yet. On an approved roadmap it applies straight away. idea = the approved research idea (R7) this goal delivers.",
       {
         stage: z.string().describe('Stage id, e.g. M2'),
         title: z.string().min(1).max(120),

@@ -99,15 +99,15 @@ export function createRoadmap(): Page {
 
   // ---------------------------------------------------------------- actions
   const replan = () => askCaptain('Ask the Captain to replan',
-    'Say what changed or what you want different. The Captain revises the roadmap and sends it back to you for approval.',
+    'Say what changed or what you want different. The Captain revises the roadmap; the change applies straight away.',
     'e.g. Move the wall editor before sharing; launch can slip a week',
-    'Please replan the roadmap (set_roadmap) and send it to me for approval. What I want changed: ');
+    'Please replan the roadmap (set_roadmap). What I want changed: ');
   const newStage = () => askCaptain('New stage',
-    'Describe the stage you want. The Captain adds it to the roadmap, with dates, goals and exit criteria, and the change comes back to you for approval.',
+    'Describe the stage you want. The Captain adds it to the roadmap, with dates, goals and exit criteria.',
     'e.g. A two-week beta with three schools after sharing',
     'Please add a new stage to the roadmap (set_roadmap): ');
   const addGoal = (s: RoadmapStage) => askCaptain(`Add a goal to ${s.id}`,
-    `Describe the goal. The Captain adds it to ${s.id} ${s.title} (add_goal) and the change comes back to you for approval.`,
+    `Describe the goal. The Captain adds it to ${s.id} ${s.title} (add_goal).`,
     'e.g. Teachers can revoke a link',
     `Please add a goal to ${s.id} ${s.title} (add_goal): `);
   const draftOne = (state: MusterState) => {
