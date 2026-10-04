@@ -579,8 +579,18 @@ ipcMain.handle('app:restartToUpdate', (event) => (fromWindow(event) ? restartToU
 
 // ---------------------------------------------------------------- lifecycle
 
-app.on('second-instance', () => {
+// Starting the app again focuses this window. With --update (scripts/update-app.cmd, or after a change is merged)
+// it updates instead, exactly like the Bulletin board's Update button, when a newer build or newer code is waiting.
+app.on('second-instance', (_event, argv) => {
   if (!win) return;
+  if (argv.includes('--update')) {
+    const status = currentUpdateStatus();
+    if (status === 'current') return;
+    void restartToUpdate().then((r) => {
+      if (!r.ok && !win.isDestroyed()) void dialog.showMessageBox(win, { type: 'error', title: 'Muster could not update', message: r.error });
+    });
+    return;
+  }
   if (win.isMinimized()) win.restore();
   win.focus();
 });
