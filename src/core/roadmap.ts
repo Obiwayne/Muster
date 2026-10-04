@@ -1,5 +1,6 @@
-// Roadmap: stages ("M1"…) → goals ("G1"…) → tasks. The Captain drafts it, you approve it, and the
-// orchestrator counts progress from the tasks and tells the Captain when goals finish.
+// Roadmap: stages ("M1"…) → goals ("G1"…) → tasks. The Captain drafts it, you approve it once, and after that
+// the Captain's changes apply straight away. The orchestrator counts progress from the tasks and tells the
+// Captain when goals finish.
 // Pure state mutations; the caller commits the store (and toasts/notifies, see the API layer).
 import type { ExitCriterion, GoalStatus, MusterState, Note, Roadmap, RoadmapGoal, ResearchIdea, RoadmapHealth, RoadmapProgress, RoadmapStage, StageStatus } from '../types.js';
 import { addFeed, addInbox, captainOf, closeNoteIfOpen, HUMAN, isCaptain, nowIso, postNote, SYSTEM } from './board.js';
@@ -132,7 +133,7 @@ const goalsOf = (r: Roadmap, stage: RoadmapStage): RoadmapGoal[] => stage.goalId
 const stageOf = (r: Roadmap, goal: RoadmapGoal): RoadmapStage | undefined => r.stages.find((s) => s.id === goal.stageId);
 const finished = (g: RoadmapGoal) => g.status === 'done' || g.status === 'cancelled';
 
-/** Stage/goal ids in order with their dates and the launch date: a change here is a replan that needs your approval. */
+/** Stage/goal ids in order with their dates and the launch date: a change here is a replan (a new revision). */
 function planKey(r: Roadmap): string {
   return JSON.stringify([r.launchDate ?? null, r.stages.map((s) => [s.id, s.start ?? null, s.due ?? null, goalsOf(r, s).map((g) => [g.id, g.start ?? null, g.due ?? null])])]);
 }
@@ -171,15 +172,28 @@ function requestApproval(state: MusterState, actor: string): { note: Note; noteO
   return { note, noteOpened: true };
 }
 
-/** After an edit through the stage/goal routes: a replan turns an approved roadmap back into a draft (and asks you again). */
+/**
+ * A replan of a roadmap you approved once applies straight away as the next revision: you approve the first
+ * draft, then the Captain keeps it current without asking you. Also settles a draft left waiting from before.
+ */
+function applyReplan(state: MusterState, actor: string): RoadmapChange {
+  const r = state.roadmap!;
+  r.status = 'approved';
+  r.revision += 1;
+  r.updatedAt = nowIso();
+  closeApprovalNote(state, r);
+  startCurrent(state);
+  addFeed(state, { kind: 'event', from: actor, text: `updated the roadmap to revision ${r.revision}` });
+  if (actor === HUMAN) tellCaptain(state, actor, `The user changed the roadmap (revision ${r.revision}). Check roadmap() and carry on.`);
+  return { roadmap: r };
+}
+
+/** After an edit through the stage/goal routes: a replan applies at once once the roadmap was approved, else the draft asks you. */
 function afterEdit(state: MusterState, before: string, actor: string): RoadmapChange {
   const r = state.roadmap!;
   r.updatedAt = nowIso();
+  if (r.approvedAt) return planKey(r) === before && r.status === 'approved' ? { roadmap: r } : applyReplan(state, actor);
   if (planKey(r) === before) return { roadmap: r };
-  if (r.status === 'approved') {
-    r.status = 'draft';
-    addFeed(state, { kind: 'event', from: actor, text: `changed the approved roadmap; revision ${r.revision + 1} waits for your approval` });
-  }
   return { roadmap: r, ...requestApproval(state, actor) };
 }
 
@@ -200,8 +214,8 @@ function buildCriteria(raw: unknown, old: ExitCriterion[], what: string, actor: 
 
 /**
  * PUT /api/roadmap, set_roadmap: replaces the plan. Entries with a known id keep id, status and timestamps;
- * the rest get fresh ids. Dropping a goal that still has tasks is refused (409). A new roadmap, any save of a
- * draft, or a replan of an approved one (stages/goals added, removed or moved, dates changed) waits for your approval.
+ * the rest get fresh ids. Dropping a goal that still has tasks is refused (409). A new roadmap waits for your
+ * approval; once you approved it, a replan (stages/goals added, removed or moved, dates changed) applies at once.
  */
 export function setRoadmap(state: MusterState, input: RoadmapInput, actor: string): RoadmapChange {
   requireCaptainOrYou(state, actor, 'write the roadmap');
@@ -308,8 +322,7 @@ export function setRoadmap(state: MusterState, input: RoadmapInput, actor: strin
   };
   state.roadmap = roadmap;
   addFeed(state, { kind: 'event', from: actor, text: `${prev ? 'updated' : 'drafted'} the roadmap: ${title} (${stages.length} stages, ${goals.length} goals)` });
-  if (roadmap.status === 'approved' && planKey(roadmap) !== before) roadmap.status = 'draft';
-  if (roadmap.status !== 'draft') return { roadmap };
+  if (roadmap.approvedAt) return roadmap.status === 'approved' && planKey(roadmap) === before ? { roadmap } : applyReplan(state, actor);
   return { roadmap, ...requestApproval(state, actor) };
 }
 

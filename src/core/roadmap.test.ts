@@ -1,6 +1,6 @@
 import { beforeEach, describe, expect, it } from 'vitest';
 import { DEFAULT_CONFIG, type MusterState, type Task } from '../types.js';
-import { inboxFor } from './board.js';
+import { inboxFor, postNote } from './board.js';
 import { addGoal, advanceRoadmap, approveRoadmap, completeStage, computeProgress, linkTasks, patchGoal, patchStage, rejectRoadmap, setRoadmap, setRoadmapStatus, tickCriterion, type RoadmapInput } from './roadmap.js';
 import { emptyState, migrate } from './store.js';
 import { cancelTask, createTask, markMerged } from './tasks.js';
@@ -80,13 +80,13 @@ describe('roadmap', () => {
     expect(r.stages.map((x) => [x.id, x.status, x.goalIds])).toEqual([['M1', 'active', ['G1', 'G4']], ['M2', 'planned', ['G3']], ['M3', 'planned', []]]);
     expect(r.goals.find((g) => g.id === 'G1')).toMatchObject({ title: 'Auth!', status: 'active' });
     expect(r.stages[0].exitCriteria[0]).toMatchObject({ text: 'CI green', done: true, by: 'captain' });
-    expect(r.status).toBe('draft'); // G2 removed, G4 and M3 added: a replan
+    expect(r).toMatchObject({ status: 'approved', revision: 2 }); // G2 removed, G4 and M3 added: a replan, applied at once
     const drop = plan();
     drop.stages[0].goals = [];
     expect(() => setRoadmap(s, drop, 'captain')).toThrow(expect.objectContaining({ status: 409, message: expect.stringMatching(/G1 Auth! \(T1\)/) }));
   });
 
-  it('draft rule: text edits keep it approved, dates and goal changes need approval again', () => {
+  it('once approved, every change applies at once: text edits keep the revision, replans bump it', () => {
     setRoadmap(s, plan(), 'captain');
     approveRoadmap(s, 'you');
     const ids = (p: RoadmapInput) => {
@@ -108,10 +108,27 @@ describe('roadmap', () => {
     patchGoal(s, 'G2', { status: 'active' }, 'captain');
     expect(s.roadmap!.status).toBe('approved');
     const c = patchStage(s, 'M2', { due: '2026-11-05' }, 'captain');
-    expect(c).toMatchObject({ roadmap: { status: 'draft' }, noteOpened: true });
-    expect(approveRoadmap(s, 'you')).toMatchObject({ status: 'approved', revision: 2 });
-    expect(addGoal(s, { stageId: 'M2', title: 'Coupons' }, 'captain')).toMatchObject({ goal: { id: 'G4', status: 'planned' }, roadmap: { status: 'draft' } });
+    expect(c).toMatchObject({ roadmap: { status: 'approved', revision: 2 } });
+    expect(c.note).toBeUndefined();
+    expect(() => approveRoadmap(s, 'you')).toThrow(expect.objectContaining({ status: 409 }));
+    expect(addGoal(s, { stageId: 'M2', title: 'Coupons' }, 'captain')).toMatchObject({ goal: { id: 'G4', status: 'planned' }, roadmap: { status: 'approved', revision: 3 } });
     expect(s.roadmap!.stages[1].goalIds).toEqual(['G3', 'G4']);
+    expect(approvalNotes().filter((n) => n.open)).toEqual([]);
+    expect(captainInbox().some((t) => /user changed the roadmap/.test(t))).toBe(false); // the Captain's own edits
+    patchGoal(s, 'G4', { due: '2026-11-04' }, 'you');
+    expect(s.roadmap!.revision).toBe(4);
+    expect(captainInbox().at(-1)).toMatch(/user changed the roadmap \(revision 4\)/);
+  });
+
+  it('a draft left waiting from before applies with the next change', () => {
+    setRoadmap(s, plan(), 'captain');
+    approveRoadmap(s, 'you');
+    s.roadmap!.status = 'draft'; // the old rule: a replan waiting for approval
+    s.roadmap!.noteId = postNote(s, { actor: 'muster', type: 'approval', to: 'you', text: 'Roadmap ready', topic: 'roadmap' }).id;
+    patchStage(s, 'M1', { title: 'Base' }, 'captain');
+    expect(s.roadmap).toMatchObject({ status: 'approved', revision: 2 });
+    expect(s.roadmap!.noteId).toBeUndefined();
+    expect(approvalNotes().filter((n) => n.open)).toEqual([]);
   });
 
   it('approve starts M1 and G1 and closes the note; reject replies, closes and keeps it a draft', () => {

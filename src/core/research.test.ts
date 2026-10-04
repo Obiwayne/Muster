@@ -130,8 +130,8 @@ describe('research ideas', () => {
     expect(status(() => addGoal(s, { stageId: 'M2', title: 'Again', ideaId: 'R1' }, 'captain'))).toBe(409);
     expect(status(() => rejectIdea(s, 'you', i.id))).toBe(409);
     expect(status(() => reopenIdea(s, 'you', i.id))).toBe(409);
-    // A plain new goal is still a replan.
-    expect(addGoal(s, { stageId: 'M2', title: 'Plain' }, 'captain').roadmap.status).toBe('draft');
+    // A plain new goal is a replan; on an approved roadmap it applies at once too.
+    expect(addGoal(s, { stageId: 'M2', title: 'Plain' }, 'captain').roadmap.status).toBe('approved');
   });
 
   it('an approved idea can widen an existing goal (update_goal with idea) without a second approval', () => {

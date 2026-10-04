@@ -320,7 +320,7 @@ export interface Roadmap {
   summary: string; // what the product is, one paragraph
   launchDate?: string; // YYYY-MM-DD
   status: RoadmapStatus;
-  revision: number; // bumps on every approval; edits to an approved roadmap that change stages/goals/dates make it a draft again
+  revision: number; // bumps on approval and on every replan after it (once approved, the Captain's changes apply without asking)
   approvedAt?: string;
   noteId?: string; // the open approval note while it is a draft waiting for you
   stages: RoadmapStage[]; // in order

@@ -47,7 +47,7 @@ describe('captainPrompt', () => {
     expect(p).toContain('Post every task with its goal');
     expect(p).toMatch(/when told a goal is done, break the next one into tasks/);
     expect(p).toMatch(/Tick exit criteria only with evidence.*then `complete_stage`/);
-    expect(p).toMatch(/Propose replans with `set_roadmap` instead of silently changing scope/);
+    expect(p).toMatch(/your changes apply straight away without asking/);
     expect(p).toMatch(/`add_goal` to the right stage/);
     expect(p).toMatch(/Rule: after every merged task, update the roadmap, then call `roadmap_status\(text, task\)`/);
     expect(p).toMatch(/The user reads this line to know where things are, so never skip it/);
@@ -220,7 +220,7 @@ describe('captainPrompt research ideas', () => {
     expect(p).toContain('`advise_idea(R7, text, plan)`');
     expect(p).toMatch(/honest cost/);
     expect(p).toContain('`add_goal(stage, title, description, idea: "R7")`');
-    expect(p).toMatch(/no second one/);
+    expect(p).toMatch(/No second approval/);
     expect(p).toContain('`list_ideas(status?)`');
   });
   it('handles competitive intelligence: gaps thread, effort, re-check alerts', () => {
