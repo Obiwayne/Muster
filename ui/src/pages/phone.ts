@@ -6,8 +6,7 @@ import { api, ApiError } from '../api';
 import { errToast } from '../actions';
 import {
   SEND_ROWS, deviceLine, expiryLine, manualHost, msLeft, networkRows, sendTarget, withNotify,
-  type PhoneNetworkMode, type PhonePairCode, type PhoneSendPrefs, type PhoneStatus,
-} from '../phonemodel';
+  type PhoneNetworkMode, type PhonePairCode, type PhoneSendPrefs, type PhoneStatus, shortFingerprint } from '../phonemodel';
 
 const STATUS_POLL_MS = 4000;
 
@@ -179,7 +178,8 @@ export function createPhoneSection(): PhoneSection {
             h('div.ph-hint', null, "Can't scan? Type this code instead"),
             h('div.ph-code-row', null,
               h('div.ph-code', null, code?.display ?? '———'),
-              host ? h('div.ph-host', { title: 'Type this address on the phone too' }, h('span.ph-host-l', null, 'PC address'), host) : null),
+              host ? h('div.ph-host', { title: 'Type this address on the phone too' }, h('span.ph-host-l', null, 'PC address'), host,
+                shortFingerprint(status?.fingerprint) ? h('span.ph-host-l', { title: 'The phone shows these characters when you type the code: they must match' }, `check ${shortFingerprint(status?.fingerprint)}`) : null) : null),
             h('div.ph-exp-row', null, expEl, newBtn)),
           h('div.ph-steps', null, steps.map((t, i) => h('div.ph-step', null, h('span.ph-num', null, String(i + 1)), h('span', null, t)))))));
   }

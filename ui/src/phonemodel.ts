@@ -158,3 +158,9 @@ export type SettingsTab = (typeof SETTINGS_TABS)[number]['id'];
 export function parseSettingsTab(v: string | null | undefined): SettingsTab {
   return (SETTINGS_TABS.find((t) => t.id === v)?.id ?? 'general') as SettingsTab;
 }
+
+/** The first 8 hex characters of the certificate fingerprint, as the phone shows them for a typed-in code ("3F9A 21C0"). */
+export function shortFingerprint(fingerprint: string | undefined): string {
+  const hex = (fingerprint ?? '').replace(/[^0-9a-f]/gi, '').slice(0, 8).toUpperCase();
+  return hex.length === 8 ? `${hex.slice(0, 4)} ${hex.slice(4)}` : '';
+}

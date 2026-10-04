@@ -108,22 +108,7 @@ fun CrewScreen() {
                         }
                     }
                 }
-                OutlineButton(
-                    if (c.paused) "Resume the crew" else "Pause the crew",
-                    Modifier.fillMaxWidth(), height = 48.dp, radius = 12.dp, textStyle = ts(15, 20, FontWeight.SemiBold),
-                    icon = if (c.paused) Ic.play else Ic.pause, busy = pausing,
-                ) {
-                    val p = pid ?: return@OutlineButton
-                    pausing = true
-                    scope.launch {
-                        val ok = state.call({ snack(it) }) { setPaused(p, !c.paused) } != null
-                        pausing = false
-                        if (ok) {
-                            snack(if (c.paused) "The crew picks up new work again" else "Paused: the crew takes no new work")
-                            load()
-                        }
-                    }
-                }
+                // "Pause the crew" (M07) waits for a pause route on the gateway; see docs/PHONE.md.
             }
         }
     }

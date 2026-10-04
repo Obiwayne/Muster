@@ -1,8 +1,7 @@
 import { describe, expect, it } from 'vitest';
 import {
   ago, dayTime, deviceLine, expiryLine, formatCountdown, manualHost, msLeft, networkRows, parseSettingsTab, sendTarget, shortDns, withNotify,
-  type PhoneStatus,
-} from './phonemodel';
+  type PhoneStatus, shortFingerprint } from './phonemodel';
 
 const status = (over: Partial<PhoneStatus['network']> = {}, devices: PhoneStatus['devices'] = []): PhoneStatus => ({
   pcName: 'WAYNE-PC', port: 47910, fingerprint: 'ab'.repeat(32),
@@ -93,5 +92,13 @@ describe('send prefs and tabs', () => {
     expect(parseSettingsTab('usage')).toBe('usage');
     expect(parseSettingsTab(null)).toBe('general');
     expect(parseSettingsTab('bogus')).toBe('general');
+  });
+});
+
+describe('shortFingerprint', () => {
+  it('shows the first 8 hex characters in two groups, as the phone does', () => {
+    expect(shortFingerprint('3f9a21c0deadbeef')).toBe('3F9A 21C0');
+    expect(shortFingerprint('3F:9A:21:C0:00')).toBe('3F9A 21C0');
+    expect(shortFingerprint(undefined)).toBe('');
   });
 });
