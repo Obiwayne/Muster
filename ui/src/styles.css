@@ -394,6 +394,8 @@ textarea.field { height: auto; min-height: 40px; padding: 10px 14px; resize: ver
 .banner svg { color: var(--icon); }
 .banner.warm { border-color: color-mix(in oklab, var(--color-warm) 40%, transparent); background: color-mix(in oklab, var(--color-warm) 8%, var(--color-surface)); color: var(--color-text); }
 .banner.warm svg { color: var(--color-warm); }
+.update-bar { margin: 12px 28px 0; flex-shrink: 0; }
+.update-bar[hidden] { display: none; }
 .banner.gh-offer { margin: 12px 28px 0; flex-shrink: 0; color: var(--color-text); }
 .banner.gh-offer[hidden] { display: none; }
 .banner.gh-offer svg { flex-shrink: 0; }

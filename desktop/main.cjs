@@ -9,6 +9,8 @@ const HOME = path.resolve(__dirname, '..');
 const CLI = path.join(HOME, 'bin', 'muster.js');
 const ICON = path.join(__dirname, 'muster.ico');
 const SETTINGS = () => path.join(app.getPath('userData'), 'settings.json');
+const { updateStatus } = require('./update.cjs');
+const APP_STARTED_AT = Date.now();
 
 app.setAppUserModelId('com.obiwayne.muster');
 if (!app.requestSingleInstanceLock()) app.quit();
@@ -487,6 +489,62 @@ ipcMain.handle('muster:forget', (_e, root) => {
 });
 ipcMain.handle('muster:stop', (_e, root) => stopProject(String(root)));
 
+// ---------------------------------------------------------------- restart to update
+// The dashboard shows "Restart to update" when the code on disk is newer than what runs. Restarting builds
+// first when the sources changed, stops this project's orchestrator (agents keep their state and resume),
+// and relaunches the app straight into the same project.
+
+function serverStartedAt(root) {
+  try {
+    const t = Date.parse(JSON.parse(fs.readFileSync(path.join(root, '.muster', 'server.json'), 'utf8')).startedAt);
+    return Number.isFinite(t) ? t : undefined;
+  } catch {
+    return undefined;
+  }
+}
+
+const currentUpdateStatus = () =>
+  updateStatus({ home: HOME, appStartedAt: APP_STARTED_AT, serverStartedAt: current ? serverStartedAt(current.root) : undefined });
+
+function buildMuster() {
+  return new Promise((resolve) => {
+    const env = { ...process.env };
+    for (const k of Object.keys(env)) if (k.startsWith('MUSTER_') || k.startsWith('ELECTRON_')) delete env[k];
+    execFile(process.env.ComSpec || 'cmd.exe', ['/d', '/s', '/c', 'npm run build'], { cwd: HOME, env, windowsHide: true, timeout: 10 * 60_000, maxBuffer: 16 * 1024 * 1024 },
+      (err, stdout, stderr) => resolve({ ok: !err, out: `${stdout}${stderr}`.trim() }));
+  });
+}
+
+let restarting = false;
+async function restartToUpdate() {
+  if (restarting) return { ok: false, error: 'Already restarting.' };
+  restarting = true;
+  try {
+    if (currentUpdateStatus() === 'build') {
+      win.setTitle('Muster · building the update…');
+      const b = await buildMuster();
+      if (!b.ok) {
+        applyTitle();
+        return { ok: false, error: `The build failed, so Muster keeps running the old version.\n\n${b.out.split(/\r?\n/).slice(-15).join('\n')}` };
+      }
+    }
+    const root = current?.root;
+    if (root) {
+      win.setTitle(`Muster · restarting ${current.name}…`);
+      await stopProject(root);
+    }
+    quitting = true;
+    app.relaunch({ args: [...process.argv.slice(1).filter((a) => !a.startsWith('--open=')), ...(root ? [`--open=${root}`] : [])] });
+    app.exit(0);
+    return { ok: true };
+  } finally {
+    restarting = false;
+  }
+}
+
+ipcMain.handle('app:updateStatus', (event) => (fromWindow(event) ? currentUpdateStatus() : null));
+ipcMain.handle('app:restartToUpdate', (event) => (fromWindow(event) ? restartToUpdate() : { ok: false, error: 'not allowed' }));
+
 // ---------------------------------------------------------------- lifecycle
 
 app.on('second-instance', () => {
@@ -494,5 +552,13 @@ app.on('second-instance', () => {
   if (win.isMinimized()) win.restore();
   win.focus();
 });
-app.whenReady().then(createWindow);
+app.whenReady().then(async () => {
+  createWindow();
+  // Relaunched by "Restart to update": reopen the project it was showing.
+  const open = process.argv.find((a) => a.startsWith('--open='))?.slice(7);
+  if (open && fs.existsSync(open)) {
+    const r = await openProject(open);
+    if (!r.ok && !r.canceled) await dialog.showMessageBox(win, { type: 'error', title: 'Could not reopen the project', message: r.error });
+  }
+});
 app.on('window-all-closed', () => app.quit());
