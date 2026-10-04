@@ -180,8 +180,8 @@ export function mcpConfig(agent: Agent, ctx: LaunchContext): object {
   return { mcpServers: servers };
 }
 
-/** Tools the guard hook checks (hooks/guard.ts). PowerShell is Claude Code's Windows shell tool. */
-export const PRE_TOOL_MATCHER = 'Edit|Write|MultiEdit|NotebookEdit|Bash|PowerShell|Read|Grep|Glob';
+/** Tools the guard hook checks (hooks/guard.ts). PowerShell is Claude Code's Windows shell tool; AskUserQuestion goes to the board (docs/ASK.md). */
+export const PRE_TOOL_MATCHER = 'Edit|Write|MultiEdit|NotebookEdit|Bash|PowerShell|Read|Grep|Glob|AskUserQuestion';
 
 /** Vellum MCP tools that change a design. Denied to the design crew when config.vellumEdit is 'never'. */
 export const VELLUM_EDIT_TOOLS = [

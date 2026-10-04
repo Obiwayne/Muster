@@ -780,6 +780,13 @@ ${pushed ? `Pushed ${base} to origin.` : `Push to origin failed: ${(r.stderr || 
     ctx.toast('warn', note.text);
     return note;
   });
+  route('POST', '/api/ask-user', ({ body }) => {
+    const note = mutate(() => board.askHuman(state(), str(body.actor, 'actor'), body.questions));
+    ctx.notify('Muster: the Captain asks you', note.text);
+    ctx.toast('warn', note.text);
+    return note;
+  });
+  route('POST', '/api/notes/:id/answer', ({ params, body }) => mutate(() => board.answerAsk(state(), params.id, str(body.actor, 'actor'), body.answers)));
   route('POST', '/api/messages', ({ body }) => mutate(() => board.sendMessage(state(), str(body.actor, 'actor'), str(body.to, 'to'), str(body.text, 'text'))));
   route('GET', '/api/feed', ({ query }) =>
     board.listFeed(state(), { limit: Number(query.get('limit')) || 200, before: query.get('before') ?? undefined, agent: query.get('agent') ?? undefined }),

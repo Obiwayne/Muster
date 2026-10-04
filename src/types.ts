@@ -125,7 +125,14 @@ export interface Note {
   closedAt?: string;
   replies: NoteReply[];
   intel?: IntelJobNote; // topic 'intel': the "research is ready" / "stopped early" note of a finished intel job (the board shows its chips and actions)
+  ask?: AskQuestion[]; // an escalation made from the Captain's AskUserQuestion menu (POST /api/ask-user), answered with POST /api/notes/:id/answer
+  answers?: AskAnswer[]; // set once you answered the ask
 }
+
+/** Claude Code's AskUserQuestion menu as the Captain asked it, turned into a Needs-you note. See docs/ASK.md. */
+export interface AskOption { label: string; description?: string }
+export interface AskQuestion { header: string; question: string; multiSelect: boolean; options: AskOption[] }
+export interface AskAnswer { header: string; choices: string[]; other?: string }
 
 /** What a finished (or stopped) competitor / sweep / watch job found, carried by its Bulletin board note. Counts are taken when it ended. */
 export interface IntelJobNote {

@@ -80,6 +80,7 @@ class MainActivity : ComponentActivity() {
         intent ?: return
         val state = MusterApp.state
         // Debug builds: `adb shell am start -n com.obiwayne.muster/.MainActivity --ez demo true --es screen review`
+        // (screens: needs, crew, settings, review, answer, ask; `--ez notify true [--es screen ask]` posts demo notifications)
         if (BuildConfig.DEBUG && intent.hasExtra("notify") && !intent.getBooleanExtra("notify", false)) {
             Notifier.cancelAll(this)
             return
@@ -88,7 +89,14 @@ class MainActivity : ComponentActivity() {
             // Debug: post the two M08 notifications from the demo data.
             lifecycleScope.launch {
                 val items = com.obiwayne.muster.data.DemoBackend().needs().items
-                items.filter { it.taskId == "T58" || it.noteId == "N142" }.reversed().forEach { Notifier.postNeed(this@MainActivity, it.copy(createdAt = java.time.Instant.now().toString()), "WAYNE-PC") }
+                val now = java.time.Instant.now().toString()
+                items.filter { it.taskId == "T58" || it.noteId == "N142" }.reversed().forEach { Notifier.postNeed(this@MainActivity, it.copy(createdAt = now), "WAYNE-PC") }
+                if (intent.getStringExtra("screen") == "ask") {
+                    // The two-question ask, and a one-question copy that gets one-tap answer actions.
+                    val ask = items.first { it.noteId == "N144" }
+                    Notifier.postNeed(this@MainActivity, ask.copy(createdAt = now), "WAYNE-PC")
+                    Notifier.postNeed(this@MainActivity, ask.copy(id = ask.id + ":1", ask = ask.ask.take(1), createdAt = now), "WAYNE-PC")
+                }
             }
             return
         }
@@ -219,6 +227,10 @@ private fun openDebugScreen(nav: NavHostController, screen: String) {
         "answer" -> {
             nav.navigate(R2.HOME) { popUpTo(0) }
             nav.navigate("note/starcut/N142")
+        }
+        "ask" -> {
+            nav.navigate(R2.HOME) { popUpTo(0) }
+            nav.navigate("note/starcut/N144")
         }
         else -> {
             state.homeTab.value = screen.takeIf { it in setOf("needs", "crew", "settings") } ?: "needs"

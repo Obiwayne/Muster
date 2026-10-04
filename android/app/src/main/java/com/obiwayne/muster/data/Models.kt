@@ -39,6 +39,8 @@ data class NeedItem(
     val createdAt: String = "",
     val evidence: EvidenceRef? = null,
     val actions: List<String> = emptyList(),
+    /** Set on escalation items made from a Captain question (ASK.md). */
+    val ask: List<AskQuestion> = emptyList(),
 ) {
     val isReview get() = kind == Kind.REVIEW || kind == Kind.APPROVAL
     val isQuestion get() = kind == Kind.QUESTION || kind == Kind.ESCALATION
@@ -118,7 +120,57 @@ data class Note(
     val replies: List<NoteReply> = emptyList(),
     /** Optional quick answers, if the gateway ever provides them. */
     val options: List<String> = emptyList(),
+    /** The Captain's multiple-choice questions (ASK.md), when the note came from `POST /api/ask`. */
+    val ask: List<AskQuestion> = emptyList(),
+    /** Set once the questions were answered. */
+    val answers: List<AskAnswer> = emptyList(),
 )
+
+@Serializable
+data class AskOption(val label: String, val description: String? = null) {
+    /** The label without a trailing "(Recommended)", which shows as a tag instead. */
+    val shownLabel get() = label.trimEnd().removeSuffix(RECOMMENDED).trimEnd().ifEmpty { label }
+    val recommended get() = label.trimEnd().endsWith(RECOMMENDED)
+}
+
+private const val RECOMMENDED = "(Recommended)"
+
+@Serializable
+data class AskQuestion(
+    val header: String = "",
+    val question: String = "",
+    val multiSelect: Boolean = false,
+    val options: List<AskOption> = emptyList(),
+)
+
+@Serializable
+data class AskAnswer(val header: String = "", val choices: List<String> = emptyList(), val other: String? = null)
+
+object AskText {
+    /** The orchestrator's reply line per question (ASK.md): `<header or Qn>: <choices>` plus ` (note: <other>)`. */
+    fun replyText(answers: List<AskAnswer>): String = answers.mapIndexed { i, a ->
+        val head = a.header.ifBlank { "Q${i + 1}" }
+        val other = a.other?.trim().orEmpty()
+        val body = when {
+            a.choices.isEmpty() -> other
+            other.isEmpty() -> a.choices.joinToString(", ")
+            else -> a.choices.joinToString(", ") + " (note: $other)"
+        }
+        "$head: $body"
+    }.joinToString("\n")
+
+    /** Notification text: each question and its option labels. */
+    fun summary(ask: List<AskQuestion>): String = ask.joinToString("\n\n") { q ->
+        q.question + "\n" + q.options.joinToString(" · ") { it.shownLabel }
+    }
+}
+
+/** One answer per question, by index (`POST .../notes/:nid/answer`). */
+@Serializable
+data class AnswerChoice(val choices: List<String> = emptyList(), val other: String? = null)
+
+@Serializable
+data class AnswerBody(val answers: List<AnswerChoice>)
 
 @Serializable
 data class CrewAgent(

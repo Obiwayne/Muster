@@ -1,6 +1,6 @@
 import { beforeEach, describe, expect, it } from 'vitest';
 import type { MusterState } from '../types.js';
-import { closeNote, escalate, inboxFor, isNeedsYou, listFeed, listNotes, markRead, noteFeedId, nudgeText, postNote, reactFeed, replyNote, sendMessage } from './board.js';
+import { answerAsk, askHuman, cleanAsk, closeNote, escalate, inboxFor, isNeedsYou, listFeed, listNotes, markRead, noteFeedId, nudgeText, postNote, reactFeed, replyNote, sendMessage } from './board.js';
 import { emptyState } from './store.js';
 import { makeAgent } from './testutil.js';
 
@@ -147,5 +147,68 @@ describe('read receipts and reactions', () => {
     const m = sendMessage(s, 'captain', 'crew-2', 'q');
     reactFeed(s, m.id, 'crew-2', '❓️');
     expect(m.reactions![0].emoji).toBe('❓');
+  });
+});
+
+describe('Captain questions (AskUserQuestion)', () => {
+  const art = { header: 'Art model', question: 'Which image model?', options: [{ label: 'Flux (Recommended)', description: 'Best quality' }, { label: 'SDXL' }, { label: 'Imagen' }] };
+  const size = { header: 'Caption size', question: 'How big are captions?', multiSelect: true, options: [{ label: 'Small' }, { label: 'Large' }] };
+
+  it('cleans the questions and rejects bad input', () => {
+    expect(cleanAsk([{ ...art, header: '  A very long header that runs past forty characters  ' }])[0]).toMatchObject({ header: 'A very long header that runs past forty', multiSelect: false });
+    expect(cleanAsk([{ question: ' Go? ', options: [{ label: ' Yes ', description: '' }] }])).toEqual([{ header: '', question: 'Go?', multiSelect: false, options: [{ label: 'Yes' }] }]);
+    expect(() => cleanAsk([])).toThrow(/1 to 4/);
+    expect(() => cleanAsk([art, art, art, art, art])).toThrow(/1 to 4/);
+    expect(() => cleanAsk([{ ...art, question: ' ' }])).toThrow(/text is empty/);
+    expect(() => cleanAsk([{ ...art, options: [] }])).toThrow(/1 to 6 options/);
+    expect(() => cleanAsk([{ ...art, options: Array.from({ length: 7 }, (_, i) => ({ label: `o${i}` })) }])).toThrow(/1 to 6 options/);
+    expect(() => cleanAsk([{ ...art, options: [{ label: 'x'.repeat(121) }] }])).toThrow(/longer than 120/);
+    expect(() => cleanAsk([{ ...art, options: [{ label: 'a', description: 'x'.repeat(501) }] }])).toThrow(/longer than 500/);
+    expect(() => cleanAsk([{ ...art, multiSelect: 'yes' }])).toThrow(/multiSelect/);
+  });
+
+  it('only the Captain asks; the note is an open escalation to you', () => {
+    expect(() => askHuman(s, 'crew-2', [art])).toThrow(/Only the Captain/);
+    const n = askHuman(s, 'captain', [art, size]);
+    expect(n).toMatchObject({ type: 'escalation', from: 'captain', to: 'you', open: true, text: 'Which image model?\n\nHow big are captions?' });
+    expect(n.ask!.map((q) => q.header)).toEqual(['Art model', 'Caption size']);
+    expect(isNeedsYou(n)).toBe(true);
+  });
+
+  it('an answer replies as you, closes the note and reaches the Captain', () => {
+    const n = askHuman(s, 'captain', [art, size]);
+    answerAsk(s, n.id.toLowerCase(), 'you', [{ choices: ['SDXL'], other: 'cheaper' }, { choices: ['Small', 'Large'] }]);
+    expect(n.open).toBe(false);
+    expect(n.answers).toEqual([{ header: 'Art model', choices: ['SDXL'], other: 'cheaper' }, { header: 'Caption size', choices: ['Small', 'Large'] }]);
+    expect(n.replies.at(-1)).toMatchObject({ from: 'you', text: 'Art model: SDXL (note: cheaper)\nCaption size: Small, Large' });
+    expect(inboxOf('captain')).toEqual(['reply:you']);
+    expect(() => answerAsk(s, n.id, 'you', [{ choices: ['SDXL'] }, { choices: ['Small'] }])).toThrow(/already closed/);
+  });
+
+  it('free text alone answers, and an empty header reads as Q<n>', () => {
+    const n = askHuman(s, 'captain', [{ ...art, header: '' }]);
+    answerAsk(s, n.id, 'you', [{ choices: [], other: 'Ask me tomorrow' }]);
+    expect(n.replies.at(-1)!.text).toBe('Q1: Ask me tomorrow');
+  });
+
+  it('validates the answers', () => {
+    const n = askHuman(s, 'captain', [art, size]);
+    const ok = { choices: ['Small'] };
+    expect(() => answerAsk(s, n.id, 'captain', [{ choices: ['SDXL'] }, ok])).toThrow(/Only you/);
+    expect(() => answerAsk(s, n.id, 'you', [{ choices: ['SDXL'] }])).toThrow(/Answer all 2/);
+    expect(() => answerAsk(s, n.id, 'you', [{ choices: ['Midjourney'] }, ok])).toThrow(/not one of the options/);
+    expect(() => answerAsk(s, n.id, 'you', [{ choices: ['SDXL', 'Imagen'] }, ok])).toThrow(/pick one option/);
+    expect(() => answerAsk(s, n.id, 'you', [{ choices: [], other: ' ' }, ok])).toThrow(/pick an option or write/);
+    expect(() => answerAsk(s, n.id, 'you', [{ choices: ['SDXL'], other: 'x'.repeat(1001) }, ok])).toThrow(/longer than 1000/);
+    const plain = postNote(s, { actor: 'captain', type: 'escalation', text: 'hm', to: 'you' });
+    expect(() => answerAsk(s, plain.id, 'you', [ok])).toThrow(/not a question menu/);
+    expect(n.open).toBe(true);
+    expect(n.answers).toBeUndefined();
+  });
+
+  it('a free-text reply on an ask note leaves it open', () => {
+    const n = askHuman(s, 'captain', [art]);
+    replyNote(s, n.id, 'you', 'Let me think');
+    expect(n.open).toBe(true);
   });
 });

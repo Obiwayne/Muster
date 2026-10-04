@@ -35,6 +35,7 @@ import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableStateListOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.rememberCoroutineScope
@@ -56,6 +57,9 @@ import androidx.compose.ui.window.Dialog
 import androidx.compose.ui.window.DialogProperties
 import com.obiwayne.muster.MusterApp
 import com.obiwayne.muster.data.Ago
+import com.obiwayne.muster.data.AnswerChoice
+import com.obiwayne.muster.data.AskOption
+import com.obiwayne.muster.data.AskText
 import com.obiwayne.muster.data.EvidenceSet
 import com.obiwayne.muster.data.Kind
 import com.obiwayne.muster.data.Note
@@ -400,6 +404,22 @@ fun AnswerScreen(pid: String, nid: String, onBack: () -> Unit) {
         }
     }
 
+    fun submit(answers: List<AnswerChoice>) {
+        if (sending != null) return
+        sending = ASK_SUBMIT
+        scope.launch {
+            val updated = state.call({ snack(it) }) { answer(pid, nid, answers) }
+            sending = null
+            if (updated != null) {
+                item?.let { state.removeNeed(it.id) }
+                snack("Answer sent to the Captain")
+                onBack()
+            } else {
+                load() // it may have been answered elsewhere (409): show it closed
+            }
+        }
+    }
+
     Column(Modifier.fillMaxSize().background(C.bg).statusBarsPadding()) {
         val kind = note?.type ?: item?.kind ?: Kind.QUESTION
         Row(
@@ -416,6 +436,14 @@ fun AnswerScreen(pid: String, nid: String, onBack: () -> Unit) {
         val n = note
         if (n == null) {
             Box(Modifier.weight(1f)) { Loading(error) { scope.launch { load() } } }
+            return@Column
+        }
+        if (n.ask.isNotEmpty()) {
+            AskContent(
+                n, taskTitle, Modifier.weight(1f),
+                submitting = sending == ASK_SUBMIT, replying = sending != null && sending != ASK_SUBMIT,
+                reply = text, onReply = { text = it }, onSendReply = { send(text) }, onSubmit = ::submit,
+            )
             return@Column
         }
         Column(
@@ -502,10 +530,208 @@ fun AnswerScreen(pid: String, nid: String, onBack: () -> Unit) {
                         }
                     }
                 }
-                val others = (listOf(n.from) + n.replies.map { it.from }).filter { it != "you" && it != "captain" && it != "muster" }.distinct()
-                val to = (listOf("the Captain") + others).let { if (it.size == 1) it[0] else it.dropLast(1).joinToString(", ") + " and " + it.last() }
-                Txt("Your answer goes to $to.", ts(12, 16, color = C.faint), Modifier.padding(start = 16.dp))
+                Txt("Your answer goes to ${recipients(n)}.", ts(12, 16, color = C.faint), Modifier.padding(start = 16.dp))
             }
+        }
+    }
+}
+
+private fun recipients(n: Note): String {
+    val others = (listOf(n.from) + n.replies.map { it.from }).filter { it != "you" && it != "captain" && it != "muster" }.distinct()
+    return (listOf("the Captain") + others).let { if (it.size == 1) it[0] else it.dropLast(1).joinToString(", ") + " and " + it.last() }
+}
+
+/** [AnswerScreen]'s `sending` value while the ask form is being submitted. */
+private const val ASK_SUBMIT = "\u0000ask"
+
+/** M06 for a Captain question note (ASK.md): option cards per question, one Submit, and the free-text reply below. */
+@Composable
+private fun AskContent(
+    n: Note,
+    taskTitle: String?,
+    modifier: Modifier,
+    submitting: Boolean,
+    replying: Boolean,
+    reply: String,
+    onReply: (String) -> Unit,
+    onSendReply: () -> Unit,
+    onSubmit: (List<AnswerChoice>) -> Unit,
+) {
+    val picks = remember(n.id) { mutableStateListOf<Set<String>>().apply { repeat(n.ask.size) { add(emptySet()) } } }
+    val others = remember(n.id) { mutableStateListOf<String>().apply { repeat(n.ask.size) { add("") } } }
+    val closed = !n.open || n.answers.isNotEmpty()
+    val ready = n.ask.indices.all { picks[it].isNotEmpty() || others[it].isNotBlank() }
+    val busy = submitting || replying
+    val answerReply = AskText.replyText(n.answers)
+
+    Column(
+        modifier.navigationBarsPadding().imePadding().verticalScroll(rememberScrollState())
+            .padding(start = 20.dp, end = 20.dp, top = 20.dp, bottom = 28.dp),
+        verticalArrangement = Arrangement.spacedBy(16.dp),
+    ) {
+        val fromColor = agentColor(n.from)
+        Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(10.dp)) {
+            Avatar(n.from, fromColor)
+            Txt(n.from, ts(14, 20, FontWeight.SemiBold, fromColor))
+            Txt(if (closed) "asked you" else "asks you", ts(14, 20, color = C.muted))
+            Txt("· " + Ago.short(n.createdAt), ts(12, 16, color = C.faint, mono = true))
+        }
+        n.taskId?.let { t ->
+            Row(
+                Modifier.clip(RoundedCornerShape(14.dp)).background(C.surface2).padding(horizontal = 10.dp, vertical = 5.dp),
+                verticalAlignment = Alignment.CenterVertically,
+                horizontalArrangement = Arrangement.spacedBy(6.dp),
+            ) {
+                Txt(t, ts(12, 16, color = C.muted, mono = true))
+                taskTitle?.let { Txt(it, ts(13, 16), maxLines = 1) }
+            }
+        }
+
+        n.ask.forEachIndexed { i, q ->
+            val answer = n.answers.getOrNull(i)
+            val chosen = if (closed) answer?.choices.orEmpty().toSet() else picks[i]
+            Column(
+                Modifier.fillMaxWidth().card(bg = C.surface, border = if (closed) C.line else C.mix(C.captain, 30, C.line)).padding(16.dp),
+                verticalArrangement = Arrangement.spacedBy(12.dp),
+            ) {
+                Row(verticalAlignment = Alignment.CenterVertically) {
+                    if (q.header.isNotBlank()) {
+                        Box(Modifier.clip(RoundedCornerShape(6.dp)).background(C.tint(C.captain, 14)).padding(horizontal = 8.dp, vertical = 4.dp)) {
+                            Txt(q.header, ts(12, 16, FontWeight.SemiBold, C.captain), maxLines = 1)
+                        }
+                    }
+                    Spacer(Modifier.weight(1f))
+                    val hint = listOfNotNull(
+                        if (n.ask.size > 1) "${i + 1} of ${n.ask.size}" else null,
+                        if (q.multiSelect && !closed) "pick any" else null,
+                    ).joinToString(" · ")
+                    if (hint.isNotEmpty()) Txt(hint, ts(12, 16, color = C.faint, mono = true))
+                }
+                Txt(q.question, ts(16, 24, FontWeight.Medium, spacing = (-0.01).em))
+                Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                    q.options.forEach { o ->
+                        val selected = o.label in chosen
+                        AskOptionCard(o, selected, q.multiSelect, enabled = !closed && !busy, dimmed = closed && !selected) {
+                            picks[i] = when {
+                                q.multiSelect -> if (selected) picks[i] - o.label else picks[i] + o.label
+                                selected -> emptySet()
+                                else -> setOf(o.label)
+                            }
+                        }
+                    }
+                }
+                val other = answer?.other
+                if (!closed) {
+                    Field(
+                        others[i], { others[i] = it }, "Type something", Modifier.fillMaxWidth(),
+                        keyboard = KeyboardOptions(capitalization = KeyboardCapitalization.Sentences, imeAction = ImeAction.Done),
+                    )
+                } else if (!other.isNullOrBlank()) {
+                    Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                        Txt(if (answer.choices.isEmpty()) "You wrote" else "Note", ts(13, 19, FontWeight.Medium, C.faint))
+                        Txt(other, ts(14, 19), Modifier.weight(1f))
+                    }
+                }
+            }
+        }
+
+        n.replies.filter { !(it.from == "you" && it.text.trim() == answerReply) }.forEach { r ->
+            val who = if (r.from == "you") "You" else r.from
+            val c = agentColor(r.from)
+            Row(Modifier.padding(horizontal = 4.dp), horizontalArrangement = Arrangement.spacedBy(12.dp)) {
+                Avatar(who, c, bgPct = 16)
+                Column(Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(4.dp)) {
+                    Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                        Txt(who, ts(14, 20, FontWeight.SemiBold, c))
+                        Txt("· " + Ago.short(r.at), ts(12, 16, color = C.faint, mono = true))
+                    }
+                    Txt(r.text, ts(15, 22, color = C.muted))
+                }
+            }
+        }
+
+        if (closed) {
+            Row(Modifier.padding(start = 4.dp), verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                Icon(Ic.check, null, tint = C.success, modifier = Modifier.size(16.dp))
+                Txt(if (n.answers.isNotEmpty()) "Answered" else "Closed", ts(13, 18, FontWeight.Medium, C.success))
+            }
+            return@Column
+        }
+
+        Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
+            PrimaryButton(
+                if (n.ask.size > 1) "Submit answers" else "Submit", Modifier.fillMaxWidth(),
+                bg = C.captain, fg = C.onCaptain, height = 52.dp, enabled = ready, busy = submitting,
+            ) {
+                onSubmit(n.ask.indices.map { i -> AnswerChoice(n.ask[i].options.map { it.label }.filter { it in picks[i] }, others[i].trim().ifEmpty { null }) })
+            }
+            if (!ready) {
+                val msg = if (n.ask.size > 1) "Pick an option or type an answer for each question." else "Pick an option or type an answer."
+                Txt(msg, ts(12, 16, color = C.faint).copy(textAlign = TextAlign.Center), Modifier.fillMaxWidth())
+            }
+        }
+
+        Column(Modifier.padding(top = 8.dp), verticalArrangement = Arrangement.spacedBy(10.dp)) {
+            SectionLabel("Or reply in your own words")
+            Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(10.dp)) {
+                Field(
+                    reply, onReply, "Reply to the Captain…", Modifier.weight(1f), radius = 24.dp,
+                    keyboard = KeyboardOptions(capitalization = KeyboardCapitalization.Sentences, imeAction = ImeAction.Send),
+                )
+                Box(
+                    Modifier.size(48.dp).clip(CircleShape).background(if (reply.isNotBlank()) C.captain else C.surface2)
+                        .clickable(enabled = reply.isNotBlank() && !busy, onClick = onSendReply),
+                    contentAlignment = Alignment.Center,
+                ) {
+                    if (replying) {
+                        CircularProgressIndicator(Modifier.size(18.dp), color = C.onCaptain, strokeWidth = 2.dp)
+                    } else {
+                        Icon(Ic.arrowUp, null, tint = if (reply.isNotBlank()) C.onCaptain else C.faint, modifier = Modifier.size(20.dp))
+                    }
+                }
+            }
+            Txt("Goes to ${recipients(n)} and leaves the question open.", ts(12, 16, color = C.faint), Modifier.padding(start = 16.dp))
+        }
+    }
+}
+
+/** One option row: radio or checkbox, the label (with a "Recommended" tag) and its muted description. */
+@OptIn(ExperimentalLayoutApi::class)
+@Composable
+private fun AskOptionCard(o: AskOption, selected: Boolean, multi: Boolean, enabled: Boolean, dimmed: Boolean, onClick: () -> Unit) {
+    val shape = RoundedCornerShape(12.dp)
+    Row(
+        Modifier.fillMaxWidth().dim(dimmed).clip(shape)
+            .background(if (selected) C.tint(C.captain, 8) else C.surface2)
+            .border(1.dp, if (selected) C.mix(C.captain, 55, C.line) else C.line, shape)
+            .clickable(enabled = enabled, onClick = onClick)
+            .padding(horizontal = 14.dp, vertical = 12.dp),
+        horizontalArrangement = Arrangement.spacedBy(12.dp),
+    ) {
+        Box(Modifier.padding(top = 1.dp)) {
+            if (multi) {
+                Box(
+                    Modifier.size(20.dp).clip(RoundedCornerShape(5.dp)).background(if (selected) C.captain else Color.Transparent)
+                        .border(1.5.dp, if (selected) C.captain else C.faint, RoundedCornerShape(5.dp)),
+                    contentAlignment = Alignment.Center,
+                ) { if (selected) Icon(Ic.checkBold, null, tint = C.onCaptain, modifier = Modifier.size(14.dp)) }
+            } else {
+                Box(
+                    Modifier.size(20.dp).clip(CircleShape).border(1.5.dp, if (selected) C.captain else C.faint, CircleShape),
+                    contentAlignment = Alignment.Center,
+                ) { if (selected) Box(Modifier.size(10.dp).clip(CircleShape).background(C.captain)) }
+            }
+        }
+        Column(Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(3.dp)) {
+            FlowRow(horizontalArrangement = Arrangement.spacedBy(8.dp), verticalArrangement = Arrangement.spacedBy(4.dp)) {
+                Txt(o.shownLabel, ts(15, 21, FontWeight.Medium), Modifier.align(Alignment.CenterVertically))
+                if (o.recommended) {
+                    Box(Modifier.align(Alignment.CenterVertically).clip(RoundedCornerShape(5.dp)).background(C.tint(C.crew, 14)).padding(horizontal = 6.dp, vertical = 2.dp)) {
+                        Txt("Recommended", ts(11, 14, FontWeight.SemiBold, C.crew))
+                    }
+                }
+            }
+            if (!o.description.isNullOrBlank()) Txt(o.description, ts(13, 18, color = C.muted))
         }
     }
 }

@@ -33,6 +33,11 @@ describe('captainPrompt', () => {
     expect(p).toContain('F:/Proj');
     expect(p).toContain('Proj');
   });
+  it('sends multiple-choice decisions through the question menu', () => {
+    expect(p).toMatch(/AskUserQuestion.*Bulletin board and the phone/);
+    expect(p).toMatch(/recommended option first/);
+    expect(p).toMatch(/carry on with other work or end your turn/);
+  });
   it('puts the roadmap first and ties every task to a goal', () => {
     expect(p).toContain('## Roadmap');
     expect(p).toContain('`read_board()` and `roadmap()`');

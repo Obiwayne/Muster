@@ -22,7 +22,44 @@ class DemoBackend : Backend {
         Project("wall-education", "wall-education", false),
     )
 
+    /** The Captain's two-question ask (ASK.md), on note N144. */
+    private val artAsk = listOf(
+        AskQuestion(
+            "Art model",
+            "Juno ran your clip with Art on Opus and on Sonnet. Both passed QA and looked nearly the same. Sonnet's Art runs " +
+                "cost about a fifth as much, but when asked for bigger captions (which StarCut can't do yet), Opus said so " +
+                "honestly while Sonnet logged 'large size' and changed nothing. Which model should Art use?",
+            false,
+            listOf(
+                AskOption(
+                    "Sonnet + honesty check (Recommended)",
+                    "Run Art on Sonnet and have QA flag any request it logged but didn't carry out. Keeps most of the savings.",
+                ),
+                AskOption("Keep Opus", "Stay on Opus. About five times the cost, but it says plainly when it can't do something."),
+                AskOption("Switch to Sonnet", "Sonnet as is. Cheapest, but it may quietly skip requests StarCut can't do yet."),
+            ),
+        ),
+        AskQuestion(
+            "Caption size",
+            "StarCut can't make captions bigger yet. What should happen when you ask for it?",
+            false,
+            listOf(
+                AskOption("Add a size setting (Recommended)", "Small, medium and large captions, so the request just works. About a day of work."),
+                AskOption("Say it's not supported", "Art tells you it can't change the size and leaves the captions as they are."),
+                AskOption("Leave it for now", "No change. Revisit when captions get their next update."),
+            ),
+        ),
+    )
+
+    /** Notes answered in this demo session. */
+    private val answered = mutableMapOf<String, Note>()
+
     private val items = mutableListOf(
+        NeedItem(
+            id = "starcut:N144", projectId = "starcut", projectName = "StarCut", kind = Kind.ESCALATION, noteId = "N144",
+            title = "The Captain asks you", summary = artAsk[0].question, from = "captain", createdAt = ago(1),
+            actions = listOf("answer", "open"), ask = artAsk,
+        ),
         NeedItem(
             id = "starcut:review:T58", projectId = "starcut", projectName = "StarCut", kind = Kind.REVIEW, noteId = "N140", taskId = "T58",
             title = "S24 Empty/loading/first-use + S25 Performance", summary = "Captain: matches the artboards, 2076 tests pass",
@@ -114,8 +151,14 @@ class DemoBackend : Backend {
 
     override suspend fun note(pid: String, nid: String): Note {
         delay(150)
+        answered[nid]?.let { return it }
         val item = items.firstOrNull { it.noteId == nid }
-        return if (nid == "N142") {
+        return if (nid == "N144") {
+            Note(
+                "N144", Kind.ESCALATION, "captain", to = "you", text = artAsk.joinToString("\n\n") { it.question },
+                createdAt = ago(1), ask = artAsk,
+            )
+        } else if (nid == "N142") {
             Note(
                 "N142", "question", "captain", taskId = "T4",
                 text = "Should a revoked invite link show a friendly 'link expired' page or a plain 404? bea needs this for T4.",
@@ -129,6 +172,20 @@ class DemoBackend : Backend {
     override suspend fun reply(pid: String, nid: String, text: String) {
         delay(400)
         items.removeAll { it.noteId == nid && it.isQuestion }
+    }
+
+    override suspend fun answer(pid: String, nid: String, answers: List<AnswerChoice>): Note {
+        delay(400)
+        val n = note(pid, nid)
+        if (!n.open) throw ApiException(409, "This question was already answered")
+        val stored = n.ask.mapIndexed { i, q ->
+            val a = answers.getOrNull(i) ?: AnswerChoice()
+            AskAnswer(q.header, a.choices, a.other?.trim()?.ifEmpty { null })
+        }
+        val reply = NoteReply(Instant.now().toString(), "you", AskText.replyText(stored))
+        answered[nid] = n.copy(open = false, answers = stored, replies = n.replies + reply)
+        items.removeAll { it.noteId == nid }
+        return answered.getValue(nid)
     }
 
     override suspend fun commit(pid: String) {

@@ -1,5 +1,5 @@
 // Bulletin board: filter chips, note list, selected thread with replies and a reply box.
-import type { MusterState, Note, NoteType, Task } from '../../../src/types';
+import type { AskQuestion, MusterState, Note, NoteType, Task } from '../../../src/types';
 import { h, icon, setChildren } from '../dom';
 import type { Snapshot } from '../events';
 import type { Page } from '../page';
@@ -12,6 +12,7 @@ import { createWeeklyAlertView } from './usagealert';
 import { intelNoteView, isIntelJobNote, runAgainBody, type IntelNoteAction } from '../intelnote';
 import { startJob } from '../intelapi';
 import { createUpdateBar } from '../update';
+import { answerLines, answersPayload, canSubmit, emptyDraft, optionViews, setOther, toggleChoice, type AskDraft } from '../askmodel';
 
 type Filter = 'open' | 'stuck' | 'question' | 'waiting' | 'review' | 'approval' | 'all' | 'needsYou';
 
@@ -93,6 +94,41 @@ export function createBoard(): Page {
     }
   }
   let lastThreadKey = '';
+  const drafts = new Map<string, AskDraft>(); // your half-filled answers to the Captain's question menus, by note id
+
+  /** An open question menu: header chip, question, option rows, an "Other…" field per question, then one Submit. */
+  function askForm(id: string, ask: AskQuestion[]): HTMLElement {
+    let draft = drafts.get(id) ?? emptyDraft(ask);
+    const submit = h('button.btn.lg.accent', { disabled: !canSubmit(ask, draft) }, 'Submit') as HTMLButtonElement;
+    const save = (d: AskDraft) => { draft = d; drafts.set(id, d); submit.disabled = !canSubmit(ask, d); };
+    submit.onclick = async () => {
+      submit.disabled = true;
+      if (await run(api.answerAsk(id, answersPayload(ask, draft)), 'Answer sent to the Captain')) drafts.delete(id);
+      else submit.disabled = !canSubmit(ask, draft);
+    };
+    return h('div.ask', null,
+      ask.map((q, qi) => h('div.ask-q', null,
+        h('div.ask-qhead', null, q.header ? h('span.ask-chip', null, q.header) : null, q.multiSelect ? h('span.faint', null, 'Pick any') : null),
+        h('div.ask-question', null, q.question),
+        h('div.ask-opts', null, optionViews(q).map((o) => h('label.ask-opt', null,
+          h('input', { type: q.multiSelect ? 'checkbox' : 'radio', name: `ask-${id}-${qi}`, checked: draft[qi]!.choices.includes(o.value), onchange: () => save(toggleChoice(draft, ask, qi, o.value)) }),
+          h('div.ask-otext', null,
+            h('div.ask-olabel', null, o.label, o.recommended ? h('span.badge.b-captain', null, 'Recommended') : null),
+            o.description ? h('div.ask-odesc', null, o.description) : null)))),
+        h('input.field.ask-other', { placeholder: 'Other…', value: draft[qi]!.other, oninput: (e: Event) => save(setOther(draft, qi, (e.target as HTMLInputElement).value)) }))),
+      h('div.ask-foot', null, h('span.faint', null, 'Goes to the Captain as your reply and clears the note.'), submit));
+  }
+
+  /** A closed question menu: what you answered. */
+  function askAnswers(n: Note & { ask: AskQuestion[] }): HTMLElement {
+    const lines = n.answers ? answerLines(n.ask, n.answers) : [];
+    return h('div.ask.done', null,
+      lines.length ? lines.map((l) => h('div.ask-q', null,
+        h('div.ask-qhead', null, h('span.ask-chip', null, l.header)),
+        h('div.ask-question', null, l.question),
+        h('div.ask-answer', null, icon('check', 14), l.text)))
+        : h('div.faint', { style: 'font-size:13px' }, 'Cleared without a menu answer. Any reply is above.'));
+  }
 
   const sendReply = async () => {
     const text = replyInput.value.trim();
@@ -237,11 +273,14 @@ export function createBoard(): Page {
     }
     clearBtn.disabled = !n.open;
     clearBtn.textContent = n.open ? 'Clear note' : 'Cleared';
+    replyInput.placeholder = n.ask && n.open ? 'Or reply in your own words…' : `Reply as ${displayName('you')}…`;
     if (key === lastThreadKey) return;
     const wasBottom = replies.scrollHeight - replies.scrollTop - replies.clientHeight < 40;
     lastThreadKey = key;
     const task = taskById(state, n.taskId);
-    const { title, rest } = splitText(n.text);
+    const { title, rest } = n.ask
+      ? { title: n.ask.length > 1 ? `The Captain asks you ${n.ask.length} questions` : 'The Captain asks you', rest: n.open || n.answers ? '' : n.text }
+      : splitText(n.text);
     const author = state.agents.find((a) => a.id === n.from);
     setChildren(head,
       h('div.row', null,
@@ -257,7 +296,7 @@ export function createBoard(): Page {
       h('div.content', null,
         h('div.who', null, h('span.n', null, displayName(r.from)), h('span.t', null, ago(r.at))),
         h('div.txt', null, r.text))));
-    if (!n.replies.length) items.push(h('div.faint', { style: 'font-size:13px' }, 'No replies yet.'));
+    if (!n.replies.length && !n.ask) items.push(h('div.faint', { style: 'font-size:13px' }, 'No replies yet.'));
     if (n.open && (n.type === 'stuck' || n.type === 'question' || n.type === 'waiting') && !isEscalated(state, n)) {
       items.push(h('div.banner', null, icon('users', 16), h('div.flex1', null, 'Being handled by the crew. This only reaches you if the Captain escalates it.')));
     } else if (isIntelJobNote(n)) {
@@ -271,6 +310,8 @@ export function createBoard(): Page {
               h('button.btn.sm', { onclick: () => void stashCheckout() }, 'Set aside & merge'),
               h('button.btn.sm.merge', { onclick: () => void commitCheckout() }, 'Commit & merge')))
         : h('div.banner', null, icon('alert', 16), h('div.flex1', null, 'Sorted: the checkout is clean and the Captain was told to merge.')));
+    } else if (n.ask) {
+      items.push(n.open ? askForm(n.id, n.ask) : askAnswers(n as Note & { ask: AskQuestion[] }));
     } else if (n.type === 'system') {
       items.push(h('div.banner', null, icon('alert', 16), h('div.flex1', null, 'Posted by Muster. Nothing to answer: dismiss it once you have read it.')));
     } else if (isNeedsYou(n) || (n.open && isEscalated(state, n))) {
@@ -312,7 +353,8 @@ export function createBoard(): Page {
       if (n.type === 'review' && task) items.push(evidenceStrip(task));
     }
     setChildren(replies, items);
-    if (wasBottom) replies.scrollTop = replies.scrollHeight;
+    if (n.ask && n.open && !n.replies.length) replies.scrollTop = 0; // a fresh question menu reads from its first question
+    else if (wasBottom) replies.scrollTop = replies.scrollHeight;
   }
 
   function render(): void {
@@ -337,7 +379,7 @@ export function createBoard(): Page {
       clearInterval(updateTimer);
       updateTimer = undefined;
     },
-    update(s) { snap = s; weekly.update(s); replyInput.placeholder = `Reply as ${displayName('you')}…`; render(); },
+    update(s) { snap = s; weekly.update(s); render(); },
     params(p) {
       const id = p.get('note');
       if (id) {

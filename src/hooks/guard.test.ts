@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { decide, denyOutput, normalizePath, splitCommands, tokenize, type GuardEnv, type PreToolInput } from './guard.js';
+import { ASK_TOOL, decide, denyOutput, normalizePath, splitCommands, tokenize, type GuardEnv, type PreToolInput } from './guard.js';
 
 const WT = 'F:\\Proj\\.muster\\worktrees\\crew-2';
 const crew: GuardEnv = { role: 'crew', worktree: WT, baseBranch: 'main', platform: 'win32' };
@@ -185,6 +185,10 @@ describe('non-muster sessions and helpers', () => {
   it('allows everything without a role', () => {
     expect(decide(bash('git push'), {}).allow).toBe(true);
     expect(decide(edit('C:\\x'), { worktree: WT }).allow).toBe(true);
+  });
+  it('leaves the question menu to hook.ts for every role', () => {
+    const ask: PreToolInput = { hook_event_name: 'PreToolUse', tool_name: ASK_TOOL, tool_input: { questions: [] }, cwd: WT };
+    for (const role of ['captain', 'crew', 'design', 'research']) expect(decide(ask, { ...crew, role }).allow).toBe(true);
   });
   it('builds the deny JSON Claude Code expects', () => {
     expect(JSON.parse(denyOutput('no'))).toEqual({

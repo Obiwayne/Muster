@@ -26,15 +26,18 @@ describe('needs mapping', () => {
     fakeNote('N11', { type: 'system', from: 'muster', topic: 'stale_build' }),
     fakeNote('N12', { type: 'review', from: 'captain', to: undefined, taskId: 'T4' }), // back in work
     fakeNote('N13', { type: 'stuck', from: 'ada' }),
+    fakeNote('N14', { type: 'escalation', from: 'captain', text: 'Which model?\n\nHow big?', ask: [{ header: 'Art model', question: 'Which model?', multiSelect: false, options: [{ label: 'Flux' }] }] }),
   ];
   const items = needsFromState(fakeState(notes, tasks), 'p1', 'Proj');
   const byNote = (id: string) => items.find((i) => i.noteId === id);
 
   it('maps each needs-you note to its kind and actions', () => {
-    expect(items.map((i) => i.noteId).sort()).toEqual(['N1', 'N13', 'N3', 'N4', 'N5', 'N6', 'N7']);
+    expect(items.map((i) => i.noteId).sort()).toEqual(['N1', 'N13', 'N14', 'N3', 'N4', 'N5', 'N6', 'N7']);
     expect(byNote('N1')).toMatchObject({ id: 'p1:N1', projectId: 'p1', projectName: 'Proj', kind: 'review', taskId: 'T1', title: 'Task T1', summary: 'Looks good: the login form works.', from: 'captain', actions: ['approve', 'open'] });
     expect(byNote('N3')).toMatchObject({ kind: 'approval', actions: ['approve', 'open'] });
-    expect(byNote('N4')).toMatchObject({ kind: 'escalation', actions: ['answer', 'open'] });
+    expect(byNote('N4')).toMatchObject({ kind: 'escalation', title: 'The Captain needs you', actions: ['answer', 'open'] });
+    expect(byNote('N4')!.ask).toBeUndefined();
+    expect(byNote('N14')).toMatchObject({ kind: 'escalation', title: 'The Captain asks you', summary: 'Which model?', ask: [{ header: 'Art model' }], actions: ['answer', 'open'] });
     expect(byNote('N5')).toMatchObject({ kind: 'question', actions: ['answer', 'open'] });
     expect(byNote('N6')).toMatchObject({ kind: 'blocked', actions: ['commit', 'stash'], taskId: 'T4' });
     expect(byNote('N7')).toMatchObject({ kind: 'usage' });

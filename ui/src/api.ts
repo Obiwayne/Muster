@@ -149,6 +149,8 @@ export const api = {
     return req<Note[]>('GET', `/api/notes${p.size ? '?' + p : ''}`);
   },
   reply: (noteId: string, text: string, close = false) => req<Note>('POST', `/api/notes/${enc(noteId)}/reply`, { actor: YOU, text, close }),
+  /** Answers the Captain's question menu (one answer per question) and closes the note. */
+  answerAsk: (noteId: string, answers: { choices: string[]; other?: string }[]) => req<Note>('POST', `/api/notes/${enc(noteId)}/answer`, { actor: YOU, answers }),
   closeNote: (noteId: string) => req<Note>('POST', `/api/notes/${enc(noteId)}/close`, { actor: YOU }),
   /** Closes the note and hides it from the board (kept in state for history). */
   dismissNote: (noteId: string) => req<Note>('POST', `/api/notes/${enc(noteId)}/dismiss`, { actor: YOU }),

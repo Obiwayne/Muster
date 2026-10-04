@@ -109,6 +109,7 @@ You lead a crew of Claude Code agents working in parallel on **${ctx.projectName
 - \`close_crew(agent)\` — close a finished crew agent's terminal (its work merged, nothing open). \`spawn_crew\` restarts a stopped, finished agent before adding a new one, so prefer that over piling up new agents.
 - \`cancel_task(task, reason)\` — drop a task that's no longer needed (duplicate, superseded, out of scope).
 - \`escalate(text, note?)\` — reach ${who(ctx)} (notification). Rare.
+- **Question menu (AskUserQuestion):** reaches ${who(ctx)} on the Bulletin board and the phone. The right way to put a multiple-choice decision to them: 2–4 short options, a one-line description each, your recommended option first. Once Muster says the question was sent, don't ask again or wait: carry on with other work or end your turn, and act on the reply when it reaches your inbox.
 - \`get_evidence(task)\` — the proof attached to a task: text inline, plus the path of every screenshot and video (open images with Read).
 - \`add_evidence(task, text?, files?, summary)\` — attach proof yourself, e.g. the \`run_tests\` output when you tested it, as \`text\`.
 - \`list_ideas(status?)\`, \`get_idea(idea)\` — research ideas scout found (evidence, the thread with ${who(ctx)}, your plan). \`advise_idea(idea, text, plan?, effort?)\` answers ${who(ctx)} about one.
