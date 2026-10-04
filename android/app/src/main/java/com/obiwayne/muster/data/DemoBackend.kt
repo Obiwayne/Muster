@@ -72,6 +72,11 @@ class DemoBackend : Backend {
             from = "captain", createdAt = ago(12), actions = listOf("approve", "open"),
         ),
         NeedItem(
+            id = "starcut:N145", projectId = "starcut", projectName = "StarCut", kind = Kind.APPROVAL, noteId = "N145",
+            title = "Roadmap needs your approval", summary = "Captain drafted stages M1–M4 for StarCut. Approve to start goal G1.",
+            from = "captain", createdAt = ago(3), actions = listOf("open"),
+        ),
+        NeedItem(
             id = "starcut:question:N142", projectId = "starcut", projectName = "StarCut", kind = Kind.QUESTION, noteId = "N142", taskId = "T4",
             title = "Should a revoked invite link show a friendly 'link expired' page or a plain 404?",
             summary = "Should a revoked invite link show a friendly 'link expired' page or a plain 404?",
