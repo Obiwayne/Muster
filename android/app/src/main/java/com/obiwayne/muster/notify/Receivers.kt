@@ -1,0 +1,77 @@
+package com.obiwayne.muster.notify
+
+import android.content.BroadcastReceiver
+import android.content.Context
+import android.content.Intent
+import androidx.core.app.RemoteInput
+import com.obiwayne.muster.MusterApp
+import kotlinx.coroutines.CoroutineScope
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.SupervisorJob
+import kotlinx.coroutines.launch
+
+/** APPROVE and REPLY from a notification: calls the gateway, then updates the notification. */
+class ActionReceiver : BroadcastReceiver() {
+    override fun onReceive(context: Context, intent: Intent) {
+        val app = context.applicationContext
+        val state = MusterApp.state
+        val itemId = intent.getStringExtra(Notifier.EXTRA_ITEM) ?: return
+        val kind = intent.getStringExtra(Notifier.EXTRA_KIND) ?: "review"
+        val pid = intent.getStringExtra(Notifier.EXTRA_PROJECT) ?: return
+        val tid = intent.getStringExtra(Notifier.EXTRA_TASK)
+        val nid = intent.getStringExtra(Notifier.EXTRA_NOTE)
+        val projectName = state.needs.value?.projects?.firstOrNull { it.id == pid }?.name
+        val pending = goAsync()
+        scope.launch {
+            try {
+                when (intent.action) {
+                    ACTION_APPROVE -> {
+                        if (tid == null) return@launch
+                        var error: String? = null
+                        val ok = state.call({ error = it }) { approve(pid, tid) } != null
+                        if (ok) {
+                            state.removeNeed(itemId)
+                            Notifier.postStatus(app, itemId, kind, projectName, "Approved $tid", "The Captain merges it and pushes.", 4000)
+                        } else {
+                            Notifier.postStatus(app, itemId, kind, projectName, "Couldn't approve $tid", error ?: "Try again from the app.", null)
+                        }
+                    }
+                    ACTION_REPLY -> {
+                        val text = RemoteInput.getResultsFromIntent(intent)?.getCharSequence(Notifier.KEY_REPLY)?.toString()?.trim()
+                        if (nid == null || text.isNullOrEmpty()) return@launch
+                        var error: String? = null
+                        val ok = state.call({ error = it }) { reply(pid, nid, text) } != null
+                        if (ok) {
+                            Notifier.postStatus(app, itemId, kind, projectName, "Answer sent", text, 4000)
+                        } else {
+                            Notifier.postStatus(app, itemId, kind, projectName, "Couldn't send your answer", error ?: "Try again from the app.", null)
+                        }
+                    }
+                }
+            } finally {
+                pending.finish()
+            }
+        }
+    }
+
+    companion object {
+        const val ACTION_APPROVE = "com.obiwayne.muster.APPROVE"
+        const val ACTION_REPLY = "com.obiwayne.muster.REPLY"
+        private val scope = CoroutineScope(SupervisorJob() + Dispatchers.IO)
+    }
+}
+
+/** Starts listening again after a reboot or an app update, when the phone is linked. */
+class BootReceiver : BroadcastReceiver() {
+    override fun onReceive(context: Context, intent: Intent) {
+        if (intent.action != Intent.ACTION_BOOT_COMPLETED && intent.action != Intent.ACTION_MY_PACKAGE_REPLACED) return
+        val state = MusterApp.state
+        if (state.link.value == null) return
+        PollWorker.schedule(context)
+        try {
+            EventService.start(context)
+        } catch (_: Exception) {
+            // Background start refused: the 15-minute poll still runs.
+        }
+    }
+}
