@@ -128,6 +128,23 @@ export async function approveMerge(task: Task): Promise<void> {
   await run(api.approveMerge(task.id), `Approved ${task.id}: the Captain will merge it and push`);
 }
 
+// ---- a merge blocked by uncommitted files in the main checkout (Note.topic 'checkout') ----
+const waitingText = (w: string[]) => (w.length ? `The Captain will merge ${w.join(', ')}.` : 'Nothing approved is waiting to merge.');
+
+export async function commitCheckout(): Promise<void> {
+  const ok = await confirmDialog('Commit and merge?', 'Commits the uncommitted files in the main checkout as they are (untracked files stay out), then the Captain merges the tasks you approved.', 'Commit & merge', 'merge');
+  if (!ok) return;
+  const r = await run(api.commitCheckout());
+  if (r) toast(`${r.sha ? `Committed ${r.sha}.` : 'The checkout was already clean.'} ${waitingText(r.waiting)}`);
+}
+
+export async function stashCheckout(): Promise<void> {
+  const ok = await confirmDialog('Set aside and merge?', 'Stashes the uncommitted files in the main checkout (git stash pop brings them back), then the Captain merges the tasks you approved.', 'Set aside & merge');
+  if (!ok) return;
+  const r = await run(api.stashCheckout());
+  if (r) toast(`${r.stashed ? 'Set aside.' : 'The checkout was already clean.'} ${waitingText(r.waiting)}`);
+}
+
 export async function approveAllMerges(list: Task[]): Promise<void> {
   if (!list.length) return;
   const ok = await confirmDialog(

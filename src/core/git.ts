@@ -61,6 +61,21 @@ export async function uncommittedChanges(worktree: string): Promise<string[]> {
   return (await git(worktree, ['status', '--porcelain', '--untracked-files=no'])).stdout.split(/\r?\n/).filter(Boolean);
 }
 
+/** Commits every tracked change in `worktree` (untracked files stay out). Returns the new short sha, or undefined when clean. */
+export async function commitTracked(worktree: string, message: string): Promise<string | undefined> {
+  if (!(await uncommittedChanges(worktree)).length) return undefined;
+  await git(worktree, ['add', '--update']);
+  await git(worktree, ['commit', '--quiet', '-m', message]);
+  return out(worktree, ['rev-parse', '--short', 'HEAD']);
+}
+
+/** Stashes every tracked change in `worktree` (`git stash pop` restores it). Returns false when clean. */
+export async function stashTracked(worktree: string, message: string): Promise<boolean> {
+  if (!(await uncommittedChanges(worktree)).length) return false;
+  await git(worktree, ['stash', 'push', '--quiet', '-m', message]);
+  return true;
+}
+
 /** A branch name not taken yet: `name`, else `name-2`, `name-3`... */
 export async function freeBranchName(cwd: string, name: string): Promise<string> {
   let candidate = name;

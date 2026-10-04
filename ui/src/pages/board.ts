@@ -4,7 +4,7 @@ import { h, icon, setChildren } from '../dom';
 import type { Snapshot } from '../events';
 import type { Page } from '../page';
 import { api } from '../api';
-import { approveAllMerges, approveMerge, approveRoadmap, approveTask, isRoadmapNote, mergeTask, run, sendBackApproval, sendBackRoadmap, showDiffModal } from '../actions';
+import { approveAllMerges, approveMerge, approveRoadmap, approveTask, commitCheckout, isRoadmapNote, mergeTask, run, sendBackApproval, sendBackRoadmap, showDiffModal, stashCheckout } from '../actions';
 import { evidenceStrip } from '../evidence';
 import { NOTE_BADGE, ageShort, ago, displayName, initial, isEscalated, isNeedsYou, branchOwnerId, ms, noteLabel, roleOf, taskById } from '../util';
 import { isUsageNote, isWeeklyNote, weeklyThreshold } from '../usagealert';
@@ -261,6 +261,13 @@ export function createBoard(): Page {
       const v = intelNoteView(n as Note & { intel: NonNullable<Note['intel']> });
       items.push(h('div.banner', null, icon('radar', 16), h('div.flex1', null, v.tone === 'ready' ? 'scout finished. Open Intel to read it, or see the gaps it found.' : 'scout stopped before it finished. What it found is kept on the Intel page.'),
         intelActions(n, v.actions.filter((a) => a !== 'dismiss'), false)));
+    } else if (n.topic === 'checkout') {
+      items.push(n.open
+        ? h('div.banner.warm', null, icon('alert', 16), h('div.flex1', null, 'Merges wait for this. Commit the files to keep them, or set them aside; the Captain then merges what you approved.'),
+            h('span.flex', { style: 'display:flex;gap:6px' },
+              h('button.btn.sm', { onclick: () => void stashCheckout() }, 'Set aside & merge'),
+              h('button.btn.sm.merge', { onclick: () => void commitCheckout() }, 'Commit & merge')))
+        : h('div.banner', null, icon('alert', 16), h('div.flex1', null, 'Sorted: the checkout is clean and the Captain was told to merge.')));
     } else if (n.type === 'system') {
       items.push(h('div.banner', null, icon('alert', 16), h('div.flex1', null, 'Posted by Muster. Nothing to answer: dismiss it once you have read it.')));
     } else if (isNeedsYou(n) || (n.open && isEscalated(state, n))) {
