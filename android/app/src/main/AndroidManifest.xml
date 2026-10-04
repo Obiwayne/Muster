@@ -11,6 +11,13 @@
 
     <uses-feature android:name="android.hardware.camera" android:required="false" />
 
+    <!-- Settings > Alert sound opens the system's notification sound picker directly. -->
+    <queries>
+        <intent>
+            <action android:name="android.intent.action.RINGTONE_PICKER" />
+        </intent>
+    </queries>
+
     <application
         android:name=".MusterApp"
         android:allowBackup="false"
