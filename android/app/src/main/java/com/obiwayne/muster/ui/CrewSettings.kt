@@ -4,6 +4,7 @@ import android.app.Activity
 import android.app.TimePickerDialog
 import android.content.ActivityNotFoundException
 import android.content.Intent
+import android.content.pm.ApplicationInfo
 import android.media.RingtoneManager
 import android.net.Uri
 import android.provider.Settings
@@ -358,6 +359,10 @@ private fun AlertSoundGroup() {
                             .putExtra(RingtoneManager.EXTRA_RINGTONE_SHOW_SILENT, false)
                             .putExtra(RingtoneManager.EXTRA_RINGTONE_DEFAULT_URI, Settings.System.DEFAULT_NOTIFICATION_URI)
                             .putExtra(RingtoneManager.EXTRA_RINGTONE_EXISTING_URI, s.uri ?: Settings.System.DEFAULT_NOTIFICATION_URI)
+                        // Go straight to the phone's own picker instead of a chooser that also lists file managers.
+                        ctx.packageManager.queryIntentActivities(i, 0)
+                            .firstOrNull { it.activityInfo.applicationInfo.flags and ApplicationInfo.FLAG_SYSTEM != 0 }
+                            ?.let { i.setClassName(it.activityInfo.packageName, it.activityInfo.name) }
                         try {
                             picker.launch(i)
                         } catch (_: ActivityNotFoundException) {
