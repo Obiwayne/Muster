@@ -5,12 +5,14 @@ import android.content.Context
 import android.content.Intent
 import androidx.core.app.RemoteInput
 import com.obiwayne.muster.MusterApp
+import com.obiwayne.muster.data.AnswerChoice
+import com.obiwayne.muster.data.AskOption
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.SupervisorJob
 import kotlinx.coroutines.launch
 
-/** APPROVE and REPLY from a notification: calls the gateway, then updates the notification. */
+/** APPROVE, REPLY and ANSWER from a notification: calls the gateway, then updates the notification. */
 class ActionReceiver : BroadcastReceiver() {
     override fun onReceive(context: Context, intent: Intent) {
         val app = context.applicationContext
@@ -47,6 +49,19 @@ class ActionReceiver : BroadcastReceiver() {
                             Notifier.postStatus(app, itemId, kind, projectName, "Couldn't send your answer", error ?: "Try again from the app.", null)
                         }
                     }
+                    ACTION_ANSWER -> {
+                        val choice = intent.getStringExtra(Notifier.EXTRA_CHOICE)
+                        if (nid == null || choice == null) return@launch
+                        var error: String? = null
+                        val ok = state.call({ error = it }) { answer(pid, nid, listOf(AnswerChoice(listOf(choice)))) } != null
+                        if (ok) {
+                            state.removeNeed(itemId)
+                            val shown = AskOption(choice).shownLabel
+                            Notifier.postStatus(app, itemId, kind, projectName, "Answer sent", shown, 4000)
+                        } else {
+                            Notifier.postStatus(app, itemId, kind, projectName, "Couldn't send your answer", error ?: "Try again from the app.", null)
+                        }
+                    }
                 }
             } finally {
                 pending.finish()
@@ -57,6 +72,7 @@ class ActionReceiver : BroadcastReceiver() {
     companion object {
         const val ACTION_APPROVE = "com.obiwayne.muster.APPROVE"
         const val ACTION_REPLY = "com.obiwayne.muster.REPLY"
+        const val ACTION_ANSWER = "com.obiwayne.muster.ANSWER"
         private val scope = CoroutineScope(SupervisorJob() + Dispatchers.IO)
     }
 }
