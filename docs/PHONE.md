@@ -81,7 +81,8 @@ All times ISO strings. Errors `{ error: string }` with 4xx/5xx.
 - Unknown `:pid` → 404; a project that isn't running → 409; an orchestrator error passes through with its status.
 - `GET /api/projects/:pid/tasks/:tid`: `builder` is an agent id or null; `branch`/`reviewedSha` may be null.
 - `POST /api/projects/:pid/checkout/commit` and `/checkout/stash` → the orchestrator routes of the same name.
-- `GET /api/projects/:pid/crew` → `{ agents: [{ id, role, status, taskId, branch, detail }], usage: { fiveHour: { pct, resetsAt }, weekly: { pct, resetsAt } }, paused }`
+- `GET /api/projects/:pid/crew` → `{ agents: [{ id, role, status, taskId, branch, detail }], usage: { fiveHour: { pct, resetsAt }, weekly: { pct, resetsAt } }, paused, roadmap }`
+  - `roadmap`: `{ pct: number|null, current: { id, title }|null, status: { text, at }|null }`, or `null` with no roadmap. `pct` = the Roadmap page's overall percent; `current` = the active goal of the current stage; `status` = the Captain's last `roadmap_status` line (posted after every merge). The Crew tab shows it as a "Where we are" card.
 - `GET /api/prefs` / `PUT /api/prefs` → `{ notify: { review, question, blocked, usage, stuck }, quiet: { on, from: '22:00', to: '07:00' }, projects: { [pid]: boolean } }`
   (`detail` = the held task's title or ''; a usage window with no report yet is `null`.)
   Defaults: review/question/blocked on, usage/stuck off, quiet on 22:00–07:00, every project on. During quiet hours only

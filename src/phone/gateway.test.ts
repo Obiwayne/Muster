@@ -10,7 +10,7 @@ import { repoKey, writeHumanToken } from '../core/tokens.js';
 import { startGateway, type Gateway } from './gateway.js';
 import { adminRequest } from './link.js';
 import { phoneFiles, readServerFile } from './store.js';
-import { fakeNote, fakeState, fakeTask } from './testfakes.js';
+import { at, fakeNote, fakeState, fakeTask } from './testfakes.js';
 
 // A stand-in orchestrator: /api/health, /api/state, /api/tasks and the routes the gateway forwards to.
 interface Call {
@@ -252,6 +252,28 @@ describe('phone gateway: projects and actions', () => {
     const crew = await call('GET', `/api/projects/${pid}/crew`, { key });
     expect(crew.data).toMatchObject({ agents: [{ id: 'captain', role: 'captain' }, { id: 'ada', role: 'crew', taskId: 'T1', detail: 'Task T1' }], usage: { fiveHour: { pct: 42 }, weekly: null }, paused: false });
     expect((await call('GET', `/api/projects/nope/crew`, { key })).status).toBe(404);
+    expect(crew.data.roadmap).toBeNull();
+  });
+
+  it('crew carries where we are on the roadmap', async () => {
+    const saved = projectState;
+    projectState = structuredClone(saved);
+    projectState.tasks.push(fakeTask('T2', { status: 'merged', goalId: 'G1' }), fakeTask('T3', { status: 'claimed', goalId: 'G1' }));
+    projectState.roadmap = {
+      title: 'shop v1', summary: '', status: 'approved', revision: 1, createdBy: 'captain', updatedAt: at,
+      stages: [{ id: 'M1', title: 'Foundations', description: '', status: 'active', goalIds: ['G1'], exitCriteria: [] }],
+      goals: [{ id: 'G1', stageId: 'M1', title: 'Auth', description: '', status: 'active' }],
+      statusLine: { text: 'M1 is 50%: Auth half done.', at, by: 'captain', taskId: 'T2' },
+    };
+    try {
+      const crew = await call('GET', `/api/projects/${pid}/crew`, { key });
+      expect(crew.data.roadmap).toEqual({ pct: 50, current: { id: 'G1', title: 'Auth' }, status: { text: 'M1 is 50%: Auth half done.', at } });
+      delete projectState.roadmap!.statusLine;
+      projectState.roadmap!.goals[0].status = 'done';
+      expect((await call('GET', `/api/projects/${pid}/crew`, { key })).data.roadmap).toEqual({ pct: 50, current: null, status: null });
+    } finally {
+      projectState = saved;
+    }
   });
 
   it('forwards approve, send-back, reply, answer, commit and stash as you', async () => {
