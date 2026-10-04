@@ -189,7 +189,22 @@ data class UsageWindow(val pct: Double = 0.0, val resetsAt: String? = null)
 data class Usage(val fiveHour: UsageWindow? = null, val weekly: UsageWindow? = null)
 
 @Serializable
-data class CrewResponse(val agents: List<CrewAgent> = emptyList(), val usage: Usage? = null, val paused: Boolean = false)
+data class RoadmapGoalRef(val id: String, val title: String = "")
+
+@Serializable
+data class RoadmapStatusLine(val text: String, val at: String = "")
+
+/** "Where we are" on the Crew tab: overall %, the current goal, the Captain's last roadmap_status line. */
+@Serializable
+data class CrewRoadmap(val pct: Double? = null, val current: RoadmapGoalRef? = null, val status: RoadmapStatusLine? = null)
+
+@Serializable
+data class CrewResponse(
+    val agents: List<CrewAgent> = emptyList(),
+    val usage: Usage? = null,
+    val paused: Boolean = false,
+    val roadmap: CrewRoadmap? = null, // null: the project has no roadmap
+)
 
 @Serializable
 data class NotifyPrefs(

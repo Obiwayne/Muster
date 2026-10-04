@@ -70,6 +70,20 @@ class ParseTest {
         )
         assertNull(c.usage!!.fiveHour)
         assertEquals(41.0, c.usage!!.weekly!!.pct, 0.0)
+        assertNull(c.roadmap)
+    }
+
+    @Test fun crewWithRoadmap() {
+        val c = Parse.crew(
+            """{"agents":[],"usage":null,"paused":false,
+               "roadmap":{"pct":62,"current":{"id":"G9","title":"Empty states"},"status":{"text":"M4 is 62%.","at":"2026-10-04T10:00:00Z"}}}""",
+        )
+        assertEquals(62.0, c.roadmap!!.pct!!, 0.0)
+        assertEquals("G9", c.roadmap!!.current!!.id)
+        assertEquals("M4 is 62%.", c.roadmap!!.status!!.text)
+        val bare = Parse.crew("""{"agents":[],"roadmap":{"pct":null,"current":null,"status":null}}""")
+        assertNull(bare.roadmap!!.pct)
+        assertNull(bare.roadmap!!.status)
     }
 
     @Test fun events() {

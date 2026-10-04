@@ -215,6 +215,11 @@ class DemoBackend : Backend {
             ),
             Usage(UsageWindow(23.0, ahead(130)), UsageWindow(41.0, monday)),
             paused,
+            CrewRoadmap(
+                62.0,
+                RoadmapGoalRef("G9", "Empty, loading and first-use states"),
+                RoadmapStatusLine("M4 Polish is 62%: G8 screens polish merged, G9 empty states is next. Launch on 15 Nov still holds.", ago(9)),
+            ),
         )
     }
 

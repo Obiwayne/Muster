@@ -54,6 +54,7 @@ import com.obiwayne.muster.MusterApp
 import com.obiwayne.muster.data.Ago
 import com.obiwayne.muster.data.CrewAgent
 import com.obiwayne.muster.data.CrewResponse
+import com.obiwayne.muster.data.CrewRoadmap
 import com.obiwayne.muster.data.Prefs
 import com.obiwayne.muster.data.QuietHours
 import com.obiwayne.muster.notify.AlertPrefs
@@ -114,6 +115,7 @@ fun CrewScreen() {
                 }
             }
             crew?.let { c ->
+                c.roadmap?.let { WhereWeAre(it) }
                 Column(Modifier.fillMaxWidth().card().padding(16.dp), verticalArrangement = Arrangement.spacedBy(14.dp)) {
                     UsageRow("5-hour", c.usage?.fiveHour?.pct, Ago.resets(c.usage?.fiveHour?.resetsAt))
                     UsageRow("Weekly", c.usage?.weekly?.pct, Ago.resets(c.usage?.weekly?.resetsAt))
@@ -126,6 +128,31 @@ fun CrewScreen() {
                     }
                 }
                 // "Pause the crew" (M07) waits for a pause route on the gateway; see docs/PHONE.md.
+            }
+        }
+    }
+}
+
+/** Overall roadmap %, the current goal and the Captain's last roadmap_status line (posted after every merge). */
+@Composable
+private fun WhereWeAre(r: CrewRoadmap) {
+    Column(Modifier.fillMaxWidth().card().padding(16.dp), verticalArrangement = Arrangement.spacedBy(10.dp)) {
+        Row(verticalAlignment = Alignment.CenterVertically) {
+            Txt("WHERE WE ARE", ts(11, 14, FontWeight.SemiBold, C.faint, mono = true, spacing = 0.08.em))
+            Spacer(Modifier.weight(1f))
+            Txt(r.pct?.let { "${it.toInt()}%" } ?: "–", ts(13, 16, FontWeight.Medium, mono = true))
+        }
+        Progress(((r.pct ?: 0.0) / 100.0).toFloat().coerceIn(0f, 1f), 4.dp, C.surface2, C.crew)
+        r.current?.let { g ->
+            Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                Txt(g.id, ts(12, 16, FontWeight.Medium, C.crew, mono = true))
+                Txt(g.title, ts(14, 20, FontWeight.Medium), maxLines = 1)
+            }
+        }
+        r.status?.let { st ->
+            Column(verticalArrangement = Arrangement.spacedBy(4.dp)) {
+                Txt(st.text, ts(14, 20, color = C.muted))
+                Txt("Captain · ${Ago.long(st.at)}", ts(12, 16, color = C.faint, mono = true))
             }
         }
     }
