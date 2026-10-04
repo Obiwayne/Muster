@@ -17,7 +17,7 @@ import { newSecret, removeHumanToken, writeHumanToken } from '../core/tokens.js'
 import { installRefGuard } from '../core/refguard.js';
 import { refreshGuard } from '../core/usage.js';
 import { buildStamp, isStale, staleText } from '../core/build.js';
-import { postNote, HUMAN, SYSTEM } from '../core/board.js';
+import { closeNoteIfOpen, postNote, HUMAN, SYSTEM } from '../core/board.js';
 import { AgentManager, type Timings } from './agents.js';
 import type { GhRunner } from '../core/github.js';
 import { createApi, sendJson } from './api.js';
@@ -357,7 +357,7 @@ export async function startOrchestrator(opts: OrchestratorOptions): Promise<Orch
     staleWarned = true;
     const text = staleText(startedBuild, current);
     log(`stale build: ${text}`);
-    postNote(store.state, { actor: SYSTEM, type: 'system', text, to: HUMAN }).open = true; // stays on "Needs you" until cleared
+    postNote(store.state, { actor: SYSTEM, type: 'system', text, to: HUMAN, topic: 'stale_build' }).open = true; // stays on "Needs you" until cleared
     store.commit();
     notify(config, 'Muster: restart needed', text);
     broadcast({ type: 'toast', level: 'warn', text: 'Muster was rebuilt: restart the server to load the new code' });
@@ -369,6 +369,15 @@ export async function startOrchestrator(opts: OrchestratorOptions): Promise<Orch
     refreshGuard(store.state, config);
     if (store.state.usage.paused !== before) store.commit();
   }, 60_000).unref();
+  // This server runs the newest build there is: "older build" notes from a previous run are settled.
+  let settled = 0;
+  for (const n of store.state.notes) {
+    if (n.topic !== 'stale_build' || n.dismissed) continue;
+    closeNoteIfOpen(n);
+    n.dismissed = true;
+    settled++;
+  }
+  if (settled) store.commit();
   const buildTimer = setInterval(checkBuild, opts.buildCheckMs ?? 60_000).unref();
   // Due watches (approved ideas' re-checks, competitors you keep watching) queue one job each; skipped while paused.
   const intelTimerTick = setInterval(() => intel.tick(), opts.intelTickMs ?? 10 * 60_000).unref();

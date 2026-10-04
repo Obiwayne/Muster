@@ -40,5 +40,5 @@ export function isStale(started: number, current: number): boolean {
 
 export function staleText(started: number, current: number): string {
   const at = (ms: number) => new Date(ms).toLocaleString();
-  return `This Muster server is running an older build (from ${at(started)}); a newer one was built at ${at(current)}. Run \`muster down\` then \`muster up\` to load it, then restart any agents that should pick up new settings.`;
+  return `This Muster server is running an older build (from ${at(started)}); a newer one was built at ${at(current)}. Click Update at the top of the Bulletin board to load it (or run \`muster down\` then \`muster up\`). Muster clears this note once it runs the new build.`;
 }
