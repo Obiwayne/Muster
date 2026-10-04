@@ -37,6 +37,7 @@ export function migrate(raw: Partial<MusterState>, repoRoot: string): MusterStat
     if (n.topic || (n.type !== 'system' && n.type !== 'approval')) continue;
     if (n.type === 'system' && /^Weekly usage at \d/.test(n.text)) n.topic = 'weekly_usage';
     else if (n.type === 'system' && /^(Paused: 5-hour window|Resumed: the 5-hour window)/.test(n.text)) n.topic = 'five_hour';
+    else if (n.type === 'system' && /^This Muster server is running an older build/.test(n.text)) n.topic = 'stale_build';
     else if (n.type === 'approval' && !n.taskId && /^Roadmap ready for your approval/.test(n.text)) n.topic = 'roadmap';
   }
   return {

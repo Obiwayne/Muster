@@ -47,11 +47,23 @@ describe('stale build warning', () => {
     await wait(80);
     const notes = staleNotes();
     expect(notes).toHaveLength(1);
-    expect(notes[0]).toMatchObject({ to: HUMAN, open: true, type: 'system' });
-    expect(notes[0].text).toMatch(/muster down.*muster up/);
+    expect(notes[0]).toMatchObject({ to: HUMAN, open: true, type: 'system', topic: 'stale_build' });
+    expect(notes[0].text).toMatch(/Update at the top of the Bulletin board.*muster down.*muster up/);
   });
 
   it('lets the CLI spot it too', async () => {
     expect(await staleServer(orch.url, 2_000_000)).toMatch(/older build.*muster down/);
+  });
+
+  it('dismisses the note once a restarted server runs the new build', async () => {
+    const id = staleNotes()[0].id;
+    await orch.shutdown();
+    const ui = mkdtempSync(join(tmpdir(), 'muster-ui-'));
+    writeFileSync(join(ui, 'index.html'), '<html></html>');
+    orch = await startOrchestrator({ repoRoot: repo, port: 0, uiDir: ui, autoStart: false, log: () => {}, buildStamp: () => disk, buildCheckMs: 20 });
+    const note = orch.store.state.notes.find((n) => n.id === id)!;
+    expect(note).toMatchObject({ open: false, dismissed: true });
+    await wait(80);
+    expect(staleNotes().filter((n) => !n.dismissed)).toHaveLength(0); // the new build is current: no new note
   });
 });
