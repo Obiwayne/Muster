@@ -1,5 +1,6 @@
 // Settings: bound to GET/PATCH /api/config, saved on every change. "Research browser" and "Intel" read
 // GET /api/browser and use the human browser writes in browserapi.ts (login window, Opera import, forget).
+// Tabs (#/settings?tab=usage|line|phone): General, Usage guard, Factory line, and Phone (pages/phone.ts, /api/phone/*).
 import '../intelcheck.css';
 import type { BrowseMode, IntelConfig, MusterConfig, ResearchBrowserConfig, ResearchBrowserStatus, WatchCadence } from '../../../src/types';
 import { h, icon, select, setChildren, toast, toggle } from '../dom';
@@ -13,6 +14,8 @@ import { weeklyStatus } from '../usagealert';
 import { getBrowserStatus } from '../intelapi';
 import { closeLogin, forgetSite, openLogin, operaImport } from '../browserapi';
 import { addAllowed, availabilityLine, blockedHint, honestLimits, operaSummary, setVisible, siteLine } from '../browsermodel';
+import { SETTINGS_TABS, parseSettingsTab, type SettingsTab } from '../phonemodel';
+import { createPhoneSection } from './phone';
 
 const BROWSE_MODES = [
   { value: 'profile', label: 'Research profile' },
@@ -74,6 +77,8 @@ export function createSettings(): Page {
   let browserBusy = '';
   let visible = false;
   let pollTimer: number | undefined;
+  let tab: SettingsTab = 'general';
+  const phone = createPhoneSection();
   const body = h('div.settings');
   const el = h('div.page', null, body);
 
@@ -411,13 +416,60 @@ export function createSettings(): Page {
     return { weeklyRemindAt: u?.weeklyRemindAt, weeklySnoozedUntil: u?.weeklySnoozedUntil };
   };
 
-  function render(c: MusterConfig): void {
+  function syncPhone(): void {
+    if (visible && tab === 'phone') phone.show(); else phone.hide();
+  }
+
+  function tabs(): HTMLElement {
+    return h('div.set-tabs', { role: 'tablist' }, SETTINGS_TABS.map((t) => h('a.set-tab', {
+      class: t.id === tab && 'on', role: 'tab', 'aria-selected': String(t.id === tab),
+      href: t.id === 'general' ? '#/settings' : `#/settings?tab=${t.id}`,
+    }, t.id === 'phone' ? icon('phone', 14) : null, t.label)));
+  }
+
+  const cols = (left: (HTMLElement | null)[], right: (HTMLElement | null)[] = []) =>
+    h('div.settings-cols', null, h('div.settings-col', null, left), h('div.settings-col', null, right));
+
+  function usageTab(c: MusterConfig): HTMLElement {
     const weeklyOn = c.weeklyAlerts !== false;
+    return cols([
+      panel('Usage guard · Max 5x',
+        row('Pause new work at', '5-hour window. No spawning or assigning until it resets',
+          ctl(pctInput(c.pauseAtFiveHourPct, (v) => save({ pauseAtFiveHourPct: v })), 120)),
+        row('Weekly alerts', weeklyStatus(usageOf(events.snapshot), c),
+          toggle(weeklyOn, (v) => save({ weeklyAlerts: v }))),
+        row('Weekly alert at', weeklyOn ? 'One note on the board when the weekly window reaches this' : 'Turn weekly alerts on to use it',
+          h('div.ctl', { style: { width: '120px', opacity: weeklyOn ? '' : '.5' } }, pctInput(c.warnAtWeeklyPct, (v) => save({ warnAtWeeklyPct: v })))))]);
+  }
+
+  function lineTab(c: MusterConfig): HTMLElement {
+    return cols([
+      h('div.panel', null,
+        h('div.panel-head', null, h('div.section-label', null, 'Factory line and review'),
+          h('button.btn.sm', { onclick: editLine, title: 'Reorder stations and edit the role and guideline of each station' }, 'Edit line')),
+        h('div.srow.col', null, h('div.lbl', null, h('div.t', null, 'Default stations')), stationsEditor(c)),
+        row('Test command', 'Run by the Captain in each worktree',
+          ctl(textInput(c.testCommand, (v) => save({ testCommand: v }), { mono: true }))),
+        row('Require evidence', c.requireEvidence === false ? 'Off: the Captain can pass a task without proof' : 'The last station attaches proof (screenshots, test output) before the Captain can pass a task',
+          toggle(c.requireEvidence !== false, (v) => save({ requireEvidence: v }))),
+        row('Notify me', 'Windows notification for escalations and branches ready to merge',
+          toggle(c.notify, (v) => save({ notify: v }))))]);
+  }
+
+  function render(c: MusterConfig): void {
+    const content = tab === 'phone' ? phone.el : tab === 'usage' ? usageTab(c) : tab === 'line' ? lineTab(c) : generalTab(c);
     setChildren(body,
       h('div', { style: 'display:flex;flex-direction:column;gap:4px' },
         h('div.settings-title', null, 'Settings'),
-        h('div.muted', { style: 'font-size:13px' }, 'Saved to .muster/config.json in this repo. The CLI reads the same file.')),
-      h('div.settings-cols', null,
+        h('div.muted', { style: 'font-size:13px' }, tab === 'phone'
+          ? 'Link your Android phone to approve, answer and get pinged when the crew needs you.'
+          : 'Saved to .muster/config.json in this repo. The CLI reads the same file.')),
+      tabs(),
+      content);
+  }
+
+  function generalTab(c: MusterConfig): HTMLElement {
+    return h('div.settings-cols', null,
         h('div.settings-col', null,
           projectPanel(c),
           panel('You',
@@ -445,26 +497,8 @@ export function createSettings(): Page {
               ctl(textInput(c.vellumFile ?? '', (v) => save({ vellumFile: v.trim() || (null as unknown as undefined) }), { mono: true, width: 260, placeholder: 'e.g. 28BUsqILtGqq' }), 260))),
           intelPanel(c)),
         h('div.settings-col', null,
-          panel('Usage guard · Max 5x',
-            row('Pause new work at', '5-hour window. No spawning or assigning until it resets',
-              ctl(pctInput(c.pauseAtFiveHourPct, (v) => save({ pauseAtFiveHourPct: v })), 120)),
-            row('Weekly alerts', weeklyStatus(usageOf(events.snapshot), c),
-              toggle(weeklyOn, (v) => save({ weeklyAlerts: v }))),
-            row('Weekly alert at', weeklyOn ? 'One note on the board when the weekly window reaches this' : 'Turn weekly alerts on to use it',
-              h('div.ctl', { style: { width: '120px', opacity: weeklyOn ? '' : '.5' } }, pctInput(c.warnAtWeeklyPct, (v) => save({ warnAtWeeklyPct: v }))))),
           githubPanel(c),
-          h('div.panel', null,
-            h('div.panel-head', null, h('div.section-label', null, 'Factory line and review'),
-              h('button.btn.sm', { onclick: editLine, title: 'Reorder stations and edit the role and guideline of each station' }, 'Edit line')),
-            h('div.srow.col', null, h('div.lbl', null, h('div.t', null, 'Default stations')), stationsEditor(c)),
-            row('Test command', 'Run by the Captain in each worktree',
-              ctl(textInput(c.testCommand, (v) => save({ testCommand: v }), { mono: true }))),
-            row('Require evidence', c.requireEvidence === false ? 'Off: the Captain can pass a task without proof' : 'The last station attaches proof (screenshots, test output) before the Captain can pass a task',
-              toggle(c.requireEvidence !== false, (v) => save({ requireEvidence: v }))),
-            row('Notify me', 'Windows notification for escalations and branches ready to merge',
-              toggle(c.notify, (v) => save({ notify: v })))),
-          researchBrowserPanel(c))),
-    );
+          researchBrowserPanel(c)));
   }
 
   return {
@@ -483,7 +517,16 @@ export function createSettings(): Page {
       void loadProject();
       if (!browser) void loadBrowser();
     },
-    show() { visible = true; void loadBrowser(); },
-    hide() { visible = false; clearTimeout(pollTimer); },
+    params(p: URLSearchParams) {
+      const next = parseSettingsTab(p.get('tab'));
+      if (next !== tab) {
+        tab = next;
+        if (cfg) render(cfg);
+        body.scrollTop = 0;
+      }
+      syncPhone();
+    },
+    show() { visible = true; void loadBrowser(); syncPhone(); },
+    hide() { visible = false; clearTimeout(pollTimer); syncPhone(); },
   };
 }
