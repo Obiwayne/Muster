@@ -12,6 +12,7 @@ async function main(): Promise<void> {
     repoRoot,
     port: values.port ? Number(values.port) : undefined,
     log,
+    registerPhone: true,
     onShutdown: () => process.exit(0),
   });
   const stop = (signal: string) => {

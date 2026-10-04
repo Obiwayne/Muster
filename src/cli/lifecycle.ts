@@ -7,6 +7,7 @@ import type { Agent, MusterConfig, MusterState } from '../types.js';
 import { api, CliError, dashboardUrl, healthy, staleServer, musterHome, NOT_RUNNING, readServerFile, repoRoot, requireServer, type Ctx } from './context.js';
 import { roleColor } from './format.js';
 import { initMuster } from './init.js';
+import { ensureGateway } from '../phone/link.js';
 
 const sleep = (ms: number) => new Promise((r) => setTimeout(r, ms));
 
@@ -20,7 +21,7 @@ function pidAlive(pid: number | undefined): boolean {
   }
 }
 
-export async function up(ctx: Ctx, opts: { port?: number; ui?: boolean; create?: boolean; waitMs?: number; entry?: string }): Promise<void> {
+export async function up(ctx: Ctx, opts: { port?: number; ui?: boolean; create?: boolean; waitMs?: number; entry?: string; phone?: boolean }): Promise<void> {
   const { c } = ctx;
   const init = initMuster(ctx.repoRoot ?? ctx.cwd, false, opts.create);
   const root = init.root;
@@ -65,6 +66,16 @@ export async function up(ctx: Ctx, opts: { port?: number; ui?: boolean; create?:
     if (!found) throw new CliError('The orchestrator did not come up within 15 s. See .muster/logs/orchestrator.log');
     url = found;
     ctx.out(c.green('Muster is up.'));
+  }
+
+  // The phone gateway (one per PC) runs alongside; tests that fake the orchestrator (entry) leave it alone.
+  if (opts.phone ?? !opts.entry) {
+    try {
+      const g = await ensureGateway({ entry: join(musterHome(), 'dist', 'phone', 'index.js'), wait: false });
+      if (g.started) ctx.out(c.dim('Starting the phone gateway…'));
+    } catch (e) {
+      ctx.out(c.dim(`(phone gateway not started: ${(e as Error).message})`));
+    }
   }
 
   ctx.out(`Dashboard: ${url}/`);

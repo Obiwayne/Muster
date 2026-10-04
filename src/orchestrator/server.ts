@@ -30,6 +30,8 @@ import { ResearchBrowser } from '../browser/researchbrowser.js';
 import type { BrowserRouteDeps } from './browserapi.js';
 
 import type { VellumCall } from '../core/vellum.js';
+import { realPhoneLink, type PhoneLink } from '../phone/link.js';
+import { handlePhone } from './phoneapi.js';
 
 export interface OrchestratorOptions {
   repoRoot: string;
@@ -59,6 +61,10 @@ export interface OrchestratorOptions {
   probe?: BrowserRouteDeps['probe'];
   /** Test seam: replaces the public reader used when a site blocks the research browser. */
   publicRead?: BrowserRouteDeps['publicRead'];
+  /** The phone gateway behind /api/phone/* (default: the real one, started on demand). */
+  phone?: PhoneLink;
+  /** Start the phone gateway and register this repo with it once listening (the real entry point does; tests don't). */
+  registerPhone?: boolean;
 }
 
 export interface Orchestrator {
@@ -258,6 +264,8 @@ export async function startOrchestrator(opts: OrchestratorOptions): Promise<Orch
     res.end(readFileSync(file));
   };
 
+  let phone = opts.phone;
+
   // DNS rebinding: a page on evil.example resolving to 127.0.0.1 still sends Host: evil.example.
   const hostOk = (req: IncomingMessage) => allowedHost(req.headers.host, port);
   const caller = (t: string | string[] | undefined | null): Caller | null => tokens.resolve(t, store.state.agents);
@@ -269,6 +277,7 @@ export async function startOrchestrator(opts: OrchestratorOptions): Promise<Orch
       if (url.pathname === '/api/health' && req.method === 'GET') return void api(req, res, url, { actor: 'anonymous', human: false });
       const who = caller(req.headers['x-muster-token']);
       if (!who) return sendJson(res, 401, { error: 'Missing or wrong x-muster-token' });
+      if (url.pathname === '/api/phone' || url.pathname.startsWith('/api/phone/')) return void handlePhone(req, res, url, who, (phone ??= realPhoneLink()));
       return void api(req, res, url, who);
     }
     if (req.method !== 'GET' && req.method !== 'HEAD') return sendJson(res, 405, { error: 'Method not allowed' });
@@ -348,6 +357,13 @@ export async function startOrchestrator(opts: OrchestratorOptions): Promise<Orch
     log(`could not ignore ${EVIDENCE_DIR}/ in git: ${e instanceof Error ? e.message : e}`);
   }
   log(`listening on http://127.0.0.1:${port} for ${paths.root}`);
+  if (opts.registerPhone) {
+    // The phone gateway lists this project from now on (and starts if it wasn't running). Best effort.
+    void (phone ??= realPhoneLink())
+      .register(paths.root)
+      .then(() => log('registered with the phone gateway'))
+      .catch((e) => log(`phone gateway: ${e instanceof Error ? e.message : e}`));
+  }
 
   // Rebuilding Muster doesn't reach a running server: Node keeps the modules it loaded at start. Warn once.
   const checkBuild = () => {
