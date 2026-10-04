@@ -5,6 +5,7 @@ import android.app.NotificationChannel
 import android.app.NotificationManager
 import android.app.PendingIntent
 import android.content.Context
+import android.media.AudioAttributes
 import android.content.Intent
 import android.content.pm.PackageManager
 import androidx.core.app.NotificationCompat
@@ -36,28 +37,57 @@ object Notifier {
     const val SERVICE_ID = 1
     private const val CREW = 0xFF2DD4BF.toInt()
 
+    /** Alert channels carry their sound, so their real ids are `<base>_v<version>` (see [AlertSound]). */
+    private val ALERT_BASES = listOf(CH_REVIEWS, CH_QUESTIONS, CH_BLOCKED, CH_OTHER)
+
+    @Volatile
+    private var version = 1
+
+    /** The current id of an alert channel ([CH_REVIEWS], [CH_QUESTIONS], [CH_BLOCKED] or [CH_OTHER]). */
+    fun channelId(base: String) = "${base}_v$version"
+
+    @Synchronized
     fun createChannels(ctx: Context) {
         val nm = ctx.getSystemService(NotificationManager::class.java)
+        var p = AlertSound.load(ctx)
+        val chosen = p.uri
+        if (p.play && chosen != null && !AlertSound.readable(ctx, chosen)) {
+            // The chosen sound is gone: fall back to the phone's default.
+            p = p.copy(uri = null)
+            AlertSound.save(ctx, p)
+        }
+        version = AlertSound.version(ctx)
+        val sound = AlertSound.soundUri(p)
+        val attrs = AudioAttributes.Builder()
+            .setUsage(AudioAttributes.USAGE_NOTIFICATION)
+            .setContentType(AudioAttributes.CONTENT_TYPE_SONIFICATION)
+            .build()
+
+        fun alert(base: String, name: String, importance: Int, about: String) =
+            NotificationChannel(channelId(base), name, importance).apply {
+                description = about
+                setSound(sound, if (sound == null) null else attrs)
+                enableVibration(p.vibrate)
+            }
+
         nm.createNotificationChannels(
             listOf(
-                NotificationChannel(CH_REVIEWS, "Reviews", NotificationManager.IMPORTANCE_HIGH).apply {
-                    description = "Work the Captain reviewed and that waits for your approval"
-                },
-                NotificationChannel(CH_QUESTIONS, "Questions", NotificationManager.IMPORTANCE_HIGH).apply {
-                    description = "The Captain or the crew asking you something"
-                },
-                NotificationChannel(CH_BLOCKED, "Blocked merges", NotificationManager.IMPORTANCE_HIGH).apply {
-                    description = "A merge waits on uncommitted files on your PC"
-                },
-                NotificationChannel(CH_OTHER, "Other", NotificationManager.IMPORTANCE_DEFAULT).apply {
-                    description = "Usage alerts and stuck agents"
-                },
+                alert(CH_REVIEWS, "Reviews", NotificationManager.IMPORTANCE_HIGH, "Work the Captain reviewed and that waits for your approval"),
+                alert(CH_QUESTIONS, "Questions", NotificationManager.IMPORTANCE_HIGH, "The Captain or the crew asking you something"),
+                alert(CH_BLOCKED, "Blocked merges", NotificationManager.IMPORTANCE_HIGH, "A merge waits on uncommitted files on your PC"),
+                alert(CH_OTHER, "Other", NotificationManager.IMPORTANCE_DEFAULT, "Usage alerts and stuck agents"),
                 NotificationChannel(CH_SERVICE, "Connection", NotificationManager.IMPORTANCE_LOW).apply {
                     description = "The ongoing notification that keeps Muster listening to your PC"
                     setShowBadge(false)
                 },
             ),
         )
+        // Drop older alert channels, including the unversioned ids from before alert sounds, so system settings show one set.
+        val current = ALERT_BASES.map(::channelId).toSet()
+        nm.notificationChannels
+            .map { it.id }
+            .filter { id -> id !in current && ALERT_BASES.any { id == it || id.startsWith(it + "_v") } }
+            .forEach(nm::deleteNotificationChannel)
     }
 
     fun canPost(ctx: Context) =
@@ -95,10 +125,10 @@ object Notifier {
     }
 
     fun channelFor(kind: String) = when (kind) {
-        Kind.REVIEW, Kind.APPROVAL -> CH_REVIEWS
-        Kind.QUESTION, Kind.ESCALATION -> CH_QUESTIONS
-        Kind.BLOCKED -> CH_BLOCKED
-        else -> CH_OTHER
+        Kind.REVIEW, Kind.APPROVAL -> channelId(CH_REVIEWS)
+        Kind.QUESTION, Kind.ESCALATION -> channelId(CH_QUESTIONS)
+        Kind.BLOCKED -> channelId(CH_BLOCKED)
+        else -> channelId(CH_OTHER)
     }
 
     /** Title and text as M08 shows them. */
@@ -227,7 +257,7 @@ object Notifier {
 
     fun test(ctx: Context, pcName: String) {
         if (!canPost(ctx)) return
-        val n = NotificationCompat.Builder(ctx, CH_OTHER)
+        val n = NotificationCompat.Builder(ctx, channelId(CH_OTHER))
             .setSmallIcon(R.drawable.ic_stat_muster)
             .setColor(CREW)
             .setContentTitle("Test from $pcName")
@@ -237,6 +267,30 @@ object Notifier {
         try {
             NotificationManagerCompat.from(ctx).notify("test", 2, n)
         } catch (_: SecurityException) {
+        }
+    }
+
+    const val SOUND_TEST_TAG = "sound-test"
+
+    /** M09 "Test": a sample alert on the questions channel, so it sounds and vibrates like a real one. False if it can't post. */
+    fun testAlert(ctx: Context): Boolean {
+        if (!canPost(ctx)) return false
+        val n = NotificationCompat.Builder(ctx, channelId(CH_QUESTIONS))
+            .setSmallIcon(R.drawable.ic_stat_muster)
+            .setColor(CREW)
+            .setContentTitle("The Captain has a question")
+            .setContentText("This is how Muster alerts sound on this phone.")
+            .setCategory(NotificationCompat.CATEGORY_MESSAGE)
+            .setPriority(NotificationCompat.PRIORITY_HIGH)
+            .setAutoCancel(true)
+            .setTimeoutAfter(15_000)
+            .setContentIntent(PendingIntent.getActivity(ctx, 0, Intent(ctx, MainActivity::class.java), PendingIntent.FLAG_IMMUTABLE))
+            .build()
+        return try {
+            NotificationManagerCompat.from(ctx).notify(SOUND_TEST_TAG, 3, n)
+            true
+        } catch (_: SecurityException) {
+            false
         }
     }
 }
