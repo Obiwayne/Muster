@@ -155,6 +155,21 @@ const state = {
         { at: iso(1), from: 'ada', text: 'tokens.ts is on ada/invite-api now. The fixture helper is makeInviteToken() in test/fixtures.ts, use that instead of a hard-coded string.' }] },
     { id: 'N15', type: 'waiting', from: 'design', to: 'bea', taskId: 'T4', branch: 'design/check', text: 'Design check on T4 once bea hands off.', createdAt: iso(6), open: true, replies: [] },
     { id: 'N16', type: 'escalation', from: 'captain', text: 'Should a revoked invite link show a friendly "link expired" page or a plain 404? This is a product call (N12 is related).', createdAt: iso(2), open: true, replies: [] },
+    // The Captain's AskUserQuestion menu (docs/ASK.md): one open, one answered.
+    { id: 'N23', type: 'escalation', from: 'captain', to: 'you', text: 'Which model should draw the wall thumbnails?\n\nWhich caption sizes should a post offer?', createdAt: iso(1.5), open: true, replies: [],
+      ask: [
+        { header: 'Art model', question: 'Which model should draw the wall thumbnails?', multiSelect: false, options: [
+          { label: 'Flux schnell (Recommended)', description: 'Fast and cheap, good enough at thumbnail size' },
+          { label: 'SDXL', description: 'Sharper detail, about 3x the cost per image' },
+          { label: 'No thumbnails', description: 'Show the first post as text instead' }] },
+        { header: 'Caption size', question: 'Which caption sizes should a post offer?', multiSelect: true, options: [
+          { label: 'Small', description: '12 px, fits three lines under a photo' },
+          { label: 'Medium', description: '14 px, the current default' },
+          { label: 'Large', description: '18 px, for projecting on a class screen' }] }] },
+    { id: 'N24', type: 'escalation', from: 'captain', to: 'you', text: 'Ship the share dialog behind a flag first?', createdAt: iso(40), open: false, closedAt: iso(35),
+      ask: [{ header: 'Rollout', question: 'Ship the share dialog behind a flag first?', multiSelect: false, options: [{ label: 'Yes, flag it (Recommended)', description: 'Turn it on for one class first' }, { label: 'No, ship to everyone' }] }],
+      answers: [{ header: 'Rollout', choices: ['Yes, flag it (Recommended)'], other: "start with Ms. Lee's class" }],
+      replies: [{ at: iso(35), from: 'you', text: "Rollout: Yes, flag it (Recommended) (note: start with Ms. Lee's class)" }] },
     { id: 'N17', type: 'progress', from: 'design', to: 'bea', taskId: 'T4', branch: 'bea/share-dialog', text: 'DRIFT T4 ShareDialog primary button is #2563EB; framework uses var(--color-primary)\nsrc/ui/ShareDialog.tsx:42 — hard-coded #2563EB', createdAt: iso(3), open: false, replies: [] },
     { id: 'N18', type: 'question', from: 'design', taskId: 'T4', text: 'DRIFT T4 Share dialog has no matching board in Vellum. Ask the Captain before adding one?', createdAt: iso(3.5), open: false, replies: [{ at: iso(3), from: 'captain', text: 'Not yet, flag it in the review.' }] },
     { id: 'N19', type: 'done', from: 'design', taskId: 'T2', text: 'PASS T2 Token copy UI matches the framework tokens', createdAt: iso(16), open: false, replies: [] },
@@ -962,6 +977,20 @@ async function api(req, url) {
     need(b.actor === 'you', 403, 'Only you can dismiss notes');
     const n = findNote(decodeURIComponent(mm[1]));
     n.open = false; n.dismissed = true; n.closedAt = new Date().toISOString();
+    broadcast();
+    return n;
+  }
+  if ((mm = /^\/api\/notes\/([^/]+)\/answer$/.exec(p)) && m === 'POST') {
+    const b = await body(req);
+    const n = findNote(decodeURIComponent(mm[1]));
+    need(n.ask, 400, `${n.id} is not a question menu`);
+    need(n.open, 409, `${n.id} is already closed`);
+    need(Array.isArray(b.answers) && b.answers.length === n.ask.length, 400, 'Answer every question');
+    n.answers = n.ask.map((q, i) => ({ header: q.header, choices: b.answers[i].choices ?? [], ...(b.answers[i].other ? { other: b.answers[i].other } : {}) }));
+    const text = n.answers.map((a, i) => `${a.header || `Q${i + 1}`}: ${a.choices.length ? `${a.choices.join(', ')}${a.other ? ` (note: ${a.other})` : ''}` : a.other}`).join('\n');
+    n.replies.push({ at: new Date().toISOString(), from: 'you', text });
+    addFeed('reply', 'you', undefined, text, { noteId: n.id });
+    n.open = false; n.closedAt = new Date().toISOString();
     broadcast();
     return n;
   }
