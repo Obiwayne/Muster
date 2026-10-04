@@ -47,7 +47,7 @@ Design: Vellum file "Muster" (28BUsqILtGqq), page "Mobile": M01–M09 phone scre
 All times ISO strings. Errors `{ error: string }` with 4xx/5xx.
 
 - `GET /api/needs` → `{ pcName, projects: [{ id, name, running }], items: NeedItem[] }`
-  `NeedItem = { id, projectId, projectName, kind: 'review'|'approval'|'question'|'escalation'|'blocked'|'usage'|'stuck', noteId?, taskId?, title, summary, from, createdAt, evidence?: { id, files: number, thumbs: string[] }, actions: ('approve'|'open'|'answer'|'commit'|'stash')[] }`
+  `NeedItem = { id, projectId, projectName, kind: 'review'|'approval'|'question'|'escalation'|'blocked'|'usage'|'stuck', noteId?, taskId?, title, summary, from, createdAt, evidence?: { id, files: number, thumbs: string[] }, ask?: AskQuestion[], actions: ('approve'|'open'|'answer'|'commit'|'stash')[] }`
   Built from each running project's `GET /api/state`: open notes where `isNeedsYou` (core/board.ts), mapped by type/topic
   (review with task `ready_for_merge` and no `mergeApproval` → 'review' with approve; approval → 'approval';
   escalation → 'escalation'; question addressed to you → 'question'; topic 'checkout' → 'blocked' with commit/stash;
@@ -60,6 +60,10 @@ All times ISO strings. Errors `{ error: string }` with 4xx/5xx.
   is set on review/approval items with evidence; `thumbs` are gateway paths
   (`/api/projects/:pid/tasks/:tid/evidence/:eid/:file`, images only, max 3) fetched with the same bearer. Items are
   newest first. 'answer' = `POST .../notes/:nid/reply`.
+  An escalation made from the Captain's question menu (docs/ASK.md) carries `ask` =
+  `[{ header, question, multiSelect, options: [{ label, description? }] }]`, `title` "The Captain asks you" and `summary`
+  = its first question; actions stay `['answer','open']`. Answer it with `POST .../notes/:nid/answer`; a free-text
+  reply also works but leaves it open.
 - `GET /api/projects/:pid/tasks/:tid` → `{ task: { id, title, branch, status, stations, builder, reviewedSha }, review: { from, text, at } | null, evidence: [{ id, summary, files: [{ name, kind }] }], diffStat: { added, removed, files } | null }`
 - `GET /api/projects/:pid/tasks/:tid/evidence/:eid/:file` → the file bytes (proxied).
 - `POST /api/projects/:pid/tasks/:tid/approve` → orchestrator `POST /api/tasks/:id/approve-merge` as you (a task
@@ -68,7 +72,12 @@ All times ISO strings. Errors `{ error: string }` with 4xx/5xx.
 - `POST /api/projects/:pid/tasks/:tid/send-back` `{ text }` (required) → orchestrator `POST /api/tasks/:id/sendback`
   `{ note: text }` (`/reject` for a task `awaiting_approval`). Response `{ ok: true, task: { id, status } }`.
 - `GET /api/projects/:pid/notes/:nid` → the Note object itself (`{ id, type, from, to?, taskId?, text, createdAt, open,
-  replies: [{ at, from, text }] }`); `POST .../reply` `{ text }` → orchestrator reply as you (returns the updated Note).
+  replies: [{ at, from, text }], ask?, answers?: [{ header, choices, other? }] }`); `POST .../reply` `{ text }` →
+  orchestrator reply as you (returns the updated Note).
+- `POST /api/projects/:pid/notes/:nid/answer` `{ answers: [{ choices: string[], other?: string }] }` (one per question,
+  by index) → orchestrator `POST /api/notes/:nid/answer` as you: stores `answers`, replies with one line per question and
+  closes the note. Returns the updated Note. 400 on a bad answer (unknown label, two choices on a single-select
+  question, nothing picked or typed), 409 when the note is already closed.
 - Unknown `:pid` → 404; a project that isn't running → 409; an orchestrator error passes through with its status.
 - `GET /api/projects/:pid/tasks/:tid`: `builder` is an agent id or null; `branch`/`reviewedSha` may be null.
 - `POST /api/projects/:pid/checkout/commit` and `/checkout/stash` → the orchestrator routes of the same name.

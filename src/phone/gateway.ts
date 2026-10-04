@@ -392,6 +392,11 @@ export async function startGateway(opts: GatewayOptions = {}): Promise<Gateway> 
     const p = await projectById(params.pid);
     return orchestratorJson<Note>(p, 'POST', `/api/notes/${encodeURIComponent(params.nid)}/reply`, { text: text(body.text, 'text') });
   });
+  phone('POST', '/api/projects/:pid/notes/:nid/answer', async ({ params, body }) => {
+    const p = await projectById(params.pid);
+    if (!Array.isArray(body.answers)) throw new HttpError(400, 'answers must be a list');
+    return orchestratorJson<Note>(p, 'POST', `/api/notes/${encodeURIComponent(params.nid)}/answer`, { answers: body.answers });
+  });
   phone('POST', '/api/projects/:pid/checkout/commit', async ({ params }) => orchestratorJson(await projectById(params.pid), 'POST', '/api/checkout/commit', {}));
   phone('POST', '/api/projects/:pid/checkout/stash', async ({ params }) => orchestratorJson(await projectById(params.pid), 'POST', '/api/checkout/stash', {}));
   phone('GET', '/api/projects/:pid/crew', async ({ params }) => {

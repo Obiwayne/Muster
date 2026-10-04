@@ -1,6 +1,6 @@
 // What the phone shows and notifies: needs-you items built from a project's state, and the per-device filter
 // (prefs + quiet hours). Pure functions; the gateway feeds them the state it fetched. See docs/PHONE.md.
-import type { MusterState, Note, Task } from '../types.js';
+import type { AskQuestion, MusterState, Note, Task } from '../types.js';
 import { HUMAN, isNeedsYou } from '../core/board.js';
 
 export type NeedKind = 'review' | 'approval' | 'question' | 'escalation' | 'blocked' | 'usage' | 'stuck';
@@ -18,6 +18,7 @@ export interface NeedItem {
   from: string;
   createdAt: string;
   evidence?: { id: string; files: number; thumbs: string[] };
+  ask?: AskQuestion[]; // escalation from the Captain's question menu: answer with POST .../notes/:nid/answer
   actions: NeedAction[];
 }
 
@@ -72,7 +73,7 @@ export function needFromNote(state: MusterState, n: Note, projectId: string, pro
   } else if (n.type === 'escalation') {
     kind = 'escalation';
     actions = ['answer', 'open'];
-    title = `The Captain needs you`;
+    title = n.ask ? 'The Captain asks you' : 'The Captain needs you';
   } else if (n.topic === 'checkout') {
     kind = 'blocked';
     actions = ['commit', 'stash'];
@@ -99,10 +100,11 @@ export function needFromNote(state: MusterState, n: Note, projectId: string, pro
     noteId: n.id,
     ...(task ? { taskId: task.id } : {}),
     title,
-    summary: firstLine(n.text, 140),
+    summary: firstLine(n.ask?.[0]?.question ?? n.text, 140),
     from: n.from,
     createdAt: n.createdAt,
     ...(kind === 'review' || kind === 'approval' ? { evidence: evidenceOf(projectId, task) } : {}),
+    ...(kind === 'escalation' && n.ask ? { ask: n.ask } : {}),
     actions,
   };
 }

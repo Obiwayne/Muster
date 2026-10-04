@@ -47,6 +47,7 @@ function startFakeOrchestrator(): Promise<number> {
       }
       const t = /^\/api\/tasks\/(T\d+)\/(approve-merge|approve|sendback|reject)$/.exec(path);
       if (t) return json(200, { ...projectState.tasks.find((x) => x.id === t[1]), ...(t[2] === 'approve-merge' ? { mergeApproval: { at: 'now' } } : {}) });
+      if (/^\/api\/notes\/N\d+\/answer$/.test(path)) return json(200, { id: 'N4', open: false, answers: JSON.parse(text).answers });
       if (/^\/api\/notes\/N\d+\/reply$/.test(path)) return json(200, { id: 'N5', replies: [{ from: 'you', text: JSON.parse(text).text }] });
       if (path === '/api/checkout/commit' || path === '/api/checkout/stash') return json(200, { ok: true, waiting: [] });
       json(404, { error: `No route ${path}` });
@@ -253,12 +254,14 @@ describe('phone gateway: projects and actions', () => {
     expect((await call('GET', `/api/projects/nope/crew`, { key })).status).toBe(404);
   });
 
-  it('forwards approve, send-back, reply, commit and stash as you', async () => {
+  it('forwards approve, send-back, reply, answer, commit and stash as you', async () => {
     calls.length = 0;
     expect((await call('POST', `/api/projects/${pid}/tasks/T1/approve`, { key })).data).toMatchObject({ ok: true, task: { id: 'T1', mergeApproval: { at: 'now' } } });
     expect((await call('POST', `/api/projects/${pid}/tasks/T1/send-back`, { key, body: { text: 'Fix the colour' } })).status).toBe(200);
     expect((await call('POST', `/api/projects/${pid}/tasks/T1/send-back`, { key, body: {} })).status).toBe(400);
     expect((await call('POST', `/api/projects/${pid}/notes/N5/reply`, { key, body: { text: 'Blue' } })).status).toBe(200);
+    expect((await call('POST', `/api/projects/${pid}/notes/N4/answer`, { key, body: { answers: [{ choices: ['Flux'] }] } })).data).toMatchObject({ id: 'N4', open: false });
+    expect((await call('POST', `/api/projects/${pid}/notes/N4/answer`, { key, body: {} })).status).toBe(400);
     expect((await call('POST', `/api/projects/${pid}/checkout/commit`, { key })).status).toBe(200);
     expect((await call('POST', `/api/projects/${pid}/checkout/stash`, { key })).status).toBe(200);
     const posts = calls.filter((c) => c.method === 'POST').map((c) => [c.path, c.body]);
@@ -266,6 +269,7 @@ describe('phone gateway: projects and actions', () => {
       ['/api/tasks/T1/approve-merge', {}],
       ['/api/tasks/T1/sendback', { note: 'Fix the colour' }],
       ['/api/notes/N5/reply', { text: 'Blue' }],
+      ['/api/notes/N4/answer', { answers: [{ choices: ['Flux'] }] }],
       ['/api/checkout/commit', {}],
       ['/api/checkout/stash', {}],
     ]);
