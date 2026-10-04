@@ -20,7 +20,8 @@ export function secretsBase(env: NodeJS.ProcessEnv = process.env, platform = pro
   return join(homedir(), '.muster');
 }
 
-function repoKey(repoRoot: string, platform = process.platform): string {
+/** Short stable id of a repo root (also the phone gateway's project id). */
+export function repoKey(repoRoot: string, platform = process.platform): string {
   let p = resolve(repoRoot).replace(/\\/g, '/').replace(/\/+$/, '');
   if (platform === 'win32') p = p.toLowerCase();
   return createHash('sha256').update(p).digest('hex').slice(0, 16);
