@@ -1,6 +1,14 @@
 package com.obiwayne.muster.ui
 
+import android.app.Activity
 import android.app.TimePickerDialog
+import android.content.ActivityNotFoundException
+import android.content.Intent
+import android.media.RingtoneManager
+import android.net.Uri
+import android.provider.Settings
+import androidx.activity.compose.rememberLauncherForActivityResult
+import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
@@ -19,6 +27,7 @@ import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.ExperimentalMaterial3Api
+import androidx.compose.material3.Icon
 import androidx.compose.material3.TextButton
 import androidx.compose.material3.pulltorefresh.PullToRefreshBox
 import androidx.compose.runtime.Composable
@@ -26,6 +35,7 @@ import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
+import androidx.compose.runtime.produceState
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.setValue
@@ -37,6 +47,7 @@ import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.em
+import androidx.core.content.IntentCompat
 import com.obiwayne.muster.BuildConfig
 import com.obiwayne.muster.MusterApp
 import com.obiwayne.muster.data.Ago
@@ -44,7 +55,12 @@ import com.obiwayne.muster.data.CrewAgent
 import com.obiwayne.muster.data.CrewResponse
 import com.obiwayne.muster.data.Prefs
 import com.obiwayne.muster.data.QuietHours
+import com.obiwayne.muster.notify.AlertPrefs
+import com.obiwayne.muster.notify.AlertSound
+import com.obiwayne.muster.notify.Notifier
+import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.launch
+import kotlinx.coroutines.withContext
 
 // ---------------------------------------------------------------- M07 crew
 
@@ -245,6 +261,8 @@ fun SettingsScreen(onUnlinked: () -> Unit) {
             ToggleRow("Agent stuck", n.stuck) { save(p.copy(notify = n.copy(stuck = it))) }
         }
 
+        AlertSoundGroup()
+
         Group("Quiet hours") {
             Row(Modifier.fillMaxWidth().height(52.dp).padding(horizontal = 16.dp), verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(12.dp)) {
                 Column(Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(1.dp)) {
@@ -305,6 +323,70 @@ fun SettingsScreen(onUnlinked: () -> Unit) {
             },
             dismissButton = { TextButton(onClick = { confirmUnlink = false }) { Txt("Cancel", ts(14, 20, FontWeight.Medium)) } },
         )
+    }
+}
+
+/** Phone-local alert sound (not gateway prefs). Changing it rebuilds the alert channels; see [AlertSound]. */
+@Composable
+private fun AlertSoundGroup() {
+    val ctx = LocalContext.current
+    val snack = LocalSnack.current
+    val scope = rememberCoroutineScope()
+    val s by AlertSound.prefs.collectAsState()
+    LaunchedEffect(Unit) { withContext(Dispatchers.IO) { AlertSound.load(ctx) } }
+    val title by produceState("…", s.uri) { value = withContext(Dispatchers.IO) { AlertSound.title(ctx, s) } }
+    fun update(n: AlertPrefs) = scope.launch { withContext(Dispatchers.IO) { AlertSound.update(ctx.applicationContext, n) } }
+    val picker = rememberLauncherForActivityResult(ActivityResultContracts.StartActivityForResult()) { r ->
+        val data = r.data
+        if (r.resultCode == Activity.RESULT_OK && data != null && data.hasExtra(RingtoneManager.EXTRA_RINGTONE_PICKED_URI)) {
+            val picked = IntentCompat.getParcelableExtra(data, RingtoneManager.EXTRA_RINGTONE_PICKED_URI, Uri::class.java)
+            if (picked != null) update(s.copy(uri = AlertSound.normalize(picked)))
+        }
+    }
+
+    Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
+        Group("Alert sound") {
+            ToggleRow("Play a sound", s.play) { update(s.copy(play = it)) }
+            Divider()
+            Row(
+                Modifier.fillMaxWidth().height(52.dp).dim(!s.play)
+                    .clickable(enabled = s.play) {
+                        val i = Intent(RingtoneManager.ACTION_RINGTONE_PICKER)
+                            .putExtra(RingtoneManager.EXTRA_RINGTONE_TYPE, RingtoneManager.TYPE_NOTIFICATION)
+                            .putExtra(RingtoneManager.EXTRA_RINGTONE_TITLE, "Alert sound")
+                            .putExtra(RingtoneManager.EXTRA_RINGTONE_SHOW_DEFAULT, true)
+                            .putExtra(RingtoneManager.EXTRA_RINGTONE_SHOW_SILENT, false)
+                            .putExtra(RingtoneManager.EXTRA_RINGTONE_DEFAULT_URI, Settings.System.DEFAULT_NOTIFICATION_URI)
+                            .putExtra(RingtoneManager.EXTRA_RINGTONE_EXISTING_URI, s.uri ?: Settings.System.DEFAULT_NOTIFICATION_URI)
+                        try {
+                            picker.launch(i)
+                        } catch (_: ActivityNotFoundException) {
+                            snack("This phone has no sound picker")
+                        }
+                    }
+                    .padding(horizontal = 16.dp),
+                verticalAlignment = Alignment.CenterVertically,
+                horizontalArrangement = Arrangement.spacedBy(12.dp),
+            ) {
+                Txt("Sound", ts(15, 20), Modifier.weight(1f))
+                Txt(title, ts(14, 20, color = C.muted).copy(textAlign = TextAlign.End), Modifier.widthIn(max = 190.dp), maxLines = 1)
+                Icon(Ic.chevronRight, null, tint = C.faint, modifier = Modifier.size(16.dp))
+            }
+            Divider()
+            ToggleRow("Vibrate", s.vibrate) { update(s.copy(vibrate = it)) }
+            Divider()
+            Row(
+                Modifier.fillMaxWidth().padding(horizontal = 16.dp, vertical = 10.dp),
+                verticalAlignment = Alignment.CenterVertically,
+                horizontalArrangement = Arrangement.spacedBy(12.dp),
+            ) {
+                Txt("Hear a sample alert", ts(15, 20, color = C.muted), Modifier.weight(1f))
+                OutlineButton("Test", Modifier.width(72.dp)) {
+                    if (!Notifier.testAlert(ctx)) snack("Notifications are off for Muster")
+                }
+            }
+        }
+        Txt("Applies to every Muster alert. Quiet hours still apply.", ts(12, 16, color = C.faint), Modifier.padding(horizontal = 4.dp))
     }
 }
 
