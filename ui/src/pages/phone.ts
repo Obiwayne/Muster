@@ -6,9 +6,10 @@ import { api, ApiError } from '../api';
 import { errToast } from '../actions';
 import {
   SEND_ROWS, deviceLine, expiryLine, manualHost, msLeft, networkRows, sendTarget, withNotify,
-  type PhoneNetworkMode, type PhonePairCode, type PhoneSendPrefs, type PhoneStatus, shortFingerprint } from '../phonemodel';
+  type PhoneNetworkMode, type PhonePairCode, type PhoneSendPrefs, type PhoneStatus, maskAddress, shortFingerprint, shownDetail } from '../phonemodel';
 
 const STATUS_POLL_MS = 4000;
+const SHOW_ADDRESSES_KEY = 'muster.phone.showAddresses';
 
 /**
  * Parses the gateway's QR code SVG as XML and returns a clean <svg> element: no scripts, no foreign content,
@@ -34,6 +35,20 @@ export interface PhoneSection { el: HTMLElement; show(): void; hide(): void }
 
 export function createPhoneSection(): PhoneSection {
   let status: PhoneStatus | null = null;
+  // The PC's addresses stay hidden (e.g. on screen shares) until you press an eye; remembered in this browser.
+  let showAddresses = (() => { try { return localStorage.getItem(SHOW_ADDRESSES_KEY) === '1'; } catch { return false; } })();
+  // A span, not a button: it also sits inside the network option, which is a button itself.
+  const eyeBtn = () => h('span.icon-btn.ph-eye', {
+    role: 'button', tabindex: '0',
+    onkeydown: (e: KeyboardEvent) => { if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); e.stopPropagation(); (e.currentTarget as HTMLElement).click(); } },
+    title: showAddresses ? 'Hide addresses' : 'Show addresses', 'aria-pressed': String(showAddresses),
+    onclick: (e: Event) => {
+      e.stopPropagation();
+      showAddresses = !showAddresses;
+      try { localStorage.setItem(SHOW_ADDRESSES_KEY, showAddresses ? '1' : '0'); } catch { /* ignore */ }
+      render();
+    },
+  }, icon(showAddresses ? 'eye-off' : 'eye', 13));
   let statusErr = '';
   let code: PhonePairCode | null = null;
   let codeErr = '';
@@ -178,7 +193,7 @@ export function createPhoneSection(): PhoneSection {
             h('div.ph-hint', null, "Can't scan? Type this code instead"),
             h('div.ph-code-row', null,
               h('div.ph-code', null, code?.display ?? '———'),
-              host ? h('div.ph-host', { title: 'Type this address on the phone too' }, h('span.ph-host-l', null, 'PC address'), host,
+              host ? h('div.ph-host', { title: 'Type this address on the phone too' }, h('span.ph-host-l', null, 'PC address'), h('span.ph-host-v', null, showAddresses ? host : maskAddress(host), eyeBtn()),
                 shortFingerprint(status?.fingerprint) ? h('span.ph-host-l', { title: 'The phone shows these characters when you type the code: they must match' }, `check ${shortFingerprint(status?.fingerprint)}`) : null) : null),
             h('div.ph-exp-row', null, expEl, newBtn)),
           h('div.ph-steps', null, steps.map((t, i) => h('div.ph-step', null, h('span.ph-num', null, String(i + 1)), h('span', null, t)))))));
@@ -218,7 +233,8 @@ export function createPhoneSection(): PhoneSection {
           h('span.ph-net-s', null, r.sub)),
         h('span.ph-net-d', null,
           r.dot ? h('span.ph-ndot', { class: r.dot }) : null,
-          h('span.ph-net-dt', { class: r.link && 'faint' }, r.detail),
+          h('span.ph-net-dt', { class: r.link && 'faint' }, shownDetail(r, showAddresses)),
+          r.secret ? eyeBtn() : null,
           r.link ? h('a.ph-net-link', { href: r.link.href, target: '_blank', rel: 'noopener noreferrer', onclick: (e: Event) => e.stopPropagation() }, r.link.text) : null))),
       status ? null : h('div.ph-net-none', null, statusErr ? 'Unknown until the phone service runs.' : 'Loading…'),
       h('div.ph-foot.ph-shield', null, icon('shield', 13), h('span', null, 'Muster only listens to linked phones. Each phone has its own key you can revoke.')));

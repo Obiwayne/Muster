@@ -1,7 +1,7 @@
 import { describe, expect, it } from 'vitest';
 import {
   ago, dayTime, deviceLine, expiryLine, formatCountdown, manualHost, msLeft, networkRows, parseSettingsTab, sendTarget, shortDns, withNotify,
-  type PhoneStatus, shortFingerprint } from './phonemodel';
+  type PhoneStatus, shortFingerprint, maskAddress, shownDetail } from './phonemodel';
 
 const status = (over: Partial<PhoneStatus['network']> = {}, devices: PhoneStatus['devices'] = []): PhoneStatus => ({
   pcName: 'WAYNE-PC', port: 47910, fingerprint: 'ab'.repeat(32),
@@ -100,5 +100,18 @@ describe('shortFingerprint', () => {
     expect(shortFingerprint('3f9a21c0deadbeef')).toBe('3F9A 21C0');
     expect(shortFingerprint('3F:9A:21:C0:00')).toBe('3F9A 21C0');
     expect(shortFingerprint(undefined)).toBe('');
+  });
+});
+
+describe('hiding addresses', () => {
+  it('masks letters and digits but keeps the shape', () => {
+    expect(maskAddress('192.168.0.60')).toBe('•••.•••.•.••');
+    expect(maskAddress('wayne-pc')).toBe('•••••-••');
+  });
+  it('hides only the address part of a detail, unless shown', () => {
+    expect(shownDetail({ detail: '192.168.0.60:47910', secret: '192.168.0.60' }, false)).toBe('•••.•••.•.••:47910');
+    expect(shownDetail({ detail: '192.168.0.60:47910', secret: '192.168.0.60' }, true)).toBe('192.168.0.60:47910');
+    expect(shownDetail({ detail: 'wayne-pc · connected', secret: 'wayne-pc' }, false)).toBe('•••••-•• · connected');
+    expect(shownDetail({ detail: 'not installed' }, false)).toBe('not installed');
   });
 });
