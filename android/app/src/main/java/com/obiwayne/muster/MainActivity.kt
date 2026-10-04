@@ -255,7 +255,13 @@ private fun Home(onOpenTask: (String, String) -> Unit, onOpenNote: (String, Stri
         Box(Modifier.weight(1f).statusBarsPadding()) {
             when (tab) {
                 Tab.NEEDS -> NeedsScreen(
-                    onOpenTask = { item -> onOpenTask(item.projectId, item.taskId!!) },
+                    // An approval with no task (e.g. the roadmap) opens as a note instead.
+                    onOpenTask = { item ->
+                        when {
+                            item.taskId != null -> onOpenTask(item.projectId, item.taskId)
+                            item.noteId != null -> onOpenNote(item.projectId, item.noteId)
+                        }
+                    },
                     onOpenNote = { item -> if (item.noteId != null) onOpenNote(item.projectId, item.noteId) },
                 )
                 Tab.CREW -> CrewScreen()
