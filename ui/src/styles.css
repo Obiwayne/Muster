@@ -399,6 +399,26 @@ textarea.field { height: auto; min-height: 40px; padding: 10px 14px; resize: ver
 .banner.gh-offer { margin: 12px 28px 0; flex-shrink: 0; color: var(--color-text); }
 .banner.gh-offer[hidden] { display: none; }
 .banner.gh-offer svg { flex-shrink: 0; }
+/* the Captain's question menu (docs/ASK.md) */
+.ask { display: flex; flex-direction: column; gap: 22px; padding: 18px; border-radius: var(--radius-md); border: 1px solid color-mix(in oklab, var(--color-captain) 35%, var(--color-line)); background: var(--color-surface); }
+.ask.done { border-color: var(--color-line); gap: 16px; }
+.ask-q { display: flex; flex-direction: column; gap: 8px; }
+.ask-qhead { display: flex; align-items: center; gap: 8px; font-size: 12px; }
+.ask-qhead:empty { display: none; }
+.ask-chip { font-size: 11px; font-weight: 600; border-radius: 4px; padding: 3px 7px; color: var(--color-captain); background: color-mix(in oklab, var(--color-captain) 14%, transparent); }
+.ask-question { font-size: 15px; font-weight: 550; line-height: 22px; }
+.ask-opts { display: flex; flex-direction: column; gap: 6px; }
+.ask-opt { display: flex; align-items: flex-start; gap: 10px; padding: 10px 12px; border-radius: var(--radius-sm); border: 1px solid var(--color-line); background: var(--color-bg); cursor: pointer; }
+.ask-opt:hover { border-color: color-mix(in oklab, var(--color-line) 60%, var(--color-muted)); }
+.ask-opt:has(input:checked) { border-color: var(--color-captain); background: color-mix(in oklab, var(--color-captain) 7%, var(--color-bg)); }
+.ask-opt input { margin: 3px 0 0; accent-color: var(--color-captain); flex-shrink: 0; }
+.ask-otext { display: flex; flex-direction: column; gap: 2px; min-width: 0; }
+.ask-olabel { display: flex; align-items: center; gap: 8px; font-size: 14px; line-height: 20px; overflow-wrap: anywhere; }
+.ask-odesc { font-size: 12px; line-height: 18px; color: var(--color-muted); }
+.ask-other { height: 36px; }
+.ask-foot { display: flex; align-items: center; justify-content: space-between; gap: 12px; font-size: 12px; }
+.ask-answer { display: flex; align-items: center; gap: 8px; font-size: 14px; line-height: 20px; white-space: pre-wrap; }
+.ask-answer svg { color: var(--color-success); flex-shrink: 0; }
 .composer { display: flex; align-items: center; gap: 10px; padding: 16px 28px; border-top: 1px solid var(--color-line); flex-shrink: 0; }
 
 /* ---------- crew chat ---------- */
