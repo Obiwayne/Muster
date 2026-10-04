@@ -182,13 +182,14 @@ function launchLine(r: Roadmap, days: number | undefined): string {
 }
 
 /** `{ roadmap, progress }` from GET /api/roadmap as a compact outline: header, one line per stage, the current stage's goals and open exit criteria. */
-export function formatRoadmap(data: { roadmap: Roadmap | null; progress: RoadmapProgress | null } | null | undefined): string {
+export function formatRoadmap(data: { roadmap: Roadmap | null; progress: RoadmapProgress | null } | null | undefined, now: number = Date.now()): string {
   const r = data?.roadmap;
   if (!r) return NO_ROADMAP;
   const p = data?.progress ?? null;
   const status = r.status === 'draft' ? `DRAFT rev ${r.revision}, waiting for the user's approval${r.noteId ? ` (${r.noteId})` : ''}` : `approved rev ${r.revision}`;
   const overall = p ? `${p.overall.percent}% (${p.overall.done}/${p.overall.total} tasks) · ${HEALTH[p.health]}` : '';
   const lines = [[`Roadmap: ${clip(r.title, 80)}`, status, overall, launchLine(r, p?.daysToLaunch)].filter(Boolean).join(' · ')];
+  if (r.statusLine) lines.push(`Last status (${relTime(r.statusLine.at, now)}): ${clip(r.statusLine.text, 400)}`);
   if (p?.overall.unlinked) lines.push(`${p.overall.unlinked} task${p.overall.unlinked === 1 ? '' : 's'} not on any goal: put them on the goal they deliver with link_tasks.`);
   const current = p?.currentStageId;
   const goalById = new Map(r.goals.map((g) => [g.id, g]));

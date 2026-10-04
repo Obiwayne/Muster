@@ -178,7 +178,7 @@ describe('muster-mcp roadmap tools', () => {
   it('are captain only', async () => {
     const { client } = await connect('crew', () => null);
     const names = (await client.listTools()).tools.map((t) => t.name);
-    for (const n of ['roadmap', 'set_roadmap', 'update_stage', 'check_criterion', 'complete_stage', 'add_goal', 'update_goal', 'link_tasks']) expect(names).not.toContain(n);
+    for (const n of ['roadmap', 'set_roadmap', 'update_stage', 'check_criterion', 'complete_stage', 'add_goal', 'update_goal', 'link_tasks', 'roadmap_status']) expect(names).not.toContain(n);
   });
   it('roadmap reads GET /api/roadmap and handles no roadmap', async () => {
     let v: unknown = { roadmap: null, progress: null };
@@ -253,6 +253,18 @@ describe('muster-mcp roadmap tools', () => {
     expect(calls[0]).toEqual({ path: '/api/roadmap/goals/G3/tasks', method: 'POST', body: { actor: 'captain', taskIds: ['T21', 'T26'], unlink: false } });
     expect(r.text).toMatch(/^Put T21, T26 on G3 Reactions/);
     expect((await call('link_tasks', { goal: 'G3', tasks: ['T21'], unlink: true })).text).toMatch(/^Took T21, T26 off G3/);
+  });
+  it('roadmap_status POSTs the text and the upper-cased task for the user', async () => {
+    const { client, call, calls } = await connect('captain', () => view());
+    const desc = (await client.listTools()).tools.find((t) => t.name === 'roadmap_status')!.description!;
+    expect(desc).toMatch(/one or two plain sentences/);
+    expect(desc).toMatch(/after every merged task and every roadmap change/);
+    const r = await call('roadmap_status', { text: 'M2 60%: G3 done, G4 next. Launch holds.', task: 't21' });
+    expect(calls[0]).toEqual({ path: '/api/roadmap/status', method: 'POST', body: { actor: 'captain', text: 'M2 60%: G3 done, G4 next. Launch holds.', taskId: 'T21' } });
+    expect(r.text).toBe(`Posted the roadmap status (${PROGRESS.overall.percent}% overall).`);
+    await call('roadmap_status', { text: 'x' });
+    expect(calls[1].body).toEqual({ actor: 'captain', text: 'x' });
+    expect((await call('roadmap_status', { text: 'x'.repeat(401) })).isError).toBe(true);
   });
   it('update_stage and update_goal PATCH only what was given', async () => {
     const { call, calls } = await connect('captain', () => view());

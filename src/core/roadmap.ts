@@ -304,6 +304,7 @@ export function setRoadmap(state: MusterState, input: RoadmapInput, actor: strin
     goals,
     createdBy: prev?.createdBy ?? actor,
     updatedAt: at,
+    ...(prev?.statusLine ? { statusLine: prev.statusLine } : {}),
   };
   state.roadmap = roadmap;
   addFeed(state, { kind: 'event', from: actor, text: `${prev ? 'updated' : 'drafted'} the roadmap: ${title} (${stages.length} stages, ${goals.length} goals)` });
@@ -618,11 +619,48 @@ export function unlinkedTasks(state: MusterState): string[] {
   return state.tasks.filter((t) => !t.goalId && t.status !== 'cancelled').map((t) => t.id);
 }
 
-/** Called when a task merges: if it has no goal on an approved roadmap, ask the Captain to place it. */
-export function remindUnlinked(state: MusterState, taskId: string): void {
+const POST_STATUS = 'then post where we are with roadmap_status.';
+
+/**
+ * Called when a task merges on an approved roadmap: one inbox item asking the Captain to update the roadmap and post
+ * where we are (roadmap_status). With a goal it counts the goal's merged tasks; without one it asks to place the task.
+ */
+export function remindMerged(state: MusterState, taskId: string): void {
   const t = state.tasks.find((x) => x.id === taskId);
-  if (!t || t.goalId || state.roadmap?.status !== 'approved') return;
-  tellCaptain(state, SYSTEM, `${t.id} ${t.title} merged without a roadmap goal. Put it on the goal it delivers (link_tasks), and update the roadmap if it changes the plan.`);
+  if (!t || state.roadmap?.status !== 'approved') return;
+  const goal = t.goalId ? state.roadmap.goals.find((g) => g.id === t.goalId) : undefined;
+  if (!goal) {
+    tellCaptain(state, SYSTEM, `${t.id} ${t.title} merged without a roadmap goal. Put it on the goal it delivers (link_tasks), and update the roadmap if it changes the plan, ${POST_STATUS}`);
+    return;
+  }
+  const tasks = state.tasks.filter((x) => x.goalId === goal.id && x.status !== 'cancelled');
+  const merged = tasks.filter((x) => x.status === 'merged').length;
+  tellCaptain(state, SYSTEM, `${t.id} ${t.title} merged. ${goal.id} ${goal.title}: ${merged}/${tasks.length} tasks merged. Update the roadmap now (tick exit criteria it meets, move slipped dates), ${POST_STATUS}`);
+}
+
+export const MAX_STATUS = 400;
+
+/**
+ * POST /api/roadmap/status: the Captain's one or two sentences on where the project stands. Captain only; replaces
+ * the last one and shows in crew chat, on the Roadmap page and on the phone.
+ */
+export function setRoadmapStatus(state: MusterState, actor: string, text: unknown, taskId?: unknown): Roadmap {
+  if (!isCaptain(state, actor)) throw forbidden('Only the Captain posts the roadmap status');
+  const r = requireRoadmap(state);
+  if (typeof text !== 'string' || !text.trim()) throw badRequest('text is empty');
+  const t = text.trim();
+  if (t.length > MAX_STATUS) throw badRequest(`text is longer than ${MAX_STATUS} characters`);
+  let task: string | undefined;
+  if (taskId !== undefined && taskId !== null && taskId !== '') {
+    if (typeof taskId !== 'string') throw badRequest('taskId must be a task id like "T3"');
+    task = taskId.trim().toUpperCase();
+    if (!state.tasks.some((x) => x.id === task)) throw notFound(`No task "${taskId}"`);
+  }
+  const at = nowIso();
+  r.statusLine = { text: t, at, by: actor, ...(task ? { taskId: task } : {}) };
+  r.updatedAt = at;
+  addFeed(state, { kind: 'event', from: actor, text: `Roadmap: ${t}`, ...(task ? { taskId: task } : {}) });
+  return r;
 }
 
 /** Feed event, next planned goal of the stage → active, and the Captain hears what to do next. */

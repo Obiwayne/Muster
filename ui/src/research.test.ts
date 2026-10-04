@@ -140,6 +140,7 @@ describe('"Captain updated it" line', () => {
       f('F2', 'captain', 'captain ticked M3 exit criterion 1: share by link', '2026-10-02T11:48:00Z'),
       f('F3', 'you', 'unticked M3 exit criterion 1', '2026-10-02T11:59:00Z'),
       f('F4', 'captain', 'M3 looks good', '2026-10-02T11:59:00Z', 'message'),
+      f('F5', 'captain', 'Roadmap: M3 is 40%, G8 next.', '2026-10-02T11:58:00Z'), // roadmap_status: shown on its own
     ];
     expect(updatedLine(feed, roadmap, new Set(['captain']), now)).toBe('Captain updated it 12 min ago (ticked an M3 criterion)');
   });

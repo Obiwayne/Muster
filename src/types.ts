@@ -327,6 +327,15 @@ export interface Roadmap {
   goals: RoadmapGoal[];
   createdBy: string;
   updatedAt: string;
+  statusLine?: RoadmapStatusLine; // the Captain's latest "where we are" line (roadmap_status), shown on the Roadmap page and phone
+}
+
+/** One or two plain sentences from the Captain on where the project stands; replaced on every post. */
+export interface RoadmapStatusLine {
+  text: string;
+  at: string;
+  by: string;
+  taskId?: string; // the merged task that prompted it
 }
 
 export type RoadmapHealth = 'on_track' | 'at_risk' | 'late' | 'not_started' | 'done';

@@ -206,6 +206,7 @@ function seedRoadmap() {
     title: 'wall-education v1.0', summary: 'A shared class wall: teachers post, students react, everyone sees it live.',
     launchDate: dayStr(43), status: draft ? 'draft' : 'approved', revision: draft ? 0 : 1, ...(draft ? { noteId: 'N21' } : { approvedAt: iso(60 * 24 * 20) }),
     createdBy: 'captain', updatedAt: iso(30),
+    ...(draft ? {} : { statusLine: { text: `M3 Sharing & invites is 40%: G7 invite flow is in review, G8 share permissions starts next. Launch on ${dayStr(43)} still holds.`, at: iso(14), by: 'captain', taskId: 'T90' } }),
     stages: [
       stage('M1', 'Foundations', 'Repo, CI, design tokens and the app shell.', -24, -13, 'done', ['G1', 'G2'], [crit('CI runs on every push', true)], -13),
       stage('M2', 'Accounts & classes', 'Sign-in, roles and classes with join codes.', -17, -1, 'done', ['G3', 'G4', 'G5'], [crit('A teacher can create a class', true)], -1),
@@ -929,6 +930,16 @@ async function api(req, url) {
     need(i >= 0, 404, 'No such stage');
     r.stages[i].status = 'done'; r.stages[i].completedAt = new Date().toISOString();
     if (r.stages[i + 1]) r.stages[i + 1].status = 'active';
+    broadcast();
+    return roadmapOut();
+  }
+  if (m === 'POST' && p === '/api/roadmap/status') {
+    const b = await body(req);
+    const text = String(b.text ?? '').trim();
+    need(state.roadmap, 404, 'There is no roadmap yet');
+    need(text && text.length <= 400, 400, 'text must be 1..400 characters');
+    state.roadmap.statusLine = { text, at: new Date().toISOString(), by: 'captain', ...(b.taskId ? { taskId: String(b.taskId).toUpperCase() } : {}) };
+    addFeed('event', 'captain', undefined, `Roadmap: ${text}`);
     broadcast();
     return roadmapOut();
   }

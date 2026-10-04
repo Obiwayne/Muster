@@ -226,6 +226,7 @@ Progress (`computeProgress(state, today)`, pure, exported): task counts per goal
 | POST | /api/roadmap/stages/:id/complete | `{ actor, force? }` | Captain or you; 409 unless all criteria are done (force: you only) |
 | POST | /api/roadmap/goals | `{ actor, stageId, title, description, start?, due? }` | Captain or you; new goal at the end of the stage (counts as a plan change) |
 | PATCH | /api/roadmap/goals/:id | `{ actor, title?, description?, status?, start?, due? }` | Captain or you |
+| POST | /api/roadmap/status | `{ actor, text, taskId? }` | Captain only; text 1..400 chars; sets `roadmap.statusLine { text, at, by, taskId? }` and posts "Roadmap: <text>" to crew chat |
 
 `POST /api/tasks` and `post_task` take `goalId?` (404 for an unknown goal; a task posted to a `planned` goal activates it). `GET /api/state` carries `state.roadmap`; the dashboard computes nothing itself except via `GET /api/roadmap` (re-fetched on each state event).
 
@@ -237,6 +238,9 @@ Progress (`computeProgress(state, today)`, pure, exported): task counts per goal
 
 ### Roadmap upkeep (2 Oct, later)
 Progress counts linked tasks; a stage with none counts ticked exit criteria, then its goals (`basis` on stage progress); a done goal is 100%; `overall.percent` = stage percents weighted by live goal count; `overall.unlinked` = live tasks with no goal. `POST /api/roadmap/goals/:id/tasks { actor, taskIds, unlink? }` (Captain or you) puts existing tasks on a goal; a goal whose linked tasks are all merged finishes. The Captain gets an inbox item on approval when unlinked tasks exist and whenever a task merges without a goal; MCP `link_tasks(goal, tasks, unlink?)`. The Captain prompt says it owns the roadmap and keeps it current without being asked.
+
+### Roadmap status after every merge (4 Oct)
+Every merge on an approved roadmap sends the Captain one inbox item: with a goal, "T7 <title> merged. G3 <title>: 2/4 tasks merged. Update the roadmap now (tick exit criteria it meets, move slipped dates), then post where we are with roadmap_status."; without one, the unlinked reminder with the same ask. MCP `roadmap_status(text, task?)` (Captain) posts one or two sentences on where the project stands to `POST /api/roadmap/status`; the latest one shows under the Roadmap page header, in `roadmap()` and on the phone's Crew tab. The Captain prompt makes it a rule after every merged task.
 
 ### Research (src/core/research.ts — designed and approved 2 Oct)
 Design: Vellum "Muster", artboards "Roadmap" (Research button with new-idea count, "Captain updated it … ago" line), "Roadmap — new research" (modal), "Roadmap — research ideas". Types: `ResearchState`, `ResearchRun`, `ResearchIdea` in src/types.ts; `state.research`; ids `nextIds.run` ("RR1"…) and `nextIds.idea` ("R1"…).

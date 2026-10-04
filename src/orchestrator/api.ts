@@ -667,6 +667,10 @@ ${pushed ? `Pushed ${base} to origin.` : `Push to origin failed: ${(r.stderr || 
     const r = mutate(() => roadmap.linkTasks(state(), params.id, body.taskIds, str(body.actor, 'actor'), body.unlink === true));
     return { ...roadmapReply(), goal: r.goal, linked: r.linked };
   });
+  route('POST', '/api/roadmap/status', ({ body }) => {
+    mutate(() => roadmap.setRoadmapStatus(state(), str(body.actor, 'actor'), body.text, body.taskId));
+    return roadmapReply();
+  });
 
   // ------------------------------------------------------------------ research (core/research.ts)
   route('GET', '/api/research', () => research.getResearch(state()));

@@ -122,6 +122,11 @@ describe('roadmap', () => {
     expect(formatRoadmap({ roadmap: r, progress: { ...PROGRESS, daysToLaunch: -2 } })).toContain('    All exit criteria ticked: complete_stage M2.');
     expect(formatRoadmap({ roadmap: r, progress: { ...PROGRESS, daysToLaunch: -2 } })).toContain('(2 days past)');
   });
+  it("shows the Captain's last status under the header", () => {
+    const r = structuredClone(ROADMAP);
+    r.statusLine = { text: 'M2 60%, G4 next.', at: '2026-10-04T10:00:00.000Z', by: 'captain' };
+    expect(formatRoadmap({ roadmap: r, progress: PROGRESS }, Date.parse('2026-10-04T12:00:00.000Z')).split('\n')[1]).toBe('Last status (2h ago): M2 60%, G4 next.');
+  });
 });
 
 describe('research ideas', () => {

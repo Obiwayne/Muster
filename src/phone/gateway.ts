@@ -13,6 +13,7 @@ import { Readable } from 'node:stream';
 import QRCode from 'qrcode';
 import { WebSocketServer, type WebSocket } from 'ws';
 import type { Agent, MusterConfig, MusterState, Note, Task } from '../types.js';
+import { computeProgress, localDate } from '../core/roadmap.js';
 import { repoKey, sameToken } from '../core/tokens.js';
 import { clonePrefs, mergePrefs, needsFromState, shouldNotify, type NeedItem, type Prefs } from './needs.js';
 import { hostsFor, lanHosts as realLanHosts, tailscaleInfo as realTailscale, type TailscaleInfo } from './net.js';
@@ -399,6 +400,23 @@ export async function startGateway(opts: GatewayOptions = {}): Promise<Gateway> 
   });
   phone('POST', '/api/projects/:pid/checkout/commit', async ({ params }) => orchestratorJson(await projectById(params.pid), 'POST', '/api/checkout/commit', {}));
   phone('POST', '/api/projects/:pid/checkout/stash', async ({ params }) => orchestratorJson(await projectById(params.pid), 'POST', '/api/checkout/stash', {}));
+  /** The Crew tab's "Where we are" card: overall %, the current goal and the Captain's last roadmap_status. */
+  const whereWeAre = (s: MusterState) => {
+    const r = s.roadmap;
+    if (!r) return null;
+    let pg: ReturnType<typeof computeProgress> = null;
+    try {
+      pg = computeProgress(s, localDate(now()));
+    } catch {
+      /* a bad date in the state: show no % rather than fail the tab */
+    }
+    const goal = pg?.currentGoalId ? r.goals.find((g) => g.id === pg.currentGoalId) : undefined;
+    return {
+      pct: pg ? pg.overall.percent : null,
+      current: goal ? { id: goal.id, title: goal.title } : null,
+      status: r.statusLine ? { text: r.statusLine.text, at: r.statusLine.at } : null,
+    };
+  };
   phone('GET', '/api/projects/:pid/crew', async ({ params }) => {
     const p = await projectById(params.pid);
     const { state: s } = await stateOf(p);
@@ -408,6 +426,7 @@ export async function startGateway(opts: GatewayOptions = {}): Promise<Gateway> 
       agents: s.agents.map((a: Agent) => ({ id: a.id, role: a.role, status: a.status, taskId: a.taskId ?? null, branch: a.branch, detail: title(a.taskId) })),
       usage: { fiveHour: win(s.usage.fiveHour), weekly: win(s.usage.sevenDay) },
       paused: s.usage.paused,
+      roadmap: whereWeAre(s),
     };
   });
   phone('GET', '/api/prefs', ({ device }) => device!.prefs);
