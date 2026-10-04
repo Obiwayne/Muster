@@ -1,4 +1,4 @@
-import { mkdtempSync, readFileSync, rmSync } from 'node:fs';
+import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
@@ -409,8 +409,9 @@ describe('read-only browsing', () => {
   });
 
   it('reads visible-window sites in a headed profile window, others headless', async () => {
-    cfg = { ...cfg, visibleSites: ['reddit.com'] };
     const b = make();
+    b.setVisibleSite('reddit.com', true); // the shared list, not this project's config
+    expect(cfg.visibleSites).toEqual([]);
     expect((await b.status()).sites.find((x) => x.site === 'reddit')?.visible).toBe(true);
     expect((await b.status()).sites.find((x) => x.site === 'linkedin')?.visible).toBeUndefined();
     const before = world.launches.length;
@@ -424,6 +425,42 @@ describe('read-only browsing', () => {
     expect(world.contexts[world.contexts.length - 2].closed).toBe(true); // the window closed before the headless relaunch
     await b.read('https://www.reddit.com/', { mode: 'public' });
     expect(world.launches.at(-1)!.opts.headless).toBe(true); // public reading never uses the profile window
+  });
+
+  it('visibleFor follows the shared list as it changes (another project turning a site on counts at once)', async () => {
+    const a = make();
+    const other = make(); // another project's server on the same PC
+    other.setVisibleSite('padlet.com', true);
+    await a.read('https://padlet.com/', { mode: 'profile' });
+    expect(world.launches.at(-1)!.opts.headless).toBe(false);
+    other.setVisibleSite('padlet.com', false);
+    await a.read('https://padlet.com/2', { mode: 'profile' });
+    expect(world.launches.at(-1)!.opts.headless).toBe(true);
+    // a project's config list is not read for browsing any more (only migrated at start)
+    cfg = { ...cfg, visibleSites: ['padlet.com'] };
+    await a.read('https://padlet.com/3', { mode: 'profile' });
+    expect(world.launches.at(-1)!.opts.headless).toBe(true);
+  });
+
+  it('block records say whether the read was in the visible window (old records count as hidden)', async () => {
+    world.sites['https://padlet.com/'] = { status: 403, title: 'Just a moment...', text: 'Checking if the site connection is secure' };
+    world.sites['https://www.reddit.com/r/x/'] = { status: 429, title: 'Too Many Requests', text: 'whoa there, pardner!' };
+    const b = make();
+    b.setVisibleSite('reddit.com', true);
+    await b.read('https://padlet.com/', { mode: 'profile' }); // hidden
+    await b.read('https://www.reddit.com/r/x/', { mode: 'profile' }); // visible window
+    await b.read('https://padlet.com/', { mode: 'public' }); // public reading is never the window
+    const saved = JSON.parse(readFileSync(join(dir, 'research-browser', 'status.json'), 'utf8'));
+    expect(saved.blocked['padlet.com'].visible).toBe(false);
+    expect(saved.blocked['reddit.com'].visible).toBe(true);
+    const st = await b.status();
+    expect(st.sites.find((s) => s.site === 'reddit')?.blocked).toMatchObject({ reason: 'rate limited (429)', visible: true });
+    expect(st.blocked?.find((x) => x.domain === 'padlet.com')?.visible).toBe(false);
+    // a record saved before the field existed
+    writeFileSync(join(dir, 'research-browser', 'status.json'), JSON.stringify({ sites: {}, opera: {}, blocked: { 'linkedin.com': { reason: 'blocked (403)', at: '2026-10-01T00:00:00.000Z' } } }));
+    const old = await make().status();
+    expect(old.sites.find((s) => s.site === 'linkedin')?.blocked).toEqual({ reason: 'blocked (403)', at: '2026-10-01T00:00:00.000Z', visible: false });
+    expect(old.blocked).toEqual([{ domain: 'linkedin.com', reason: 'blocked (403)', at: '2026-10-01T00:00:00.000Z', visible: false }]);
   });
 
   it('closes the browsing context after the idle time', async () => {
@@ -442,6 +479,56 @@ describe('read-only browsing', () => {
       expect(names.filter((n) => n.toLowerCase() === banned.toLowerCase())).toEqual([]);
     const src = readFileSync(new URL('./researchbrowser.ts', import.meta.url), 'utf8');
     expect(src).not.toMatch(/click|fill|type\(|press|check\(|selectOption|setInputFiles/);
+  });
+});
+
+describe('visible-window sites (shared by every project on this PC)', () => {
+  const file = () => join(dir, 'research-browser', 'visible.json');
+
+  it('sets and unsets one domain at a time, kept in visible.json and seen by a new instance', async () => {
+    const b = make();
+    expect(b.visibleSites()).toEqual([]);
+    expect(b.setVisibleSite('https://www.Reddit.com/r/x', true)).toEqual(['reddit.com']);
+    expect(b.setVisibleSite('reddit.com', true)).toEqual(['reddit.com']); // no duplicates
+    expect(b.setVisibleSite('padlet.com', true)).toEqual(['reddit.com', 'padlet.com']);
+    expect(JSON.parse(readFileSync(file(), 'utf8')).sites).toEqual(['reddit.com', 'padlet.com']);
+    const again = make();
+    expect(again.visibleSites()).toEqual(['reddit.com', 'padlet.com']);
+    expect(again.setVisibleSite('reddit.com', false)).toEqual(['padlet.com']);
+    expect(b.visibleSites()).toEqual(['padlet.com']); // read fresh: the first instance sees the change
+    const st = await b.status();
+    expect(st.visibleSites).toEqual(['padlet.com']);
+    expect(st.sites.find((s) => s.site === 'reddit')?.visible).toBeUndefined();
+    expect(() => b.setVisibleSite('not a domain', true)).toThrow(/Not a domain/);
+    // status.json (written whole by each server) never carries the list
+    expect(existsSync(join(dir, 'research-browser', 'status.json')) ? JSON.parse(readFileSync(join(dir, 'research-browser', 'status.json'), 'utf8')).visibleSites : undefined).toBeUndefined();
+  });
+
+  it("migrates a project's config.visibleSites once: a union, never removing shared ones, config left alone", () => {
+    make().setVisibleSite('padlet.com', true); // already shared
+    cfg = { ...cfg, visibleSites: ['reddit.com'] }; // e.g. StarCut's .muster/config.json
+    const before = structuredClone(cfg);
+    const b = make();
+    expect(b.visibleSites()).toEqual(['padlet.com', 'reddit.com']);
+    expect(cfg).toEqual(before); // the project's config is untouched
+    // another project with no list (or a different one) never removes shared ones
+    cfg = { ...cfg, visibleSites: [] };
+    expect(make().visibleSites()).toEqual(['padlet.com', 'reddit.com']);
+    cfg = { ...cfg, visibleSites: ['x.com'] };
+    expect(make().visibleSites()).toEqual(['padlet.com', 'reddit.com', 'x.com']);
+    // turned off on this PC: a project whose config still lists it doesn't bring it back
+    b.setVisibleSite('reddit.com', false);
+    cfg = { ...cfg, visibleSites: ['reddit.com'] };
+    expect(make().visibleSites()).toEqual(['padlet.com', 'x.com']);
+    expect(JSON.parse(readFileSync(file(), 'utf8')).migrated).toEqual(['padlet.com', 'reddit.com', 'x.com']);
+  });
+
+  it('a bad visible.json reads as empty and a migration rewrites it', () => {
+    mkdirSync(join(dir, 'research-browser'), { recursive: true });
+    writeFileSync(file(), '{ not json');
+    expect(make().visibleSites()).toEqual([]);
+    cfg = { ...cfg, visibleSites: ['reddit.com'] };
+    expect(make().visibleSites()).toEqual(['reddit.com']);
   });
 });
 

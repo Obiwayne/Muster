@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import type { ResearchBrowserStatus } from '../../src/types';
-import { addAllowed, availabilityLine, blockedHint, honestLimits, normaliseDomain, operaSummary, setVisible, siteLine } from './browsermodel';
+import { addAllowed, availabilityLine, blockedHint, honestLimits, normaliseDomain, NOT_CHECKED_VISIBLE, operaSummary, siteLine } from './browsermodel';
 
 const NOW = Date.parse('2026-10-03T12:00:00Z');
 const minsAgo = (n: number) => new Date(NOW - n * 60_000).toISOString();
@@ -20,15 +20,28 @@ describe('browser settings model', () => {
     const at = minsAgo(30);
     expect(blockedHint({ label: 'Reddit' }, NOW)).toBeNull();
     const off = blockedHint({ label: 'Reddit', blocked: { reason: 'blocked (403)', at } }, NOW)!;
-    expect(off.tag).toBe('blocked');
+    expect(off).toMatchObject({ tone: 'blocked', tag: 'blocked' });
     expect(off.text).toBe('Reddit blocks headless reading (blocked (403), 30 min ago). Turn on the visible window for it, or scout relies on public reading.');
-    expect(blockedHint({ label: 'Reddit', visible: true, blocked: { reason: 'blocked (403)', at } }, NOW)!.text).toMatch(/next read uses the window/);
+    // a hidden read is recorded explicitly too
+    expect(blockedHint({ label: 'Reddit', blocked: { reason: 'blocked (403)', at, visible: false } }, NOW)!.tone).toBe('blocked');
   });
 
-  it('visible-window sites toggle without duplicates', () => {
-    expect(setVisible(['reddit.com'], 'reddit.com', true)).toEqual(['reddit.com']);
-    expect(setVisible(['reddit.com'], 'x.com', true)).toEqual(['reddit.com', 'x.com']);
-    expect(setVisible(['reddit.com', 'x.com'], 'reddit.com', false)).toEqual(['x.com']);
+  it('a hidden-read block with the visible window now on is not checked yet: muted, no BLOCKED badge', () => {
+    const at = minsAgo(30);
+    for (const blocked of [{ reason: 'blocked (403)', at }, { reason: 'blocked (403)', at, visible: false }]) {
+      // old records without `visible` count as hidden reads
+      expect(blockedHint({ label: 'Reddit', visible: true, blocked }, NOW)).toEqual({ tone: 'pending', tag: '', text: NOT_CHECKED_VISIBLE });
+    }
+    expect(NOT_CHECKED_VISIBLE).toBe('Not checked in a visible window yet. The next read uses the window.');
+  });
+
+  it('a block recorded in the visible window stays red: the site blocks even the window', () => {
+    const at = minsAgo(30);
+    const on = blockedHint({ label: 'Reddit', visible: true, blocked: { reason: 'bot check (Cloudflare)', at, visible: true } }, NOW)!;
+    expect(on).toMatchObject({ tone: 'blocked', tag: 'blocked' });
+    expect(on.text).toBe('Reddit blocks even the visible window (bot check (Cloudflare), 30 min ago). scout relies on public reading for it.');
+    // window turned off again afterwards: still red, still true
+    expect(blockedHint({ label: 'Reddit', visible: false, blocked: { reason: 'bot check (Cloudflare)', at, visible: true } }, NOW)!.tone).toBe('blocked');
   });
 
   it('site lines', () => {

@@ -264,3 +264,5 @@ a.op-evt:hover { text-decoration: underline; text-decoration-color: var(--color-
 .rb-site-b { font-size: 11px; color: var(--color-stuck); }
 .rb-vis { display: inline-flex; align-items: center; gap: 6px; font-size: 11.5px; color: var(--color-muted); margin-top: 3px; cursor: pointer; width: fit-content; }
 .rb-vis input { margin: 0; }
+.rb-vis-n { color: var(--color-faint); }
+.rb-site-p { font-size: 11px; color: var(--color-muted); }

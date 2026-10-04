@@ -8,7 +8,7 @@
 // playwright-core is loaded with a dynamic import, so Muster builds, tests and runs without it; the
 // tiny interfaces below are the only parts of its API this module touches (tests inject a fake).
 import { execFile, spawn as nodeSpawn } from 'node:child_process';
-import { existsSync, lstatSync, mkdirSync, readFileSync, readlinkSync, writeFileSync } from 'node:fs';
+import { existsSync, lstatSync, mkdirSync, readFileSync, readlinkSync, renameSync, writeFileSync } from 'node:fs';
 import { delimiter, dirname, join, posix, win32 } from 'node:path';
 import { HttpError, badRequest, conflict, notFound } from '../core/errors.js';
 import { secretsBase } from '../core/tokens.js';
@@ -76,7 +76,7 @@ export interface PwModule {
 
 export interface ResearchBrowserOptions {
   config(): ResearchBrowserConfig;
-  /** Base folder (default `<secretsBase()>/research-browser`): profile/ and status.json live here. */
+  /** Base folder (default `<secretsBase()>/research-browser`): profile/, status.json and visible.json live here. */
   baseDir?: string;
   /** Test seam / live check: loads playwright-core (default: dynamic import). */
   loadPlaywright?: () => Promise<PwModule>;
@@ -182,8 +182,29 @@ interface SavedState {
   sites: Record<string, { connected: boolean; via?: 'login' | 'opera'; checkedAt: string }>;
   opera: { lastImportAt?: string; imported?: Record<string, number> };
   /** domain → the bot check it answered with last time (cleared by a good load). */
-  blocked?: Record<string, { reason: string; at: string }>;
+  blocked?: Record<string, BlockRecord>;
 }
+
+/** visible: the blocked read was in the visible window (records saved before this field existed count as hidden). */
+interface BlockRecord {
+  reason: string;
+  at: string;
+  visible?: boolean;
+}
+
+/**
+ * visible.json: the sites read in a visible window, shared by every project on this PC (like the sign-ins).
+ * A file of its own, not part of status.json: each project's server holds status.json in memory and writes it
+ * whole, so a toggle kept there could be overwritten by another server's stale copy. visible.json is read fresh
+ * on every use and only ever written by a read-modify-write of itself.
+ */
+interface VisibleState {
+  sites: string[];
+  /** Domains already taken over from projects' deprecated config.researchBrowser.visibleSites (or set here since): a project's config never adds them again. */
+  migrated: string[];
+}
+
+const VISIBLE_MAX = 100;
 
 export interface ReadOpts {
   mode: BrowseMode;
@@ -258,6 +279,7 @@ export class ResearchBrowser {
   readonly baseDir: string;
   readonly profileDir: string;
   private readonly stateFile: string;
+  private readonly visibleFile: string;
   private readonly exists: (p: string) => boolean;
   private readonly env: NodeJS.ProcessEnv;
   private readonly platform: NodeJS.Platform;
@@ -293,7 +315,7 @@ export class ResearchBrowser {
   private lastStatus = new WeakMap<PwPage, number>();
   private lastAction = new WeakMap<PwPage, 'read' | 'screenshot' | 'scroll'>();
   private requested = new WeakMap<PwPage, string>(); // the URL asked for (before redirects), so a scroll after a read reuses the page
-  private profileHeaded = false; // the profile context is a visible window (a site in config.visibleSites)
+  private profileHeaded = false; // the profile context is a visible window (a site in the shared visible list)
   private tools?: { at: number; list: ResearchBrowserStatus['tools'] };
   private firstLookAt = -Infinity; // last time status() launched the profile just to read which sites are signed in
   private saved: SavedState;
@@ -304,6 +326,7 @@ export class ResearchBrowser {
     this.baseDir = opts.baseDir ?? join(secretsBase(this.env, this.platform), 'research-browser');
     this.profileDir = join(this.baseDir, 'profile');
     this.stateFile = join(this.baseDir, 'status.json');
+    this.visibleFile = join(this.baseDir, 'visible.json');
     this.exists = opts.exists ?? existsSync;
     this.run = opts.run ?? opts.opera?.run ?? realRunner;
     this.idleMs = opts.idleMs ?? 2 * 60_000;
@@ -317,6 +340,7 @@ export class ResearchBrowser {
     this.loginPollMs = opts.loginPollMs ?? LOGIN_POLL_MS;
     this.closeWaitMs = opts.closeWaitMs ?? 10_000;
     this.saved = this.loadSaved();
+    this.migrateVisible();
   }
 
   // ---- status ------------------------------------------------------------------------------------
@@ -333,8 +357,10 @@ export class ResearchBrowser {
       if (!this.profileCtx) this.firstLookAt = this.now();
       await this.exclusive(async () => this.refreshSites(await this.profileContext())).catch(() => undefined);
     }
+    const visible = this.visibleSites();
     const sites: ResearchSiteStatus[] = SITES.map((s) => {
       const st = this.saved.sites[s.site];
+      const block = this.blockedFor(siteDomains(s));
       return {
         site: s.site,
         label: s.label,
@@ -345,11 +371,11 @@ export class ResearchBrowser {
         checkedAt: st?.checkedAt ?? '',
         ...(s.warning ? { warning: s.warning } : {}),
         ...(s.limits ? { limits: s.limits } : {}),
-        ...((cfg.visibleSites ?? []).some((d) => siteDomains(s).some((x) => hostMatches(x, d) || hostMatches(d, x))) ? { visible: true } : {}),
-        ...(this.blockedFor(siteDomains(s)) ? { blocked: this.blockedFor(siteDomains(s)) } : {}),
+        ...(visible.some((d) => siteDomains(s).some((x) => hostMatches(x, d) || hostMatches(d, x))) ? { visible: true } : {}),
+        ...(block ? { blocked: { reason: block.reason, at: block.at, visible: !!block.visible } } : {}),
       };
     });
-    const blocked = Object.entries(this.saved.blocked ?? {}).map(([domain, b]) => ({ domain, ...b }));
+    const blocked = Object.entries(this.saved.blocked ?? {}).map(([domain, b]) => ({ domain, reason: b.reason, at: b.at, visible: !!b.visible }));
     const operaDir = operaProfileDir(this.env, this.platform);
     const found = operaFound(operaDir, this.exists);
     return {
@@ -369,17 +395,74 @@ export class ResearchBrowser {
         ...(this.saved.opera.imported ? { imported: { ...this.saved.opera.imported } } : {}),
       },
       ...(blocked.length ? { blocked } : {}),
+      visibleSites: visible,
     };
   }
 
+  // ---- visible-window sites (shared by every project on this PC) ----------------------------------
+
+  /** The domains read in a visible window, read fresh from visible.json (another project's server may have changed it). */
+  visibleSites(): string[] {
+    return this.loadVisible().sites;
+  }
+
+  /** Turns the visible window on or off for one domain, for every project on this PC; returns the new list. */
+  setVisibleSite(domain: string, on: boolean): string[] {
+    const d = cleanDomain(String(domain ?? ''));
+    if (!d) throw badRequest(`Not a domain: "${domain}". Use the site's address, e.g. reddit.com`);
+    const v = this.loadVisible();
+    const sites = v.sites.filter((x) => x !== d);
+    if (on) {
+      if (sites.length >= VISIBLE_MAX) throw badRequest(`At most ${VISIBLE_MAX} sites can use a visible window`);
+      sites.push(d);
+    }
+    this.saveVisible({ sites, migrated: v.migrated.includes(d) ? v.migrated : [...v.migrated, d] });
+    return sites;
+  }
+
+  /**
+   * Takes over this project's deprecated config.researchBrowser.visibleSites, once per domain: a domain not yet
+   * migrated is added to the shared list (a union: a project never removes a shared one) and the project's config
+   * file is left as it is. A domain turned off later stays off, whatever a project's config still says.
+   */
+  private migrateVisible(): void {
+    try {
+      const fromConfig = (this.opts.config().visibleSites ?? []).map((d) => cleanDomain(String(d))).filter((d): d is string => !!d);
+      const v = this.loadVisible();
+      const add = [...new Set(fromConfig)].filter((d) => !v.migrated.includes(d));
+      if (!add.length) return;
+      this.saveVisible({ sites: [...new Set([...v.sites, ...add])].slice(0, VISIBLE_MAX), migrated: [...v.migrated, ...add] });
+    } catch {
+      // never stops the server: the next start tries again
+    }
+  }
+
+  private loadVisible(): VisibleState {
+    try {
+      const raw = JSON.parse(readFileSync(this.visibleFile, 'utf8')) as Partial<VisibleState>;
+      const list = (x: unknown) => (Array.isArray(x) ? [...new Set(x.map((d) => cleanDomain(String(d))).filter((d): d is string => !!d))] : []);
+      return { sites: list(raw.sites), migrated: list(raw.migrated) };
+    } catch {
+      return { sites: [], migrated: [] };
+    }
+  }
+
+  /** Written to a temp file and renamed over, so another project's server never reads half a file. */
+  private saveVisible(v: VisibleState): void {
+    mkdirSync(this.baseDir, { recursive: true });
+    const tmp = `${this.visibleFile}.${process.pid}.tmp`;
+    writeFileSync(tmp, JSON.stringify(v, null, 2) + '\n');
+    renameSync(tmp, this.visibleFile);
+  }
+
   /** The newest bot-check record for any of a site's domains (or their subdomains). */
-  private blockedFor(domains: string[]): { reason: string; at: string } | undefined {
+  private blockedFor(domains: string[]): BlockRecord | undefined {
     const hits = Object.entries(this.saved.blocked ?? {}).filter(([d]) => domains.some((s) => hostMatches(d, s)));
     return hits.sort((a, b) => b[1].at.localeCompare(a[1].at))[0]?.[1];
   }
 
-  /** Remembers (or clears) that a domain answered with a bot check; saved only when it changes. */
-  private noteBlocked(url: string, reason: string | undefined): void {
+  /** Remembers (or clears) that a domain answered with a bot check, and whether that read was in the visible window; saved only when it changes. */
+  private noteBlocked(url: string, reason: string | undefined, visible: boolean): void {
     let host: string;
     try {
       host = domainKey(new URL(url).hostname);
@@ -391,7 +474,7 @@ export class ResearchBrowser {
       if (!all[host]) return;
       delete all[host];
     } else {
-      all[host] = { reason, at: new Date(this.now()).toISOString() };
+      all[host] = { reason, at: new Date(this.now()).toISOString(), visible };
       const keys = Object.keys(all);
       if (keys.length > 50) for (const k of keys.sort((a, b) => all[a].at.localeCompare(all[b].at)).slice(0, keys.length - 50)) delete all[k];
     }
@@ -524,7 +607,7 @@ export class ResearchBrowser {
         }, undefined)
         .catch(() => ({ html: '', text: '' }));
       const blocked = detectBlock({ status: out.status, title, html: seen.html, text: out.text ?? seen.text });
-      this.noteBlocked(final, blocked);
+      this.noteBlocked(final, blocked, mode !== 'public' && this.profileHeaded);
       // A blocked page is not a signed-in page, whatever cookies the profile holds: the site never served it.
       return {
         url: final,
@@ -626,7 +709,7 @@ export class ResearchBrowser {
   }
 
   /**
-   * Sites you asked to read in a visible window (config.visibleSites): the research profile opens as a normal,
+   * Sites you asked to read in a visible window (the shared visible.json list): the research profile opens as a normal,
    * headed Chrome window for them. The browser's own user agent is used everywhere; Muster never disguises it.
    */
   private visibleFor(url: string): boolean {
@@ -636,7 +719,7 @@ export class ResearchBrowser {
     } catch {
       return false;
     }
-    return (this.opts.config().visibleSites ?? []).some((d) => hostMatches(host, d));
+    return this.visibleSites().some((d) => hostMatches(host, d));
   }
 
   /** Launch with the configured channel; fall back to playwright's own Chromium when that fails and one is cached. */

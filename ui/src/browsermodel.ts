@@ -16,22 +16,21 @@ function checkedText(at: string, now: number): string {
   return at === day(now) ? 'today' : at === day(now - 86_400_000) ? 'yesterday' : `on ${at}`;
 }
 
+export const NOT_CHECKED_VISIBLE = 'Not checked in a visible window yet. The next read uses the window.';
+
 /**
- * A site that answered the headless research browser with a bot check: the "blocked" pill and what to do about it
- * (read it in a visible window, or rely on public reading). Null when the last load went through.
+ * What a site row says about its last bot check. Null when the last load went through.
+ * - 'blocked' (red BLOCKED badge and text): the site blocked a hidden read and the visible window is off, or it
+ *   blocked even the visible window.
+ * - 'pending' (muted, no badge): it blocked a hidden read, but the visible window is on now and hasn't been tried
+ *   yet. Records without `visible` (saved before it existed) count as hidden reads.
  */
-export function blockedHint(s: Pick<ResearchSiteStatus, 'blocked' | 'visible' | 'label'>, now = Date.now()): { tag: string; text: string } | null {
+export function blockedHint(s: Pick<ResearchSiteStatus, 'blocked' | 'visible' | 'label'>, now = Date.now()): { tone: 'blocked' | 'pending'; tag: string; text: string } | null {
   if (!s.blocked) return null;
   const why = `${s.blocked.reason}, ${agoText(s.blocked.at, now)}`;
-  return s.visible
-    ? { tag: 'blocked', text: `Blocked the last read (${why}), before the visible window was on. The next read uses the window; until then scout relies on public reading.` }
-    : { tag: 'blocked', text: `${s.label} blocks headless reading (${why}). Turn on the visible window for it, or scout relies on public reading.` };
-}
-
-/** visibleSites with `domain` turned on or off (no duplicates). */
-export function setVisible(list: string[], domain: string, on: boolean): string[] {
-  const rest = list.filter((d) => d !== domain);
-  return on ? [...rest, domain] : rest;
+  if (s.blocked.visible) return { tone: 'blocked', tag: 'blocked', text: `${s.label} blocks even the visible window (${why}). scout relies on public reading for it.` };
+  if (s.visible) return { tone: 'pending', tag: '', text: NOT_CHECKED_VISIBLE };
+  return { tone: 'blocked', tag: 'blocked', text: `${s.label} blocks headless reading (${why}). Turn on the visible window for it, or scout relies on public reading.` };
 }
 
 /** One line for the whole browser: available or not, and what it is doing. */

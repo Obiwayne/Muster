@@ -1029,7 +1029,7 @@ const server = http.createServer(async (req, res) => {
       res.end(data);
       return;
     }
-    if ((url.pathname.startsWith('/api/intel') || url.pathname === '/api/browser') && req.headers['x-muster-token'] === TOKEN) {
+    if ((url.pathname.startsWith('/api/intel') || url.pathname === '/api/browser' || url.pathname.startsWith('/api/browser/')) && req.headers['x-muster-token'] === TOKEN) {
       const out = await intel.route(req, req.method, url.pathname);
       if (out?.text !== undefined) { res.writeHead(200, { 'content-type': 'text/markdown; charset=utf-8' }); res.end(out.text); return; }
       if (out) { res.writeHead(200, { 'content-type': 'application/json' }); res.end(JSON.stringify(out.body ?? null)); return; }

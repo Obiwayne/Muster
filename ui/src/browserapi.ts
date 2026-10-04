@@ -1,5 +1,6 @@
 // Client for the human research-browser writes (docs/ARCHITECTURE.md § Competitive intelligence → Research browser):
-// open/close the login window, import Opera cookies for allow-listed sites, forget a site. Each answers with the
+// open/close the login window, import Opera cookies for allow-listed sites, forget a site, and the visible-window
+// list shared by every project on this PC. Each answers with the
 // fresh ResearchBrowserStatus. The read-only GET /api/browser lives in intelapi.ts (getBrowserStatus).
 import type { ResearchBrowserStatus } from '../../src/types';
 import { ApiError, getToken, refreshToken } from './api';
@@ -35,4 +36,7 @@ export const operaImport = (domains?: string[]) => post('/api/browser/opera-impo
 /** Clear one site's cookies from the research profile. */
 export const forgetSite = (site: string) => post('/api/browser/forget', { site });
 
-export const browserApi = { openLogin, closeLogin, operaImport, forgetSite };
+/** Read this site in a visible window (or not), for every project on this PC. */
+export const setSiteVisible = (domain: string, visible: boolean) => post('/api/browser/visible', { domain, visible });
+
+export const browserApi = { openLogin, closeLogin, operaImport, forgetSite, setSiteVisible };

@@ -128,6 +128,9 @@ describe('intel API', () => {
     expect((await ok<MusterConfig>('you', 'PATCH', '/api/config', { researchBrowser: { visibleSites: null } })).researchBrowser.visibleSites).toEqual([]);
     expect(c.intel).toEqual({ recheck: 'weekly', checkMaxAgeDays: 14 });
     expect((await call('captain', 'PATCH', '/api/config', { intel: { recheck: 'off' } })).status).toBe(403);
+    // the shared visible-window list: agents can't change it (the server sets actor from the token)
+    expect((await call('captain', 'POST', '/api/browser/visible', { domain: 'reddit.com', visible: true })).status).toBe(403);
+    expect((await call('captain', 'POST', '/api/browser/visible', { actor: 'you', domain: 'reddit.com', visible: false })).status).toBe(403);
   });
 
   it('you add a competitor and start research: the job starts scout with the intel prompt', async () => {

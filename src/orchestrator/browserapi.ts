@@ -17,7 +17,7 @@ export interface RouteReq {
 export type RouteFn = (method: string, path: string, handler: (r: RouteReq) => unknown) => void;
 
 /** What the routes need from the browser (the real ResearchBrowser, or a fake in tests). */
-export type BrowserLike = Pick<ResearchBrowser, 'status' | 'read' | 'screenshot' | 'scroll' | 'openLogin' | 'closeLogin' | 'operaImport' | 'forget'>;
+export type BrowserLike = Pick<ResearchBrowser, 'status' | 'read' | 'screenshot' | 'scroll' | 'openLogin' | 'closeLogin' | 'operaImport' | 'forget' | 'visibleSites' | 'setVisibleSite'>;
 
 export interface BrowserRouteDeps {
   browser: BrowserLike;
@@ -75,6 +75,15 @@ export function registerBrowserRoutes(route: RouteFn, deps: BrowserRouteDeps): v
     human(body, 'forget a site');
     if (typeof body.site !== 'string' || !body.site) throw badRequest('Missing site');
     return browser.forget(body.site);
+  });
+
+  // The visible-window list is shared by every project on this PC (like the sign-ins); only you change it.
+  route('POST', '/api/browser/visible', ({ body }) => {
+    human(body, 'choose which sites scout reads in a visible window');
+    if (typeof body.domain !== 'string' || !body.domain.trim()) throw badRequest('Missing domain');
+    if (typeof body.visible !== 'boolean') throw badRequest('visible must be true or false');
+    browser.setVisibleSite(body.domain, body.visible);
+    return browser.status();
   });
 
   route('POST', '/api/browser/read', async ({ body }): Promise<BrowseResult> => {
