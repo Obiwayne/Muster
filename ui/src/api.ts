@@ -3,6 +3,8 @@ import type {
   Agent, FeedItem, InboxItem, MusterConfig, MusterState, Note, NoteType, ResearchIdea, ResearchRun, ResearchSources, ResearchState, Role, Roadmap,
   RoadmapProgress, SkillInfo, Task, UsageState, VellumStatus,
 } from '../../src/types';
+// Phone gateway admin API types (forwarded by the orchestrator's /api/phone/*, docs/PHONE.md).
+import type { PhoneNetworkMode, PhonePairCode, PhoneSendPrefs, PhoneStatus } from './phonemodel';
 
 // TODO: import StationDef from src/types.ts once T9 (crew-6) merges.
 // Contract with T12/T14 (crew-8): GET /api/lines.
@@ -187,6 +189,16 @@ export const api = {
   project: () => req<ProjectInfo>('GET', '/api/project'),
   createGithub: (body: { name: string; private?: boolean; description?: string }) => req<{ url: string }>('POST', '/api/project/github', body),
   usage: () => req<UsageState & { paused: boolean }>('GET', '/api/usage'),
+
+  // phone (Settings → Phone): each call goes to this orchestrator, which starts the gateway when it isn't running
+  phoneStatus: () => req<PhoneStatus>('GET', '/api/phone/status'),
+  /** A new 6-character code (valid 2 minutes, single use); it invalidates the previous one. */
+  phonePairCode: () => req<PhonePairCode>('POST', '/api/phone/pair-code'),
+  phoneSetNetwork: (mode: PhoneNetworkMode) => req<unknown>('PUT', '/api/phone/network', { mode }),
+  phoneUnlink: (deviceId: string) => req<unknown>('DELETE', `/api/phone/devices/${enc(deviceId)}`),
+  phoneTest: () => req<unknown>('POST', '/api/phone/test'),
+  phoneSendPrefs: () => req<PhoneSendPrefs>('GET', '/api/phone/send'),
+  phoneSetSendPrefs: (prefs: PhoneSendPrefs) => req<PhoneSendPrefs>('PUT', '/api/phone/send', prefs),
 
   // roadmap (the Captain owns the plan; you approve it, send it back, tick criteria)
   roadmap: () => req<RoadmapResponse>('GET', '/api/roadmap'),

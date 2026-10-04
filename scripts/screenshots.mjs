@@ -67,7 +67,7 @@ async function main() {
     }
   })()`);
   await shot('settings', 'settings');
-  await shot('edit-line', 'settings', `(async () => { ${click('button', 'Edit line')}; await new Promise((r) => setTimeout(r, 900)); ${click('.se-item', 'test')}; })()`);
+  await shot('edit-line', 'settings?tab=line', `(async () => { ${click('button', 'Edit line')}; await new Promise((r) => setTimeout(r, 900)); ${click('.se-item', 'test')}; })()`);
   await shot('evidence', 'tasks', `(async () => { ${click('.ev-strip', 'more')}; await new Promise((r) => setTimeout(r, 1200)); })()`);
 }
 

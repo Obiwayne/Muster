@@ -663,7 +663,7 @@ textarea.field { height: auto; min-height: 40px; padding: 10px 14px; resize: ver
 .dcheck .meta { font-family: var(--font-mono); font-size: 11px; color: var(--color-faint); }
 
 /* ---------- settings ---------- */
-.settings { flex: 1; min-height: 0; display: flex; flex-direction: column; padding: 28px 40px; gap: 26px; overflow-y: auto; }
+.settings { flex: 1; min-height: 0; display: flex; flex-direction: column; padding: 28px 40px 32px; gap: 20px; overflow-y: auto; }
 .settings-title { font-size: 20px; font-weight: 600; letter-spacing: -0.01em; }
 .settings-cols { display: flex; gap: 20px; align-items: flex-start; }
 .settings-col { flex: 1; display: flex; flex-direction: column; gap: 20px; min-width: 0; }
