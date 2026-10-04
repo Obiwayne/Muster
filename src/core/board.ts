@@ -1,7 +1,7 @@
 // Bulletin board, crew chat feed and per-agent inbox. Pure state mutations;
 // the caller commits the store.
-import { OPEN_BY_DEFAULT, REACTION_EMOJI, type Agent, type FeedItem, type InboxItem, type MusterState, type Note, type NoteType, type ReactionEmoji } from '../types.js';
-import { badRequest, forbidden, notFound } from './errors.js';
+import { OPEN_BY_DEFAULT, REACTION_EMOJI, type Agent, type AskAnswer, type AskOption, type AskQuestion, type FeedItem, type InboxItem, type MusterState, type Note, type NoteType, type ReactionEmoji } from '../types.js';
+import { badRequest, conflict, forbidden, notFound } from './errors.js';
 import { nextId } from './store.js';
 
 export const NOTE_TYPES: NoteType[] = ['stuck', 'question', 'waiting', 'progress', 'done', 'review', 'approval', 'escalation', 'message', 'system'];
@@ -276,4 +276,74 @@ function describe(i: InboxItem): string {
     default:
       return `notice from ${i.from}`;
   }
+}
+
+const isObj = (v: unknown): v is Record<string, unknown> => !!v && typeof v === 'object' && !Array.isArray(v);
+
+function askText(v: unknown, what: string, max: number, required: boolean): string | undefined {
+  if (v === undefined || v === null) {
+    if (required) throw badRequest(`${what} is missing`);
+    return undefined;
+  }
+  if (typeof v !== 'string') throw badRequest(`${what} must be text`);
+  const t = v.trim();
+  if (required && !t) throw badRequest(`${what} is empty`);
+  if (t.length > max) throw badRequest(`${what} is longer than ${max} characters`);
+  return t || undefined;
+}
+
+/** The AskUserQuestion input, checked and trimmed: 1-4 questions of 1-6 options each. Throws 400 on bad input. */
+export function cleanAsk(questions: unknown): AskQuestion[] {
+  if (!Array.isArray(questions) || questions.length < 1 || questions.length > 4) throw badRequest('Ask 1 to 4 questions');
+  return questions.map((q, i) => {
+    const at = `Question ${i + 1}`;
+    if (!isObj(q)) throw badRequest(`${at} must be an object`);
+    if (q.header !== undefined && typeof q.header !== 'string') throw badRequest(`${at} header must be text`);
+    if (q.multiSelect !== undefined && typeof q.multiSelect !== 'boolean') throw badRequest(`${at} multiSelect must be true or false`);
+    if (!Array.isArray(q.options) || q.options.length < 1 || q.options.length > 6) throw badRequest(`${at} needs 1 to 6 options`);
+    const options = q.options.map((o, j): AskOption => {
+      if (!isObj(o)) throw badRequest(`${at} option ${j + 1} must be an object`);
+      const description = askText(o.description, `${at} option ${j + 1} description`, 500, false);
+      return { label: askText(o.label, `${at} option ${j + 1} label`, 120, true)!, ...(description ? { description } : {}) };
+    });
+    return { header: (q.header ?? '').trim().slice(0, 40).trim(), question: askText(q.question, `${at} text`, 1000, true)!, multiSelect: q.multiSelect ?? false, options };
+  });
+}
+
+/** POST /api/ask-user: the Captain's AskUserQuestion menu as an open escalation to you. */
+export function askHuman(state: MusterState, actor: string, questions: unknown): Note {
+  if (!isCaptain(state, actor)) throw forbidden('Only the Captain asks you questions');
+  const ask = cleanAsk(questions);
+  const note = postNote(state, { actor, type: 'escalation', text: ask.map((q) => q.question).join('\n\n'), to: HUMAN });
+  note.ask = ask;
+  return note;
+}
+
+/** POST /api/notes/:id/answer: your answer to an ask note, one per question by index. Replies as you and closes it. */
+export function answerAsk(state: MusterState, noteId: string, actor: string, answers: unknown): Note {
+  if (actor !== HUMAN) throw forbidden('Only you answer the Captain\'s questions');
+  const note = requireNote(state, noteId);
+  if (!note.ask) throw badRequest(`${note.id} is not a question menu`);
+  if (!note.open) throw conflict(`${note.id} is already closed`);
+  if (!Array.isArray(answers) || answers.length !== note.ask.length) throw badRequest(`Answer all ${note.ask.length} question${note.ask.length === 1 ? '' : 's'}`);
+  const clean = note.ask.map((q, i): AskAnswer => {
+    const a = answers[i];
+    const at = q.header || `Q${i + 1}`;
+    if (!isObj(a)) throw badRequest(`${at}: answer must be an object`);
+    if (a.choices !== undefined && (!Array.isArray(a.choices) || a.choices.some((c) => typeof c !== 'string'))) throw badRequest(`${at}: choices must be a list of option labels`);
+    const choices = [...new Set((a.choices ?? []) as string[])];
+    for (const c of choices) if (!q.options.some((o) => o.label === c)) throw badRequest(`${at}: "${c}" is not one of the options`);
+    if (!q.multiSelect && choices.length > 1) throw badRequest(`${at}: pick one option`);
+    const other = askText(a.other, `${at}: other`, 1000, false);
+    if (!choices.length && !other) throw badRequest(`${at}: pick an option or write an answer`);
+    return { header: q.header, choices, ...(other ? { other } : {}) };
+  });
+  const text = clean
+    .map((a, i) => {
+      const body = a.choices.length ? `${a.choices.join(', ')}${a.other ? ` (note: ${a.other})` : ''}` : a.other!;
+      return `${a.header || `Q${i + 1}`}: ${body}`;
+    })
+    .join('\n');
+  note.answers = clean;
+  return replyNote(state, note.id, HUMAN, text, true);
 }
