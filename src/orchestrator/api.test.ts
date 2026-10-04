@@ -228,6 +228,19 @@ describe('orchestrator API', () => {
     expect(esc).toMatchObject({ type: 'escalation', to: 'you', open: true });
   });
 
+  it('turns the Captain question menu into a note you answer', async () => {
+    const questions = [{ header: 'Art model', question: 'Which image model?', options: [{ label: 'Flux', description: 'Best' }, { label: 'SDXL' }] }];
+    expect((await call('POST', '/api/ask-user', { actor: 'crew-2', questions })).status).toBe(403);
+    expect((await call('POST', '/api/ask-user', { actor: 'captain', questions: [] })).status).toBe(400);
+    const n = await ok<Note>('POST', '/api/ask-user', { actor: 'captain', questions });
+    expect(n).toMatchObject({ type: 'escalation', to: 'you', open: true, text: 'Which image model?', ask: [{ header: 'Art model', multiSelect: false }] });
+    expect((await call('POST', `/api/notes/${n.id}/answer`, { actor: 'captain', answers: [{ choices: ['Flux'] }] })).status).toBe(403);
+    expect((await call('POST', `/api/notes/${n.id}/answer`, { actor: 'you', answers: [{ choices: ['Nope'] }] })).status).toBe(400);
+    const done = await ok<Note>('POST', `/api/notes/${n.id}/answer`, { actor: 'you', answers: [{ choices: ['Flux'] }] });
+    expect(done).toMatchObject({ open: false, answers: [{ header: 'Art model', choices: ['Flux'] }], replies: [{ from: 'you', text: 'Art model: Flux' }] });
+    expect((await call('POST', `/api/notes/${n.id}/answer`, { actor: 'you', answers: [{ choices: ['Flux'] }] })).status).toBe(409);
+  });
+
   it('turns a permission wait into a stuck note and clears it on the next prompt', async () => {
     await ok('POST', '/api/agents/crew-2/event', { event: 'notification', detail: 'Claude needs your permission to use Bash', kind: 'permission_prompt' });
     expect((await agent('crew-2')).status).toBe('stuck');

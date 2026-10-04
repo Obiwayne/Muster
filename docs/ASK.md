@@ -9,7 +9,7 @@ desktop Bulletin board and the phone answer with option buttons.
 1. Agents' settings (`src/core/claude.ts` `settingsConfig`) route `AskUserQuestion` through the PreToolUse hook
    (add it to `PRE_TOOL_MATCHER`; the guard must keep allowing it).
 2. `dist/hooks/hook.js pre-tool` with `tool_name === 'AskUserQuestion'`:
-   - Captain (`MUSTER_ROLE=captain`): `POST /api/ask { actor, questions: tool_input.questions }` → Note. Then deny the
+   - Captain (`MUSTER_ROLE=captain`): `POST /api/ask-user { actor, questions: tool_input.questions }` → Note. Then deny the
      tool with this reason: `Muster sent your question to the user as note <id> (Bulletin board and phone). Do not ask
      again and do not wait: carry on with other work or end your turn. The answer reaches your inbox as a reply on <id>.`
      When the orchestrator can't be reached or answers with an error, print nothing (the terminal menu shows as before).
@@ -24,13 +24,13 @@ export interface AskOption { label: string; description?: string }
 export interface AskQuestion { header: string; question: string; multiSelect: boolean; options: AskOption[] }
 export interface AskAnswer { header: string; choices: string[]; other?: string }
 // on Note:
-ask?: AskQuestion[];      // set on an escalation note made by POST /api/ask
+ask?: AskQuestion[];      // set on an escalation note made by POST /api/ask-user
 answers?: AskAnswer[];    // set when POST /api/notes/:id/answer succeeds
 ```
 
 ## Orchestrator
 
-- `POST /api/ask { actor, questions }`: Captain only (403 otherwise). Validation: 1–4 questions; each has a non-empty
+- `POST /api/ask-user { actor, questions }` (`/api/ask` already sets the goal): Captain only (403 otherwise). Validation: 1–4 questions; each has a non-empty
   `question` (≤ 1000 chars), `header` (string, may be empty, trimmed to 40 chars), `multiSelect` (default false) and
   1–6 options with a non-empty `label` (≤ 120) and an optional `description` (≤ 500). Bad input → 400.
   Posts `type 'escalation'`, `to 'you'`, `text` = the questions' `question` lines joined with a blank line, `ask` =

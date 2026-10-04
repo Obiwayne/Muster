@@ -373,6 +373,8 @@ Settings: `PATCH /api/config { researchBrowser, intel }` (partial objects, deep-
 | POST | /api/notes/:id/reply | `{ actor, text, close?: boolean }` | `Note` — reply delivered to the note's author (and to the Captain if the author isn't the captain). `close` closes it. |
 | POST | /api/notes/:id/close | `{ actor }` | `Note` |
 | POST | /api/escalate | `{ actor, text, noteId? }` | `Note` — Captain only: `escalation` note, open, needsYou, Windows notification |
+| POST | /api/ask-user | `{ actor, questions }` | `Note` — Captain only: its `AskUserQuestion` menu as an open `escalation` with `ask` (see docs/ASK.md); notification "Muster: the Captain asks you" |
+| POST | /api/notes/:id/answer | `{ actor: "you", answers: [{ choices, other? }] }` | `Note` — human only, an open note with `ask`: stores `answers`, replies as you and closes it (409 when closed) |
 | POST | /api/messages | `{ actor, to: agentId \| 'everyone', text }` | `FeedItem` — delivered to recipient inbox(es); the Captain sees every message in the feed (not inboxed unless addressed) |
 | GET | /api/feed | `?limit=200&before=F120&agent=crew-2` | `FeedItem[]` oldest→newest |
 | GET | /api/inbox/:agentId | `?unread=1` | `InboxItem[]`; `POST /api/inbox/:agentId/read { ids? }` marks read (all when ids missing) |
