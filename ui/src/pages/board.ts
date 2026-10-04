@@ -11,6 +11,7 @@ import { isUsageNote, isWeeklyNote, weeklyThreshold } from '../usagealert';
 import { createWeeklyAlertView } from './usagealert';
 import { intelNoteView, isIntelJobNote, runAgainBody, type IntelNoteAction } from '../intelnote';
 import { startJob } from '../intelapi';
+import { createUpdateBar } from '../update';
 
 type Filter = 'open' | 'stuck' | 'question' | 'waiting' | 'review' | 'approval' | 'all' | 'needsYou';
 
@@ -79,7 +80,9 @@ export function createBoard(): Page {
   const composer = h('div.composer', null, replyInput, clearBtn, replyBtn);
   const thread = h('div.thread', null, head, replies, composer);
   const weekly = createWeeklyAlertView({ dismiss: (id) => dismiss(id) });
-  const el = h('div.page', null, h('div.split', null, left, thread, weekly.el));
+  const update = createUpdateBar(); // "Update" when a newer Muster build is waiting (desktop app only)
+  const el = h('div.page', null, update.el, h('div.split', null, left, thread, weekly.el));
+  let updateTimer: ReturnType<typeof setInterval> | undefined;
 
   async function dismiss(id: string): Promise<void> {
     if (await run(api.dismissNote(id), `Dismissed ${id}`)) {
@@ -326,6 +329,14 @@ export function createBoard(): Page {
 
   return {
     el,
+    show() {
+      void update.check();
+      updateTimer ??= setInterval(() => void update.check(), 60_000);
+    },
+    hide() {
+      clearInterval(updateTimer);
+      updateTimer = undefined;
+    },
     update(s) { snap = s; weekly.update(s); replyInput.placeholder = `Reply as ${displayName('you')}…`; render(); },
     params(p) {
       const id = p.get('note');

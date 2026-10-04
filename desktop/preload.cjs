@@ -28,5 +28,8 @@ if (location.protocol === 'http:' && (location.hostname === '127.0.0.1' || locat
     showPicker: () => ipcRenderer.invoke('app:picker'),
     // taskbar badge: count of notes that need you, with a 32x32 PNG data URL drawn by the dashboard (null clears it)
     setNeedsYou: (count, png) => ipcRenderer.send('app:needsYou', { count, png }),
+    // "Restart to update": 'build' | 'restart' | 'current', and the restart itself (builds first when needed)
+    updateStatus: () => ipcRenderer.invoke('app:updateStatus'),
+    restartToUpdate: () => ipcRenderer.invoke('app:restartToUpdate'),
   });
 }
