@@ -162,4 +162,15 @@ describe('roadmap API', () => {
     await ok('you', 'PATCH', '/api/roadmap/stages/M2', { title: 'Pay' });
     expect((await ok<Reply>('you', 'POST', '/api/roadmap/stages/M2/complete', { force: true })).progress!.health).toBe('done');
   });
+
+  it('the Captain posts where we are; nobody else can', async () => {
+    expect((await call('crew-2', 'POST', '/api/roadmap/status', { text: 'All good' })).status).toBe(403);
+    expect((await call('you', 'POST', '/api/roadmap/status', { text: 'All good' })).status).toBe(403);
+    expect((await call('captain', 'POST', '/api/roadmap/status', { text: '' })).status).toBe(400);
+    expect((await call('captain', 'POST', '/api/roadmap/status', { text: 'x'.repeat(401) })).status).toBe(400);
+    const r = await ok<Reply>('captain', 'POST', '/api/roadmap/status', { text: ' Roadmap done; launch holds. ', taskId: 't1' });
+    expect(r.roadmap!.statusLine).toMatchObject({ text: 'Roadmap done; launch holds.', by: 'captain', taskId: 'T1' });
+    expect(r.progress).not.toBeNull();
+    expect(state().feed.at(-1)).toMatchObject({ from: 'captain', text: 'Roadmap: Roadmap done; launch holds.' });
+  });
 });

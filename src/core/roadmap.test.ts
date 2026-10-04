@@ -1,7 +1,7 @@
 import { beforeEach, describe, expect, it } from 'vitest';
 import { DEFAULT_CONFIG, type MusterState, type Task } from '../types.js';
 import { inboxFor } from './board.js';
-import { addGoal, advanceRoadmap, approveRoadmap, completeStage, computeProgress, linkTasks, patchGoal, patchStage, rejectRoadmap, setRoadmap, tickCriterion, type RoadmapInput } from './roadmap.js';
+import { addGoal, advanceRoadmap, approveRoadmap, completeStage, computeProgress, linkTasks, patchGoal, patchStage, rejectRoadmap, setRoadmap, setRoadmapStatus, tickCriterion, type RoadmapInput } from './roadmap.js';
 import { emptyState, migrate } from './store.js';
 import { cancelTask, createTask, markMerged } from './tasks.js';
 import { makeAgent } from './testutil.js';
@@ -248,7 +248,48 @@ describe('roadmap', () => {
     // a task merged with no goal on an approved roadmap → the Captain is asked to place it
     const t = task('late one');
     markMerged(s, t, 'captain');
-    expect(inbox()).toMatch(new RegExp(`${t.id} late one merged without a roadmap goal`));
+    expect(inbox()).toMatch(new RegExp(`${t.id} late one merged without a roadmap goal.*then post where we are with roadmap_status\\.$`));
+  });
+
+  it('asks the Captain to update the roadmap and post where we are after every merge, once per merge', () => {
+    markMerged(s, task('Early'), 'captain');
+    expect(captainInbox()).toEqual([]); // no roadmap yet
+    setRoadmap(s, plan(), 'captain');
+    markMerged(s, task('Login', 'G1'), 'captain');
+    markMerged(s, task('Logout', 'G1'), 'captain');
+    expect(captainInbox()).toEqual([]); // still a draft
+    approveRoadmap(s, 'you');
+    const c = task('Reset', 'G1');
+    task('Remember me', 'G1');
+    const before = captainInbox().length;
+    markMerged(s, c, 'captain');
+    expect(captainInbox().slice(before)).toEqual([
+      `${c.id} Reset merged. G1 Auth: 3/4 tasks merged. Update the roadmap now (tick exit criteria it meets, move slipped dates), then post where we are with roadmap_status.`,
+    ]);
+    const loose = task('Typo');
+    const n = captainInbox().length;
+    markMerged(s, loose, 'captain');
+    expect(captainInbox().slice(n)).toHaveLength(1);
+    expect(captainInbox().at(-1)).toMatch(/merged without a roadmap goal/);
+  });
+
+  it('roadmap status: Captain only, 1..400 chars, kept across replans, shown in chat', () => {
+    expect(() => setRoadmapStatus(s, 'captain', 'x')).toThrow(expect.objectContaining({ status: 404 }));
+    setRoadmap(s, plan(), 'captain');
+    const t = task('Login');
+    expect(() => setRoadmapStatus(s, 'crew-2', 'x')).toThrow(expect.objectContaining({ status: 403 }));
+    expect(() => setRoadmapStatus(s, 'you', 'x')).toThrow(expect.objectContaining({ status: 403 }));
+    expect(() => setRoadmapStatus(s, 'captain', '  ')).toThrow(expect.objectContaining({ status: 400 }));
+    expect(() => setRoadmapStatus(s, 'captain', 'x'.repeat(401))).toThrow(expect.objectContaining({ status: 400 }));
+    expect(() => setRoadmapStatus(s, 'captain', 'ok', 'T99')).toThrow(expect.objectContaining({ status: 404 }));
+    const r = setRoadmapStatus(s, 'captain', '  M1 is 40% done; G1 Auth is next. Launch holds.  ', t.id.toLowerCase());
+    expect(r.statusLine).toMatchObject({ text: 'M1 is 40% done; G1 Auth is next. Launch holds.', by: 'captain', taskId: t.id });
+    expect(r.updatedAt).toBe(r.statusLine!.at);
+    expect(s.feed.at(-1)).toMatchObject({ kind: 'event', from: 'captain', text: 'Roadmap: M1 is 40% done; G1 Auth is next. Launch holds.', taskId: t.id });
+    setRoadmapStatus(s, 'captain', 'x'.repeat(400));
+    expect(s.roadmap!.statusLine!.taskId).toBeUndefined();
+    setRoadmap(s, { ...plan(), title: 'shop v1.1' }, 'captain');
+    expect(s.roadmap!.statusLine!.text).toBe('x'.repeat(400));
   });
 
   it('tags system notes from before topics existed', () => {

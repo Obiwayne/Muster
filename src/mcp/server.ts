@@ -66,7 +66,7 @@ export const CAPTAIN_TOOLS = [
   'spawn_crew', 'post_task', 'assign', 'list_agents', 'list_tasks', 'read_board', 'reply', 'message',
   'read_inbox', 'read_output', 'get_diff', 'run_tests', 'request_review', 'merge_task', 'send_back', 'cancel_task', 'close_crew', 'escalate',
   'add_evidence', 'get_evidence',
-  'roadmap', 'set_roadmap', 'update_stage', 'check_criterion', 'complete_stage', 'add_goal', 'update_goal', 'link_tasks',
+  'roadmap', 'set_roadmap', 'update_stage', 'check_criterion', 'complete_stage', 'add_goal', 'update_goal', 'link_tasks', 'roadmap_status',
   'list_ideas', 'get_idea', 'advise_idea', 'react',
   'intel_overview', 'intel_check_status', 'request_intel_check', 'intel_reply', 'intel_suggest', 'run_sweep',
 ] as const;
@@ -590,6 +590,17 @@ ${r.output}`;
         const p = v?.progress?.goals[id];
         const ids = (v?.linked ?? tasks.map(upId)).join(', ');
         return `${unlink ? 'Took' : 'Put'} ${ids} ${unlink ? 'off' : 'on'} ${id}${g ? ` ${clip(g.title, 60)} [${g.status}]` : ''}${p ? ` · ${p.done}/${p.total} merged` : ''}.`;
+      },
+    );
+
+    tool(
+      'roadmap_status',
+      "Post where the project stands, for the user: one or two plain sentences (stage %, the goal just finished or in progress, what's next, whether the date holds). Call it after every merged task and every roadmap change. task = the merged task that prompted it. Replaces the last one; shows on the Roadmap page, the phone and in chat.",
+      { text: z.string().min(1).max(400).describe('e.g. "M2 Core wall 60%: G3 Reactions done, G4 Moderation next. Launch 15 Nov holds."'), task: z.string().optional().describe('Task id, e.g. T21') },
+      async ({ text, task }) => {
+        const v = await api<RoadmapView>('/api/roadmap/status', { method: 'POST', body: { actor: me, text, ...(task ? { taskId: upId(task) } : {}) } });
+        const pct = v?.progress ? ` (${v.progress.overall.percent}% overall)` : '';
+        return `Posted the roadmap status${pct}.`;
       },
     );
 

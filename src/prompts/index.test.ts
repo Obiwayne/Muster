@@ -49,6 +49,9 @@ describe('captainPrompt', () => {
     expect(p).toMatch(/Tick exit criteria only with evidence.*then `complete_stage`/);
     expect(p).toMatch(/Propose replans with `set_roadmap` instead of silently changing scope/);
     expect(p).toMatch(/`add_goal` to the right stage/);
+    expect(p).toMatch(/Rule: after every merged task, update the roadmap, then call `roadmap_status\(text, task\)`/);
+    expect(p).toMatch(/The user reads this line to know where things are, so never skip it/);
+    expect(p).toContain('`roadmap_status(text, task?)`');
     for (const t of ['set_roadmap(', 'update_stage', 'check_criterion(stage, n)', 'update_goal', 'post_task(title, description, goal']) expect(p).toContain(t);
   });
   it('lists the lines, marks the default and says humans approve', () => {
