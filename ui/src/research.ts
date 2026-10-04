@@ -312,7 +312,7 @@ export function agoText(iso: string, now = Date.now()): string {
 export function updatedLine(feed: FeedItem[], roadmap: Pick<Roadmap, 'updatedAt'>, captainIds: Set<string>, now = Date.now()): string {
   let best: FeedItem | undefined;
   for (const f of feed) {
-    if (!captainIds.has(f.from) || f.kind !== 'event' || !ROADMAP_RE.test(f.text)) continue;
+    if (!captainIds.has(f.from) || f.kind !== 'event' || !ROADMAP_RE.test(f.text) || f.text.startsWith('Roadmap: ')) continue; // roadmap_status lines show on their own
     if (!best || Date.parse(f.at) >= Date.parse(best.at)) best = f;
   }
   if (best) return `Captain updated it ${agoText(best.at, now)} (${roadmapWhat(stripActor(best))})`;

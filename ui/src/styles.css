@@ -812,6 +812,10 @@ textarea.field { height: auto; min-height: 40px; padding: 10px 14px; resize: ver
 .rm-toggle button { height: 26px; padding: 0 12px; border-radius: 6px; font-size: 12px; color: var(--color-muted); }
 .rm-toggle button.on { background: var(--color-surface-2); color: var(--color-text); font-weight: 550; }
 .rm-banner-host:empty { display: none; }
+.rm-said-host:empty { display: none; }
+.rm-said { flex-shrink: 0; display: flex; flex-direction: column; gap: 3px; padding: 12px 20px; border-bottom: 1px solid var(--color-line); }
+.rm-said-by { font-family: var(--font-mono); font-size: 11px; color: var(--color-faint); }
+.rm-said-text { font-size: 13px; line-height: 19px; color: var(--color-muted); max-width: 900px; }
 .rm-draft { margin: 12px 20px 0; flex-shrink: 0; }
 .rm-draft svg { flex-shrink: 0; }
 .big.rm-hero { font-size: 28px; }

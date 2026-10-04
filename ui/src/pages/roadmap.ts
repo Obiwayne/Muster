@@ -8,7 +8,7 @@ import type { Page } from '../page';
 import { ApiError, api, type RoadmapResponse } from '../api';
 import { approveRoadmap, askCaptain, run, sendBackRoadmap } from '../actions';
 import { ageShort, displayName, hhmm, idNum, roleOf, stationRole, taskIsStuck } from '../util';
-import { newCount, updatedLine } from '../research';
+import { agoText, newCount, updatedLine } from '../research';
 import { createResearchModal } from './research';
 import {
   DAY, HEALTH, average, barSpan, currentStageId, frac, labelStep, launchText, localDay, mergedPerDay, nextStage, parseDay,
@@ -56,12 +56,13 @@ export function createRoadmap(): Page {
   const researchModal = createResearchModal(); // opened straight from here while there is no research yet
 
   const subbar = h('div.rm-sub');
+  const said = h('div.rm-said-host'); // the Captain's latest roadmap_status line
   const banner = h('div.rm-banner-host');
   const overview = h('div.rm-scroll');
   const dmain = h('div.rm-dmain');
   const rail = h('aside.rm-rail');
   const detail = h('div.rm-detail', { hidden: true }, dmain, rail);
-  const el = h('div.page.rm', null, subbar, banner, overview, detail);
+  const el = h('div.page.rm', null, subbar, said, banner, overview, detail);
 
   // ---------------------------------------------------------------- fetching
   let seq = 0;
@@ -126,11 +127,13 @@ export function createRoadmap(): Page {
 
     if (!rm) {
       subbar.hidden = true;
+      setChildren(said);
       setChildren(banner);
       setChildren(overview, emptyState(state));
       return;
     }
     subbar.hidden = false;
+    setChildren(said, rm.statusLine ? saidLine(rm.statusLine) : null);
     setChildren(banner, rm.status === 'draft' ? draftBanner(rm) : null);
     if (st) renderDetail(state, rm, pg, st);
     else renderOverview(state, rm, pg);
@@ -144,6 +147,13 @@ export function createRoadmap(): Page {
       h('div.big.rm-hero', null, 'No roadmap yet'),
       h('p', null, 'The roadmap is the plan the crew works to: stages with dates and exit criteria, goals inside each stage, and the tasks that deliver them. The Captain drafts it, you approve it, and progress here counts itself as tasks merge.'),
       h('button.btn.primary.lg', { onclick: () => draftOne(state) }, icon('route', 14), 'Ask the Captain to draft one')));
+  }
+
+  /** "Captain · 14 min ago" over the Captain's last word on where the project stands. */
+  function saidLine(st: NonNullable<Roadmap['statusLine']>): HTMLElement {
+    return h('div.rm-said', { title: new Date(st.at).toLocaleString() },
+      h('div.rm-said-by', null, `Captain · ${agoText(st.at)}`),
+      h('div.rm-said-text', null, st.text));
   }
 
   function draftBanner(rm: Roadmap): HTMLElement {
