@@ -445,46 +445,173 @@ describe('read-only browsing', () => {
   });
 });
 
-describe('login window', () => {
-  it('opens a headed window on the login page and locks browsing until it closes', async () => {
-    const b = make();
+describe('login window (plain Chrome, no automation)', () => {
+  // A fake Chrome: the first start takes the profile lock and (like real Chrome) the spawned process
+  // exits at once after relaunching itself; later starts on the locked profile hand off and exit.
+  interface FakeChrome {
+    locked: boolean;
+    spawns: { exe: string; args: string[]; pid: number }[];
+    stops: { pid: number; force: boolean }[];
+    ignoreGraceful: boolean;
+    lockedAtSpawn: boolean[];
+    contextsClosedAtSpawn: boolean[];
+  }
+  let chrome: FakeChrome;
+  const BROWSER_PID = 4242;
+  const PROFILE = () => join(dir, 'research-browser', 'profile');
+  const tick = (ms = 30) => new Promise((r) => setTimeout(r, ms));
+
+  function makeLogin(over: Partial<ConstructorParameters<typeof ResearchBrowser>[0]> = {}) {
+    return make({
+      loginPollMs: 5,
+      closeWaitMs: 1000,
+      spawn: (exe, args) => {
+        const pid = 100 + chrome.spawns.length;
+        chrome.spawns.push({ exe, args, pid });
+        chrome.lockedAtSpawn.push(chrome.locked);
+        chrome.contextsClosedAtSpawn.push(world.contexts.every((c) => c.closed));
+        const handlers: Record<string, ((...a: any[]) => void)[]> = {};
+        chrome.locked = true;
+        setTimeout(() => (handlers.exit ?? []).forEach((f) => f(0)), 1);
+        return { pid, on: (ev: string, fn: (...a: any[]) => void) => void (handlers[ev] ??= []).push(fn) } as any;
+      },
+      profileLocked: (d) => d === PROFILE() && chrome.locked,
+      findBrowserPid: async () => (chrome.locked ? BROWSER_PID : undefined),
+      stopProcess: async (pid, force) => {
+        chrome.stops.push({ pid, force });
+        if (force || !chrome.ignoreGraceful) chrome.locked = false;
+      },
+      ...over,
+    });
+  }
+
+  beforeEach(() => {
+    chrome = { locked: false, spawns: [], stops: [], ignoreGraceful: false, lockedAtSpawn: [], contextsClosedAtSpawn: [] };
+  });
+
+  it('opens a normal Chrome window on the profile with no automation and locks browsing until it closes', async () => {
+    const b = makeLogin();
     const st = await b.openLogin({ site: 'reddit' });
     expect(st.state).toBe('login_open');
     expect(st.loginSite).toBe('reddit');
-    const launch = world.launches.at(-1)!;
-    expect(launch.opts).toMatchObject({ headless: false, channel: 'chrome' });
-    const loginCtx = world.contexts.at(-1)!;
-    expect(loginCtx.pagesList[0].gotos).toEqual([]); // goto is fire-and-forget
-    await new Promise((r) => setTimeout(r, 10));
-    expect(loginCtx.pagesList[0].gotos).toEqual(['https://www.reddit.com/login/']);
+    expect(chrome.spawns).toHaveLength(1);
+    const { exe, args } = chrome.spawns[0];
+    expect(exe).toBe(CHROME);
+    expect(args).toEqual([`--user-data-dir=${PROFILE()}`, '--no-first-run', '--no-default-browser-check', '--new-window', 'https://www.reddit.com/login/']);
+    for (const a of args) expect(a).not.toMatch(/remote-debugging|enable-automation|automation|headless|webdriver|user-agent|disable-blink-features/i);
+    expect(world.launches).toEqual([]); // Playwright never touches the sign-in window
 
+    await tick(); // the spawned process exits (Chrome relaunched itself) but the profile stays locked
+    expect((await b.status()).state).toBe('login_open');
     await expect(b.read('https://www.reddit.com/', { mode: 'profile' })).rejects.toMatchObject({ status: 409, message: expect.stringMatching(/close the login window first/) });
     await expect(b.read('https://example.com/', { mode: 'public' })).resolves.toMatchObject({ via: 'public' });
+  });
 
+  it('closes the headless profile context before starting Chrome (one process per profile)', async () => {
+    const b = makeLogin();
+    await b.read('https://a.com/', { mode: 'profile' });
+    expect(world.contexts[0].closed).toBe(false);
+    await tick(5); // the browse call finishes settling
+    await b.openLogin({ site: 'reddit' });
+    expect(chrome.contextsClosedAtSpawn).toEqual([true]);
+  });
+
+  it('a second site opens a tab in the same window', async () => {
+    const b = makeLogin();
+    await b.openLogin({ site: 'reddit' });
+    await tick();
+    const st = await b.openLogin({ site: 'linkedin' });
+    expect(st).toMatchObject({ state: 'login_open', loginSite: 'linkedin' });
+    expect(chrome.spawns).toHaveLength(2);
+    expect(chrome.spawns[1].args).toEqual([`--user-data-dir=${PROFILE()}`, '--no-first-run', '--no-default-browser-check', 'https://www.linkedin.com/login']); // no --new-window: a tab
+    expect(chrome.lockedAtSpawn).toEqual([false, true]); // handed to the running window
+    await tick();
+    expect((await b.status()).state).toBe('login_open');
+  });
+
+  it('"Close login window" asks Chrome to close gracefully, then reads cookies headless and connects sites', async () => {
+    const b = makeLogin();
+    await b.openLogin({ site: 'reddit' });
+    await tick();
     world.persisted.push(sessionCookie('reddit_session', '.reddit.com'));
     const after = await b.closeLogin();
+    expect(chrome.stops).toEqual([{ pid: BROWSER_PID, force: false }]);
     expect(after.state).toBe('idle');
     expect(after.sites.find((s) => s.site === 'reddit')).toMatchObject({ connected: true, via: 'login' });
-    expect(loginCtx.closed).toBe(true);
+    expect(world.launches).toHaveLength(1);
+    expect(world.launches[0]).toMatchObject({ dir: PROFILE(), opts: { headless: true, channel: 'chrome' } });
+    expect(world.contexts[0].closed).toBe(true); // opened only to read the cookie names
+    expect(JSON.stringify(after)).not.toContain('SECRET-VALUE');
+    expect(readFileSync(join(dir, 'research-browser', 'status.json'), 'utf8')).not.toContain('SECRET-VALUE');
+    await expect(b.read('https://www.reddit.com/', { mode: 'profile' })).resolves.toMatchObject({ loggedIn: true });
+  });
+
+  it('repeats the graceful request (one per window) and forces Chrome closed only after the wait', async () => {
+    chrome.ignoreGraceful = true;
+    const b = makeLogin({ closeWaitMs: 3000 });
+    await b.openLogin({ site: 'reddit' });
+    await tick();
+    const after = await b.closeLogin();
+    expect(chrome.stops).toEqual([...Array(3).fill({ pid: BROWSER_PID, force: false }), { pid: BROWSER_PID, force: true }]);
+    expect(after.state).toBe('idle');
   });
 
   it('notices when you close the window yourself', async () => {
-    const b = make();
+    const b = makeLogin();
     await b.openLogin({ site: 'linkedin' });
-    const ctx = world.contexts.at(-1)!;
+    await tick();
     world.persisted.push(sessionCookie('li_at', '.www.linkedin.com'));
-    await ctx.pagesList[0].close();
-    await new Promise((r) => setTimeout(r, 10));
+    chrome.locked = false; // you closed Chrome
+    await tick();
+    expect((await b.status()).state).toBe('login_open'); // still within the start-up grace
+    clock += 60_000;
+    await tick();
     const st = await b.status();
     expect(st.state).toBe('idle');
-    expect(st.sites.find((s) => s.site === 'linkedin')?.connected).toBe(true);
+    expect(st.sites.find((s) => s.site === 'linkedin')).toMatchObject({ connected: true, via: 'login' });
+    expect(chrome.stops).toEqual([]);
+  });
+
+  it('stays open while the profile is locked, even after the spawned process exits', async () => {
+    const b = makeLogin();
+    await b.openLogin({ site: 'reddit' });
+    clock += 60_000;
+    await tick(40);
+    expect((await b.status()).state).toBe('login_open');
+    expect(world.launches).toEqual([]);
+  });
+
+  it('treats a locked profile as the open login window after a restart', async () => {
+    chrome.locked = true;
+    const b = makeLogin();
+    expect((await b.status()).state).toBe('login_open');
+    await b.closeLogin();
+    expect(chrome.stops[0]).toEqual({ pid: BROWSER_PID, force: false });
+    expect((await b.status()).state).toBe('idle');
+  });
+
+  it('falls back to the bundled Chromium only when Chrome is not installed', async () => {
+    const bundled = 'Z:/no-bundled/chrome.exe';
+    const b = makeLogin({ exists: (p) => p === bundled });
+    await b.openLogin({ url: 'https://padlet.com/auth/login' });
+    expect(chrome.spawns[0].exe).toBe(bundled);
+    expect(chrome.spawns[0].args.at(-1)).toBe('https://padlet.com/auth/login');
+    const withChrome = makeLogin({ exists: (p) => p === bundled || p === CHROME });
+    await withChrome.openLogin({ site: 'reddit' }).catch(() => undefined);
+    expect(chrome.spawns.at(-1)!.exe).toBe(CHROME);
   });
 
   it('refuses unknown sites and non-http urls', async () => {
-    const b = make();
+    const b = makeLogin();
     await expect(b.openLogin({ site: 'myspace' })).rejects.toMatchObject({ status: 404 });
     await expect(b.openLogin({ url: 'file:///C:/x' })).rejects.toMatchObject({ status: 400 });
     await expect(b.openLogin({})).rejects.toMatchObject({ status: 400 });
+    expect(chrome.spawns).toEqual([]);
+  });
+
+  it('never adds automation to the sign-in window in the source', () => {
+    const src = readFileSync(new URL('./researchbrowser.ts', import.meta.url), 'utf8');
+    expect(src).not.toMatch(/--remote-debugging|--enable-automation|AutomationControlled|webdriver/);
   });
 });
 

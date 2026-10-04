@@ -7,7 +7,8 @@
 //
 // playwright-core is loaded with a dynamic import, so Muster builds, tests and runs without it; the
 // tiny interfaces below are the only parts of its API this module touches (tests inject a fake).
-import { existsSync, mkdirSync, readFileSync, writeFileSync } from 'node:fs';
+import { execFile, spawn as nodeSpawn } from 'node:child_process';
+import { existsSync, lstatSync, mkdirSync, readFileSync, readlinkSync, writeFileSync } from 'node:fs';
 import { delimiter, dirname, join, posix, win32 } from 'node:path';
 import { HttpError, badRequest, conflict, notFound } from '../core/errors.js';
 import { secretsBase } from '../core/tokens.js';
@@ -88,7 +89,94 @@ export interface ResearchBrowserOptions {
   navTimeoutMs?: number; // per page load (default 30 s)
   now?: () => number;
   sleep?: (ms: number) => Promise<void>;
+  /** Test seams for the sign-in window, which is plain Chrome started by Muster with no automation at all. */
+  spawn?: (exe: string, args: string[]) => LoginProcess;
+  /** True while a browser holds the profile's lock (Windows: `<profile>/lockfile`; elsewhere `SingletonLock`). */
+  profileLocked?: (profileDir: string) => boolean;
+  /** PID of the browser process (not a child) running on the profile, if any. */
+  findBrowserPid?: (profileDir: string) => Promise<number | undefined>;
+  /** Asks a browser process to close (force: kill it and its children). */
+  stopProcess?: (pid: number, force: boolean) => Promise<void>;
+  loginPollMs?: number; // how often the open sign-in window is checked (default 3 s)
+  closeWaitMs?: number; // how long "Close login window" waits for a graceful exit before forcing (default 10 s)
 }
+
+/** The slice of a child process the sign-in window uses. */
+export interface LoginProcess {
+  pid?: number;
+  on(event: 'exit', fn: (code: number | null) => void): unknown;
+  on(event: 'error', fn: (e: Error) => void): unknown;
+}
+
+/** Plain Chrome flags for the sign-in window: a separate profile and a page, nothing else (a tab when joining the open window). */
+export function loginArgs(profileDir: string, url: string, newWindow = true): string[] {
+  return [`--user-data-dir=${profileDir}`, '--no-first-run', '--no-default-browser-check', ...(newWindow ? ['--new-window'] : []), url];
+}
+
+/**
+ * Whether a browser holds the profile. Chrome on Windows keeps `<profile>/lockfile` open with
+ * delete-on-close, so the file exists exactly while a browser runs on the profile (the OS removes it
+ * even when Chrome crashes). On macOS/Linux `SingletonLock` is a symlink to "<host>-<pid>": locked
+ * while that pid is alive (a stale link after a crash is ignored).
+ */
+export function defaultProfileLocked(profileDir: string, platform: NodeJS.Platform, exists: (p: string) => boolean): boolean {
+  if (platform === 'win32') return exists(join(profileDir, 'lockfile'));
+  const pid = singletonPid(profileDir);
+  if (!pid) return false;
+  try {
+    process.kill(pid, 0);
+    return true;
+  } catch (e) {
+    return (e as NodeJS.ErrnoException).code === 'EPERM';
+  }
+}
+
+function singletonPid(profileDir: string): number | undefined {
+  try {
+    const link = join(profileDir, 'SingletonLock');
+    if (!lstatSync(link).isSymbolicLink()) return undefined;
+    const pid = Number(readlinkSync(link).split('-').pop());
+    return Number.isInteger(pid) && pid > 0 ? pid : undefined;
+  } catch {
+    return undefined;
+  }
+}
+
+const execOut = (cmd: string, args: string[], env?: NodeJS.ProcessEnv) =>
+  new Promise<string>((resolve) => execFile(cmd, args, { windowsHide: true, timeout: 20_000, ...(env ? { env } : {}) }, (_e, out) => resolve(String(out ?? ''))));
+
+/** The browser process on a profile: Windows asks WMI for the process whose command line has the profile and no --type=. */
+async function defaultFindBrowserPid(profileDir: string, platform: NodeJS.Platform): Promise<number | undefined> {
+  if (platform !== 'win32') return singletonPid(profileDir);
+  const ps =
+    "$d=$env:MUSTER_PROFILE_DIR; Get-CimInstance Win32_Process | Where-Object { $_.CommandLine -and $_.CommandLine.Contains($d) -and -not $_.CommandLine.Contains('--type=') } | Select-Object -First 1 -ExpandProperty ProcessId";
+  const out = await execOut('powershell.exe', ['-NoProfile', '-NonInteractive', '-Command', ps], { ...process.env, MUSTER_PROFILE_DIR: profileDir });
+  const pid = Number(out.trim().split(/\s+/)[0]);
+  return Number.isInteger(pid) && pid > 0 ? pid : undefined;
+}
+
+/**
+ * Graceful: Windows `taskkill /PID <pid>` without /F posts WM_CLOSE to the browser's windows, so Chrome
+ * shuts down normally and flushes its cookies. (/T is not used for the graceful step: Chrome's sandboxed
+ * children refuse it and that leaves the browser half-closed.) Force: `taskkill /PID <pid> /T /F`.
+ */
+async function defaultStopProcess(pid: number, force: boolean, platform: NodeJS.Platform): Promise<void> {
+  if (platform === 'win32') {
+    await execOut('taskkill', force ? ['/PID', String(pid), '/T', '/F'] : ['/PID', String(pid)]);
+    return;
+  }
+  try {
+    process.kill(pid, force ? 'SIGKILL' : 'SIGTERM');
+  } catch {
+    // already gone
+  }
+}
+
+const defaultSpawn = (exe: string, args: string[]): LoginProcess => {
+  const child = nodeSpawn(exe, args, { detached: true, stdio: 'ignore' });
+  child.unref();
+  return child;
+};
 
 interface SavedState {
   sites: Record<string, { connected: boolean; via?: 'login' | 'opera'; checkedAt: string }>;
@@ -107,6 +195,17 @@ const TEXT_MAX = 40_000;
 const LINKS_MAX = 200;
 const TOOLS_TTL_MS = 5 * 60_000;
 const LOGIN_POLL_MS = 3000;
+const LOGIN_GRACE_MS = 10_000; // Chrome may relaunch itself at start: the window counts as open this long after a spawn
+
+/** The human's sign-in window: plain Chrome on the research profile, started without any automation. */
+interface LoginWindow {
+  exe: string;
+  pid?: number; // the process Muster spawned (Chrome may hand off or relaunch, so it can exit while the window stays)
+  exited: boolean;
+  startedAt: number;
+  goneOnce: boolean; // the last check saw it gone (two checks in a row end the login)
+  stopping?: Promise<void>;
+}
 
 const defaultLoader = async (): Promise<PwModule> => {
   const name = 'playwright-core'; // a variable keeps tsc from resolving the optional module
@@ -175,11 +274,18 @@ export class ResearchBrowser {
   private publicBrowser?: PwBrowser;
   private publicCtx?: PwContext;
   private publicPage?: PwPage;
-  private loginCtx?: PwContext;
+  private login?: LoginWindow;
   private loginSite?: string;
   private loginPoll?: NodeJS.Timeout;
   private loginCookies?: { name: string; domain: string }[]; // names/domains only, never values
   private loginClosing?: Promise<void>;
+  private profileClosedAt = -Infinity; // when Muster last closed its own Playwright context on the profile
+  private readonly spawnFn: (exe: string, args: string[]) => LoginProcess;
+  private readonly profileLocked: (profileDir: string) => boolean;
+  private readonly findBrowserPid: (profileDir: string) => Promise<number | undefined>;
+  private readonly stopProcess: (pid: number, force: boolean) => Promise<void>;
+  private readonly loginPollMs: number;
+  private readonly closeWaitMs: number;
   private idleTimer?: NodeJS.Timeout;
   private chain: Promise<unknown> = Promise.resolve();
   private inFlight = 0;
@@ -204,6 +310,12 @@ export class ResearchBrowser {
     this.navTimeoutMs = opts.navTimeoutMs ?? 30_000;
     this.now = opts.now ?? Date.now;
     this.sleep = opts.sleep ?? ((ms) => new Promise((r) => setTimeout(r, ms)));
+    this.spawnFn = opts.spawn ?? defaultSpawn;
+    this.profileLocked = opts.profileLocked ?? ((d) => defaultProfileLocked(d, this.platform, this.exists));
+    this.findBrowserPid = opts.findBrowserPid ?? ((d) => defaultFindBrowserPid(d, this.platform));
+    this.stopProcess = opts.stopProcess ?? ((pid, force) => defaultStopProcess(pid, force, this.platform));
+    this.loginPollMs = opts.loginPollMs ?? LOGIN_POLL_MS;
+    this.closeWaitMs = opts.closeWaitMs ?? 10_000;
     this.saved = this.loadSaved();
   }
 
@@ -216,7 +328,8 @@ export class ResearchBrowser {
     // First look, or the profile is open anyway: read which sites are signed in (cookie names only).
     // A failed first look isn't retried for a minute, so polling GET /api/browser never launches Chrome per call.
     const firstLook = !Object.keys(this.saved.sites).length && this.now() - this.firstLookAt > 60_000;
-    if (!problem && !this.loginCtx && this.inFlight === 0 && (this.profileCtx || firstLook)) {
+    this.adoptLogin();
+    if (!problem && !this.login && this.inFlight === 0 && (this.profileCtx || firstLook)) {
       if (!this.profileCtx) this.firstLookAt = this.now();
       await this.exclusive(async () => this.refreshSites(await this.profileContext())).catch(() => undefined);
     }
@@ -244,7 +357,7 @@ export class ResearchBrowser {
       ...(problem ? { problem } : {}),
       channel: cfg.channel,
       profileDir: this.profileDir,
-      state: this.loginCtx ? 'login_open' : this.inFlight > 0 ? 'browsing' : 'idle',
+      state: this.login ? 'login_open' : this.inFlight > 0 ? 'browsing' : 'idle',
       ...(this.loginSite ? { loginSite: this.loginSite } : {}),
       sites,
       tools: await this.toolList(found),
@@ -393,9 +506,9 @@ export class ResearchBrowser {
 
   /** Runs one browse call: one at a time, on the mode's page; adds url, title, loggedIn and via. */
   private browse(mode: BrowseMode, target: string, action: 'read' | 'screenshot' | 'scroll', fn: (page: PwPage) => Promise<Partial<BrowseOut> & { status: number }>): Promise<BrowseOut> {
-    if (mode !== 'public' && this.loginCtx) return Promise.reject(conflict('The research browser login window is open: close the login window first.'));
+    if (mode !== 'public' && this.login) return Promise.reject(conflict('The research browser login window is open: close the login window first.'));
     return this.exclusive(async () => {
-      if (mode !== 'public' && this.loginCtx) throw conflict('The research browser login window is open: close the login window first.');
+      if (mode !== 'public' && this.login) throw conflict('The research browser login window is open: close the login window first.');
       await this.ensureAvailable();
       const page = mode === 'public' ? await this.publicPageGet() : await this.profilePageGet(this.visibleFor(target));
       const out = await fn(page);
@@ -560,6 +673,7 @@ export class ResearchBrowser {
       const old = this.profileCtx;
       this.profileCtx = this.profilePage = undefined;
       await old.close().catch(() => undefined);
+      this.profileClosedAt = this.now();
     }
     const pw = await this.ensureAvailable();
     mkdirSync(this.profileDir, { recursive: true });
@@ -633,19 +747,32 @@ export class ResearchBrowser {
     this.profileCtx = this.profilePage = undefined;
     this.publicCtx = this.publicPage = this.publicBrowser = undefined;
     await ctx?.close().catch(() => undefined);
+    if (ctx) this.profileClosedAt = this.now();
     await pub?.close().catch(() => undefined);
   }
 
-  /** Closes everything (server shutdown). Never starts anything: no status refresh, no python check. */
+  /**
+   * Closes Muster's own contexts (server shutdown). Never starts anything: no status refresh, no python check.
+   * A sign-in window is plain Chrome, not Muster's: it stays open, and the next status() notices the profile
+   * lock and treats it as the login window again.
+   */
   async close(): Promise<void> {
     if (this.idleTimer) clearTimeout(this.idleTimer);
-    await this.closeLoginWindow().catch(() => undefined);
+    this.stopLoginPoll();
+    this.login = undefined;
+    this.loginSite = undefined;
     await this.closeBrowsing();
   }
 
   // ---- login window (the human signs in; scout never does) ---------------------------------------
+  //
+  // The sign-in window is a normal Chrome window on the research profile: Muster starts the browser's own
+  // executable with a separate --user-data-dir and the login page, and nothing else. No Playwright, no
+  // remote debugging, no automation flags, so sites (Google included) see an ordinary browser. Chrome
+  // locks a profile to one process, so Muster's headless context is closed first and the profile is read
+  // again (headless, cookie names and domains only) after the window has closed.
 
-  /** Opens a headed window on the research profile at the site's login page. */
+  /** Opens a normal Chrome window on the research profile at the site's login page. */
   async openLogin(target: { site?: string; url?: string }): Promise<ResearchBrowserStatus> {
     let url: string;
     let site: string | undefined;
@@ -659,67 +786,172 @@ export class ResearchBrowser {
       site = siteForHost(new URL(url).hostname)?.site;
     } else throw badRequest('Give a site or a url to sign in to');
     if (this.inFlight > 0) throw conflict('Scout is browsing right now; try again in a moment.');
+    if (this.loginClosing || this.login?.stopping) throw conflict('The login window is closing; try again in a moment.');
     const pw = await this.ensureAvailable();
-    if (this.loginCtx) {
-      const page = this.loginCtx.pages()[0] ?? (await this.loginCtx.newPage());
+    const exe = channelExecutable(this.opts.config().channel, this.env, this.platform, this.exists) ?? this.bundledExecutable(pw);
+    if (!exe) throw new HttpError(503, "The research browser isn't available: no browser executable found");
+    this.adoptLogin();
+    if (this.login) {
+      // Chrome hands a second start on the same profile to the running window, which opens a tab.
+      this.spawnLogin(exe, url, false);
       this.loginSite = site;
-      void page.goto(url).catch(() => undefined);
       return this.status();
     }
     if (this.idleTimer) clearTimeout(this.idleTimer);
     await this.closeBrowsing();
     mkdirSync(this.profileDir, { recursive: true });
-    const ctx = await this.launch((extra) => pw.chromium.launchPersistentContext(this.profileDir, { ...this.launchOpts(false), ...extra }));
-    this.loginCtx = ctx;
+    this.login = this.spawnLogin(exe, url);
     this.loginSite = site;
     this.loginCookies = undefined;
-    ctx.on('close', () => void this.loginGone(ctx));
-    const watchPage = (p: PwPage) => p.on('close', () => {
-      if (this.loginCtx === ctx && ctx.pages().every((x) => x.isClosed())) void this.closeLogin();
-    });
-    ctx.on('page', watchPage);
-    for (const p of ctx.pages()) watchPage(p);
-    const page = ctx.pages()[0] ?? (await ctx.newPage());
-    void page.goto(url).catch(() => undefined);
-    // Remember which login cookies exist (names and domains only) in case the window is closed abruptly.
-    this.loginPoll = setInterval(() => {
-      void ctx.cookies().then((cs) => {
-        if (this.loginCtx === ctx) this.loginCookies = cs.map((c) => ({ name: c.name, domain: c.domain }));
-      }, () => undefined);
-    }, LOGIN_POLL_MS);
-    this.loginPoll.unref?.();
+    this.watchLogin();
     return this.status();
   }
 
-  /** Closes the login window and records which sites are now signed in. */
+  /** Starts the browser executable on the profile; a second start while the window is open joins it. */
+  private spawnLogin(exe: string, url: string, newWindow = true): LoginWindow {
+    const login: LoginWindow = { exe, exited: false, startedAt: this.now(), goneOnce: false };
+    let child: LoginProcess;
+    try {
+      child = this.spawnFn(exe, loginArgs(this.profileDir, url, newWindow));
+    } catch (e) {
+      throw new HttpError(503, `Couldn't start ${exe}: ${(e as Error).message.split('\n')[0]}`);
+    }
+    login.pid = child.pid;
+    child.on('exit', () => {
+      login.exited = true;
+      if (this.login === login) void this.pollLogin();
+    });
+    child.on('error', () => {
+      login.exited = true;
+    });
+    if (this.login) {
+      // The open window gets the new tab; give the handoff the same start-up grace.
+      this.login.startedAt = login.startedAt;
+      this.login.goneOnce = false;
+    }
+    return login;
+  }
+
+  /** Muster restarted (or lost track) while a browser holds the profile: that is the login window. */
+  private adoptLogin(): void {
+    if (this.login || this.loginClosing || this.profileCtx || this.inFlight > 0) return;
+    if (this.now() - this.profileClosedAt < LOGIN_GRACE_MS) return; // our own headless Chrome may still be exiting
+    if (!this.profileLocked(this.profileDir)) return;
+    this.login = { exe: '', exited: true, startedAt: -Infinity, goneOnce: false };
+    this.watchLogin();
+  }
+
+  private watchLogin(): void {
+    this.stopLoginPoll();
+    this.loginPoll = setInterval(() => void this.pollLogin(), this.loginPollMs);
+    this.loginPoll.unref?.();
+  }
+
+  private stopLoginPoll(): void {
+    if (this.loginPoll) clearInterval(this.loginPoll);
+    this.loginPoll = undefined;
+  }
+
+  /** Open while the spawned process runs, the profile lock is held, or Chrome is still starting. */
+  private loginStillOpen(login: LoginWindow): boolean {
+    return !login.exited || this.profileLocked(this.profileDir) || this.now() - login.startedAt < LOGIN_GRACE_MS;
+  }
+
+  /** The window counts as closed after two looks in a row find no process and no lock. */
+  private async pollLogin(): Promise<void> {
+    const login = this.login;
+    if (!login || login.stopping || this.loginClosing) return;
+    if (this.loginStillOpen(login)) {
+      login.goneOnce = false;
+      return;
+    }
+    if (!login.goneOnce) {
+      login.goneOnce = true;
+      return;
+    }
+    await this.finishLogin();
+  }
+
+  /** Closes the login window ("Close login window") and records which sites are now signed in. */
   async closeLogin(): Promise<ResearchBrowserStatus> {
     await this.closeLoginWindow();
     return this.status();
   }
 
+  /** Asks Chrome to close normally (so it saves its cookies), forcing it only after closeWaitMs. */
   private async closeLoginWindow(): Promise<void> {
-    const ctx = this.loginCtx;
-    if (ctx) {
-      if (!this.loginClosing) {
-        this.loginClosing = (async () => {
-          const cookies = await ctx.cookies().catch(() => undefined);
-          if (cookies) this.loginCookies = cookies.map((c) => ({ name: c.name, domain: c.domain }));
-          await ctx.close().catch(() => undefined);
-          await this.loginGone(ctx);
-        })().finally(() => (this.loginClosing = undefined));
+    this.adoptLogin();
+    const login = this.login;
+    if (!login) return this.loginClosing;
+    login.stopping ??= (async () => {
+      const open = () => !login.exited || this.profileLocked(this.profileDir);
+      if (open()) {
+        const pid = (await this.findBrowserPid(this.profileDir).catch(() => undefined)) ?? (login.exited ? undefined : login.pid);
+        if (pid) {
+          // Each graceful request closes one Chrome window, so it is repeated about once a second.
+          let closed = false;
+          for (let waited = 0; !closed && waited < this.closeWaitMs; waited += 1000) {
+            await this.stopProcess(pid, false).catch(() => undefined);
+            closed = await this.waitFor(() => !open(), Math.min(1000, this.closeWaitMs - waited));
+          }
+          if (!closed) {
+            await this.stopProcess(pid, true).catch(() => undefined);
+            await this.waitFor(() => !open(), 5000);
+          }
+        }
       }
-      await this.loginClosing;
-    }
+      await this.finishLogin();
+    })();
+    await login.stopping;
   }
 
-  private async loginGone(ctx: PwContext): Promise<void> {
-    if (this.loginCtx !== ctx) return;
-    if (this.loginPoll) clearInterval(this.loginPoll);
-    this.loginPoll = undefined;
-    this.loginCtx = undefined;
-    this.loginSite = undefined;
-    if (this.loginCookies) this.applySites(this.loginCookies, 'login');
-    this.loginCookies = undefined;
+  private async waitFor(done: () => boolean, ms: number): Promise<boolean> {
+    for (let waited = 0; waited < ms; waited += 250) {
+      if (done()) return true;
+      await this.sleep(250);
+    }
+    return done();
+  }
+
+  /** The window has closed: read which sites are signed in (headless, names and domains only), then unlock. */
+  private finishLogin(): Promise<void> {
+    if (this.loginClosing) return this.loginClosing;
+    const login = this.login;
+    if (!login) return Promise.resolve();
+    this.stopLoginPoll();
+    this.loginClosing = (async () => {
+      this.loginCookies = await this.readProfileCookies().catch(() => undefined);
+      if (this.login === login) {
+        this.login = undefined;
+        this.loginSite = undefined;
+      }
+      if (this.loginCookies) this.applySites(this.loginCookies, 'login');
+      this.loginCookies = undefined;
+    })().finally(() => (this.loginClosing = undefined));
+    return this.loginClosing;
+  }
+
+  /** Opens the profile headless just long enough to list its cookies (names and domains, never values). */
+  private async readProfileCookies(): Promise<{ name: string; domain: string }[]> {
+    const pw = await this.ensureAvailable();
+    let lastError: unknown;
+    for (let attempt = 0; attempt < 3; attempt++) {
+      if (attempt) await this.sleep(1500); // Chrome may still be letting go of the profile
+      try {
+        return await this.exclusive(async () => {
+          const ctx = await this.launch((extra) => pw.chromium.launchPersistentContext(this.profileDir, { ...this.launchOpts(true), ...extra }));
+          try {
+            return (await ctx.cookies()).map((c) => ({ name: c.name, domain: c.domain }));
+          } finally {
+            await ctx.close().catch(() => undefined);
+            this.profileClosedAt = this.now();
+          }
+        });
+      } catch (e) {
+        lastError = e;
+      }
+    }
+    throw lastError;
   }
 
   // ---- cookies: site status, Opera import, forget -------------------------------------------------
@@ -753,9 +985,9 @@ export class ResearchBrowser {
       if (!c || !allow.includes(c)) throw badRequest(`${d} is not in the Opera allowlist`);
       if (!clean.includes(c)) clean.push(c);
     }
-    if (this.loginCtx) throw conflict('The research browser login window is open: close the login window first.');
+    if (this.login) throw conflict('The research browser login window is open: close the login window first.');
     await this.exclusive(async () => {
-      if (this.loginCtx) throw conflict('The research browser login window is open: close the login window first.');
+      if (this.login) throw conflict('The research browser login window is open: close the login window first.');
       const exp = await exportOperaCookies(clean, { ...this.opts.opera, run: this.opts.opera?.run ?? this.run });
       if (exp.errors['*']) throw new HttpError(502, exp.errors['*']);
       const failed = clean.filter((d) => exp.errors[d]);
@@ -773,7 +1005,7 @@ export class ResearchBrowser {
   async forget(siteName: string): Promise<ResearchBrowserStatus> {
     const s = siteByName(siteName);
     if (!s) throw notFound(`No known site "${siteName}"`);
-    if (this.loginCtx) throw conflict('The research browser login window is open: close the login window first.');
+    if (this.login) throw conflict('The research browser login window is open: close the login window first.');
     const domains = siteDomains(s);
     await this.exclusive(async () => {
       await this.ensureAvailable();

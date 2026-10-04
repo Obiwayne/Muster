@@ -344,7 +344,7 @@ export function createSettings(): Page {
               vis, 'Use a visible browser window for this site')),
           s.connected
             ? h('button.btn.sm', { disabled: !!browserBusy, onclick: () => void browserAct(`forget:${s.site}`, forgetSite(s.site), `Forgot ${s.label}: its cookies are gone from the research profile`) }, 'Forget')
-            : h('button.btn.sm', { disabled: !usable || !!browserBusy || loginOpen, title: usable ? `Open ${s.label}'s login page in the research profile` : avail.text, onclick: () => void browserAct(`login:${s.site}`, openLogin({ site: s.site }), `Sign in to ${s.label} in the window that opened, then close it`) }, 'Connect'));
+            : h('button.btn.sm', { disabled: !usable || !!browserBusy, title: usable ? (loginOpen ? `Open ${s.label}'s login page as a new tab in the open login window` : `Open ${s.label}'s login page in a normal Chrome window on the research profile`) : avail.text, onclick: () => void browserAct(`login:${s.site}`, openLogin({ site: s.site }), `A normal Chrome window opens. Sign in to ${s.label}, then close the window.`) }, 'Connect'));
       }))
       : h('div.faint', { style: 'font-size:12px' }, st ? 'No known sites reported.' : 'Loading…');
 
@@ -354,11 +354,11 @@ export function createSettings(): Page {
           h('div.s', { class: avail.ok ? 'rb-ok' : 'rb-bad' }, avail.text),
           st?.profileDir ? h('div.s.mono', { title: 'Muster\'s own Chrome profile, never your everyday one. Agents are not allowed to read it.' }, st.profileDir) : null),
         loginOpen ? h('button.btn.sm', { disabled: !!browserBusy, onclick: () => void browserAct('close', closeLogin(), 'Login window closed') }, 'Close login window') : null),
-      row('Open login window', "Sign in to any site in Muster's research profile, then close the window. scout browses read-only with those sign-ins.",
+      row('Open login window', "A normal Chrome window opens on Muster's research profile, with no automation attached. Sign in, then close the window: Muster reads which sites are signed in once it has closed, and scout browses read-only with those sign-ins. Google may still ask you to verify it's you later, when scout uses the profile.",
         h('button.btn.sm', {
           disabled: !usable || !!browserBusy || loginOpen,
           title: usable ? '' : avail.text,
-          onclick: () => void browserAct('login', openLogin({}), 'Sign in in the window that opened, then close it'),
+          onclick: () => void browserAct('login', openLogin({}), 'A normal Chrome window opens. Sign in, then close the window.'),
         }, loginOpen ? 'Window open…' : 'Open login window')),
       row('Default browse mode', 'The answer pre-picked in "How should scout browse?"',
         ctl(select(BROWSE_MODES, rb.mode, (v) => {
