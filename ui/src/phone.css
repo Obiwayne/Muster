@@ -98,3 +98,7 @@
 
 .ph-test-row .ph-target { flex: 1; font-size: 12px; color: var(--color-muted); }
 .ph-test { gap: 6px; height: 32px; padding: 0 12px; }
+
+.ph-host-v { display: flex; align-items: center; gap: 6px; }
+.ph-eye { width: 22px; height: 22px; flex-shrink: 0; color: var(--color-faint); }
+.ph-eye:hover { color: var(--color-text); }

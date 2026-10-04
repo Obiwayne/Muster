@@ -67,6 +67,8 @@ export interface NetworkRow {
   /** 'ok' shows a green dot, 'off' a faint one, none no dot. */
   dot?: 'ok' | 'off';
   link?: { text: string; href: string };
+  /** The part of `detail` that is an address (hidden until you press the eye). */
+  secret?: string;
 }
 
 /** The first label of a MagicDNS name ("wayne-pc.tail1234.ts.net" → "wayne-pc"). */
@@ -81,6 +83,7 @@ export function networkRows(s: PhoneStatus): NetworkRow[] {
     mode: 'lan', title: 'Home Wi‑Fi only', sub: 'Phone must be on the same network',
     selected: mode === 'lan', disabled: false,
     detail: lanHosts.length ? `${lanHosts[0]}:${s.port}` : 'no network found',
+    ...(lanHosts.length ? { secret: lanHosts[0] } : {}),
   };
   const tsRow: NetworkRow = {
     mode: 'tailscale', title: 'Home + anywhere with Tailscale', sub: 'Works on mobile data and other networks',
@@ -92,6 +95,7 @@ export function networkRows(s: PhoneStatus): NetworkRow[] {
   } else {
     const who = shortDns(ts.dnsName) || ts.ip || s.pcName.toLowerCase();
     tsRow.detail = `${who} · ${ts.online ? 'connected' : 'offline'}`;
+    tsRow.secret = who;
     tsRow.dot = ts.online ? 'ok' : 'off';
   }
   return [lan, tsRow];
@@ -163,4 +167,14 @@ export function parseSettingsTab(v: string | null | undefined): SettingsTab {
 export function shortFingerprint(fingerprint: string | undefined): string {
   const hex = (fingerprint ?? '').replace(/[^0-9a-f]/gi, '').slice(0, 8).toUpperCase();
   return hex.length === 8 ? `${hex.slice(0, 4)} ${hex.slice(4)}` : '';
+}
+
+/** An address with every letter and digit hidden, keeping its shape: "192.168.0.60" → "•••.•••.•.••". */
+export function maskAddress(text: string): string {
+  return text.replace(/[0-9a-z]/gi, '•');
+}
+
+/** `detail` with its address part hidden unless shown. */
+export function shownDetail(row: Pick<NetworkRow, 'detail' | 'secret'>, show: boolean): string {
+  return show || !row.secret ? row.detail : row.detail.replace(row.secret, maskAddress(row.secret));
 }
