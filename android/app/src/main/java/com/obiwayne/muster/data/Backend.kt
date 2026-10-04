@@ -13,6 +13,9 @@ interface Backend {
     suspend fun sendBack(pid: String, tid: String, text: String)
     suspend fun note(pid: String, nid: String): Note
     suspend fun reply(pid: String, nid: String, text: String)
+
+    /** Answers a Captain question note (ASK.md); returns the closed note. */
+    suspend fun answer(pid: String, nid: String, answers: List<AnswerChoice>): Note
     suspend fun commit(pid: String)
     suspend fun stash(pid: String)
     suspend fun crew(pid: String): CrewResponse
@@ -47,6 +50,11 @@ class RemoteBackend(val api: Api) : Backend {
     override suspend fun note(pid: String, nid: String) = Parse.note(String(api.get("api", "projects", pid, "notes", nid)))
     override suspend fun reply(pid: String, nid: String, text: String) {
         api.post("api", "projects", pid, "notes", nid, "reply", json = body(text))
+    }
+
+    override suspend fun answer(pid: String, nid: String, answers: List<AnswerChoice>): Note {
+        val json = MusterJson.encodeToString(AnswerBody.serializer(), AnswerBody(answers))
+        return Parse.note(String(api.post("api", "projects", pid, "notes", nid, "answer", json = json)))
     }
 
     override suspend fun commit(pid: String) {
