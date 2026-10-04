@@ -120,7 +120,7 @@ export interface Note {
   text: string;
   createdAt: string;
   open: boolean; // stuck/question/waiting/review/escalation start open; others start closed
-  topic?: 'weekly_usage' | 'five_hour' | 'roadmap' | 'research' | 'intel'; // what a system/approval note is about, so the UI can offer the right controls
+  topic?: 'weekly_usage' | 'five_hour' | 'roadmap' | 'research' | 'intel' | 'checkout'; // what a system/approval note is about, so the UI can offer the right controls
   dismissed?: boolean; // you removed it from the board (POST /api/notes/:id/dismiss); kept in state for history, hidden by default
   closedAt?: string;
   replies: NoteReply[];

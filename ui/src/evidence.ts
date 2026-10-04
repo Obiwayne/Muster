@@ -3,7 +3,7 @@
 // which needs the token header, so they are fetched as blobs (cached per file).
 import type { Evidence, EvidenceFile, Task } from '../../src/types';
 import { api } from './api';
-import { h, icon, showModal } from './dom';
+import { h, icon, showModal, toast } from './dom';
 import { ago } from './util';
 
 const blobs = new Map<string, Promise<string>>();
@@ -117,6 +117,20 @@ export function showEvidence(task: Task): void {
     title: `Evidence · ${task.id} ${task.title}`,
     wide: true,
     cancelLabel: 'Close',
+    // Read the evidence, then approve from here: the Captain merges the reviewed commit and pushes.
+    actions: task.status === 'ready_for_merge'
+      ? [task.mergeApproval
+          ? { label: 'Approved: the Captain is merging', kind: 'merge', disabled: true, onClick: () => {} }
+          : { label: 'Approve & merge', kind: 'merge', onClick: async (close: () => void) => {
+              try {
+                await api.approveMerge(task.id);
+                toast(`Approved ${task.id}: the Captain will merge it and push`);
+                close();
+              } catch (e) {
+                toast(e instanceof Error ? e.message : String(e), 'error');
+              }
+            } }]
+      : [],
     body: list.length
       ? h('div.ev-list', null, list.map((e) => entry(task, e)))
       : h('div.empty', null, `${task.id} has no evidence yet. Its last station attaches it with add_evidence before review.`),

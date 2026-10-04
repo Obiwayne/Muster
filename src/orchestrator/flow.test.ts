@@ -228,4 +228,26 @@ describe('task flows', () => {
       rmSync(remote, { recursive: true, force: true });
     }
   });
+
+  it('a dirty main checkout blocks the merge with one note; Commit & merge clears it', async () => {
+    gitSync(repo, 'checkout', '-q', '-b', 'side');
+    commitFile(repo, 'side.txt', 'side\n');
+    gitSync(repo, 'checkout', '-q', 'main');
+    writeFileSync(join(repo, 'README.md'), 'local edit\n');
+
+    const blocked = await call('you', 'POST', '/api/agents/crew-2/merge', { branch: 'side', force: true });
+    expect(blocked.status).toBe(409);
+    expect(blocked.data.error).toMatch(/1 uncommitted file \(README\.md\).*Bulletin board \(N\d+\).*Don't ask them to run git/);
+    const note = state().notes.find((n) => n.topic === 'checkout' && n.open)!;
+    expect(note.text).toContain('README.md');
+    expect((await call('you', 'POST', '/api/agents/crew-2/merge', { branch: 'side', force: true })).status).toBe(409);
+    expect(state().notes.filter((n) => n.topic === 'checkout')).toHaveLength(1);
+
+    expect((await call('captain', 'POST', '/api/checkout/commit')).status).toBe(403);
+    const r = await ok<{ sha: string; waiting: string[] }>('you', 'POST', '/api/checkout/commit', { message: 'Keep local README' });
+    expect(r.sha).toBe(gitSync(repo, 'rev-parse', '--short', 'main'));
+    expect(gitSync(repo, 'log', '-1', '--format=%s', 'main')).toBe('Keep local README');
+    expect(state().notes.find((n) => n.id === note.id)!.open).toBe(false);
+    expect((await call('you', 'POST', '/api/agents/crew-2/merge', { branch: 'side', force: true })).status).toBe(200); // no longer blocked
+  });
 });

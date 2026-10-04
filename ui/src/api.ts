@@ -175,6 +175,8 @@ export const api = {
   approve: (taskId: string, note?: string) => req<Task>('POST', `/api/tasks/${enc(taskId)}/approve`, { actor: YOU, ...(note ? { note } : {}) }),
   /** You're happy with the Captain's review: the Captain merges it (merge_task) and pushes. */
   approveMerge: (taskId: string) => req<Task>('POST', `/api/tasks/${enc(taskId)}/approve-merge`, { actor: YOU }),
+  commitCheckout: () => req<{ ok: boolean; sha?: string; waiting: string[] }>('POST', '/api/checkout/commit', { actor: YOU }),
+  stashCheckout: () => req<{ ok: boolean; stashed: boolean; waiting: string[] }>('POST', '/api/checkout/stash', { actor: YOU }),
   reject: (taskId: string, note: string) => req<Task>('POST', `/api/tasks/${enc(taskId)}/reject`, { actor: YOU, note }),
   stations: () => req<StationDef[]>('GET', '/api/stations'),
   skills: () => req<SkillInfo[]>('GET', '/api/skills'),

@@ -3,6 +3,7 @@ import type { IncomingMessage, ServerResponse } from 'node:http';
 import type { Agent, MusterConfig, NoteType, Role, Task } from '../types.js';
 import { createReadStream, statSync } from 'node:fs';
 import * as board from '../core/board.js';
+import * as checkout from '../core/checkout.js';
 import type { ConfigPatch } from '../core/config.js';
 import * as evidence from '../core/evidence.js';
 import { badRequest, conflict, forbidden, HttpError, notFound } from '../core/errors.js';
@@ -376,6 +377,13 @@ ${block}`;
       }
       ref = task.reviewedSha;
     }
+    const dirty = checkout.changedPaths(await gitOps.uncommittedChanges(ctx.paths.root));
+    if (dirty.length) {
+      const fresh = !checkout.openCheckoutNote(s);
+      const note = mutate(() => checkout.blockedByCheckout(s, dirty, task?.id));
+      if (fresh) ctx.notify('Muster: a merge is blocked', `${dirty.length} uncommitted file${dirty.length === 1 ? '' : 's'} in the main checkout. Commit or set them aside on the Bulletin board.`);
+      throw conflict(`Not merged: the main checkout has ${dirty.length} uncommitted file${dirty.length === 1 ? '' : 's'} (${dirty.slice(0, 3).join(', ')}${dirty.length > 3 ? ', …' : ''}). Muster has asked the user on the Bulletin board (${note.id}) to commit them or set them aside with one click. Don't ask them to run git commands: you'll get a message to merge again once the checkout is clean.`);
+    }
     let output = await gitOps.mergeToBase(ctx.paths.root, base, ref, `Merge ${branch}${task ? ` (${task.id} ${task.title})` : ''}`);
     mutate(() => (task ? tasks.markMerged(s, task, actor) : board.feedEvent(s, actor, `merged ${branch}`)));
     let pushed: boolean | undefined;
@@ -388,6 +396,20 @@ ${pushed ? `Pushed ${base} to origin.` : `Push to origin failed: ${(r.stderr || 
     }
     return { ok: true, output, ...(pushed !== undefined ? { pushed } : {}) };
   };
+  // A merge found uncommitted files in the main checkout: you commit them or set them aside, then the Captain merges again.
+  route('POST', '/api/checkout/commit', async ({ body }) => {
+    if (body.actor !== board.HUMAN) throw forbidden('Only you can commit the main checkout');
+    const message = typeof body.message === 'string' && body.message.trim() ? body.message.trim() : 'Commit local changes before merging';
+    const sha = await gitOps.commitTracked(ctx.paths.root, message);
+    const waiting = mutate(() => checkout.checkoutCleared(state(), 'committed', sha ? `commit ${sha}` : 'already clean'));
+    return { ok: true, ...(sha ? { sha } : {}), waiting };
+  });
+  route('POST', '/api/checkout/stash', async ({ body }) => {
+    if (body.actor !== board.HUMAN) throw forbidden('Only you can set aside the main checkout');
+    const stashed = await gitOps.stashTracked(ctx.paths.root, 'Muster: set aside before merging');
+    const waiting = mutate(() => checkout.checkoutCleared(state(), 'stashed', stashed ? 'git stash pop brings them back' : 'already clean'));
+    return { ok: true, stashed, waiting };
+  });
   // You're happy with the Captain's review: it may merge the task (merge_task) and push.
   route('POST', '/api/tasks/:id/approve-merge', ({ params, body }) => {
     if (body.actor !== board.HUMAN) throw forbidden('Only you can approve a merge');
