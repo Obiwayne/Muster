@@ -39,7 +39,8 @@ object NeedsSync {
         when (ev) {
             is ServerEvent.Need -> {
                 state.upsertNeed(ev.item)
-                notifyIfNew(ctx, state, ev.item, filter = false) // the gateway already applied this device's prefs
+                // The gateway already applied this device's prefs: need_silent only updates the list.
+                if (ev.notify) notifyIfNew(ctx, state, ev.item, filter = false)
             }
             is ServerEvent.Resolved -> {
                 state.removeNeed(ev.id)

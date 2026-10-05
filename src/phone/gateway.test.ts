@@ -376,6 +376,9 @@ describe('phone gateway: events websocket', () => {
     const needs = messages.filter((m) => m.type === 'need');
     expect(needs).toHaveLength(1);
     expect(needs[0].item).toMatchObject({ id: `${pid}:N20`, kind: 'question', summary: 'Ship it on Friday?', projectName: 'Fake Project' });
+    // The usage note doesn't pass the prefs, but still reaches the list, silently.
+    await until(() => messages.some((m) => m.type === 'need_silent'));
+    expect(messages.filter((m) => m.type === 'need_silent').map((m) => m.item.id)).toEqual([`${pid}:N21`]);
 
     projectState.notes.find((n) => n.id === 'N20')!.open = false;
     await gw.pollNow();
@@ -390,6 +393,25 @@ describe('phone gateway: events websocket', () => {
     const closed = new Promise<number>((r) => ws.on('close', (code) => r(code)));
     await call('DELETE', '/api/device', { key });
     expect(await closed).toBe(4001);
+  });
+
+  it('keeps the list live in quiet hours: new items arrive as need_silent instead of being dropped', async () => {
+    clock = 0;
+    const realHour = new Date().getHours();
+    const { key } = await pairPhone('Night owl');
+    // Quiet hours that always cover "now".
+    const from = `${String((realHour + 23) % 24).padStart(2, '0')}:00`;
+    const to = `${String((realHour + 2) % 24).padStart(2, '0')}:00`;
+    await call('PUT', '/api/prefs', { key, body: { quiet: { on: true, from, to } } });
+    const { messages } = await connect(key);
+    await until(() => gw.readyClients() > 0);
+    await gw.pollNow();
+
+    projectState.notes.push(fakeNote('N30', { type: 'question', from: 'captain', text: 'Friendly page or plain 404?' }));
+    await gw.pollNow();
+    await until(() => messages.some((m) => m.type === 'need_silent'));
+    expect(messages.filter((m) => m.type === 'need_silent').map((m) => m.item.id)).toEqual([`${pid}:N30`]);
+    expect(messages.filter((m) => m.type === 'need')).toEqual([]);
   });
 });
 

@@ -90,7 +90,9 @@ All times ISO strings. Errors `{ error: string }` with 4xx/5xx.
   Switches: `review` covers review + approval, `question` covers question + escalation. Quiet hours use the PC's clock.
 - `DELETE /api/device` → unlinks this phone.
 - `GET /api/events` (WebSocket upgrade, same bearer): server sends `{ type: 'need', item: NeedItem }` for each NEW needs-you
-  item that passes this device's prefs, `{ type: 'resolved', id }` when one goes away, `{ type: 'ping' }` every 25 s.
+  item that passes this device's prefs (notify), `{ type: 'need_silent', item }` for a new item that doesn't (quiet hours,
+  a switch or project turned off: add it to the list, don't buzz), `{ type: 'resolved', id }` when one goes away,
+  `{ type: 'ping' }` every 25 s.
   The gateway polls each running project's state every 3 s (or subscribes to its WS) to diff items.
   As built: items already waiting when the socket opens are the baseline and are not pushed (fetch `/api/needs` on
   connect); items of a project that stops answering are kept, not 'resolved'. Also `{ type: 'test' }` from
