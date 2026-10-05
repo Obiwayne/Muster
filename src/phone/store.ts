@@ -40,6 +40,16 @@ export interface RemoteState {
   /** Set while the hold is off: when it was turned off, and how many writes went out without your tap since. */
   offSince?: string;
   sentWithoutTap?: number;
+  /** Set from Settings → Remote access (PUT /admin/remote/config). Unset = the env/flags seed it. */
+  config?: RemoteConfig;
+}
+
+export interface RemoteConfig {
+  enabled: boolean;
+  port: number;
+  /** The tunnel's public hostname, e.g. muster.example.com (no scheme, no path). */
+  publicHost: string | null;
+  tunnel: 'cloudflare' | 'tailscale' | null;
 }
 
 const freshRemote = (): RemoteState => ({ confirmWrites: true, allowApprove: false, pending: [], nextPending: 1 });
@@ -114,6 +124,16 @@ export function loadState(dir: string): PhoneState {
         nextPending: Number.isInteger(raw.remote?.nextPending) && raw.remote!.nextPending > 0 ? raw.remote!.nextPending : 1,
         ...(raw.remote?.confirmWrites === false && typeof raw.remote.offSince === 'string' ? { offSince: raw.remote.offSince } : {}),
         ...(raw.remote?.confirmWrites === false && Number.isInteger(raw.remote.sentWithoutTap) ? { sentWithoutTap: raw.remote.sentWithoutTap } : {}),
+        ...(raw.remote?.config && typeof raw.remote.config === 'object'
+          ? {
+              config: {
+                enabled: raw.remote.config.enabled === true,
+                port: Number.isInteger(raw.remote.config.port) ? raw.remote.config.port : 47911,
+                publicHost: typeof raw.remote.config.publicHost === 'string' && raw.remote.config.publicHost ? raw.remote.config.publicHost : null,
+                tunnel: raw.remote.config.tunnel === 'cloudflare' || raw.remote.config.tunnel === 'tailscale' ? raw.remote.config.tunnel : null,
+              },
+            }
+          : {}),
       },
     };
   } catch {

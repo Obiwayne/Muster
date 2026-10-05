@@ -8,7 +8,7 @@ import { randomBytes } from 'node:crypto';
 import { createServer, type Server } from 'node:https';
 import type { IncomingMessage, ServerResponse } from 'node:http';
 import { isAbsolute, resolve } from 'node:path';
-import { appendFileSync, existsSync } from 'node:fs';
+import { appendFileSync, existsSync, readFileSync } from 'node:fs';
 import { Readable } from 'node:stream';
 import QRCode from 'qrcode';
 import { WebSocketServer, type WebSocket } from 'ws';
@@ -19,7 +19,7 @@ import { clonePrefs, mergePrefs, needsFromState, shouldNotify, type NeedItem, ty
 import { hostsFor, lanHosts as realLanHosts, tailscaleInfo as realTailscale, type TailscaleInfo } from './net.js';
 import { displayCode, Pairing } from './pairing.js';
 import { digestOf, PENDING_TTL_MS, pendingSummary, pendingTitle, pendingToNeed, pendingView, sweepExpired, type PendingWrite } from './pending.js';
-import { startRemote, type Remote, type RemoteSettings, type RemoteStatus, type Tunnel, type WriteInput, type WriteOutcome } from './remote.js';
+import { DEFAULT_REMOTE_PORT, startRemote, type Remote, type RemoteSettings, type Tunnel, type WriteInput, type WriteOutcome } from './remote.js';
 import { desktopSettingsFile, listProjects, orchestratorFetch, orchestratorJson, OrchestratorError, recentRoots, type Project } from './projects.js';
 import {
   DEFAULT_PHONE_PORT,
@@ -35,6 +35,7 @@ import {
   writeServerFile,
   type Device,
   type PhoneState,
+  type RemoteConfig,
 } from './store.js';
 
 export interface GatewayOptions {
@@ -57,6 +58,8 @@ export interface GatewayOptions {
   tailscale?: () => Promise<TailscaleInfo>;
   /** The remote connector (docs/REMOTE.md): off unless given. port 0 picks a free port (tests). */
   remote?: { port: number; publicHost?: string; tunnel?: Tunnel; devToken?: string; fetchMetadata?: (url: string) => Promise<unknown> };
+  /** Test seam for POST /admin/remote/test (default: global fetch). */
+  remoteTestFetch?: typeof fetch;
 }
 
 export interface Gateway {
@@ -69,8 +72,8 @@ export interface Gateway {
   pollNow(): Promise<void>;
   /** Phones connected to /api/events whose baseline is taken (tests). */
   readyClients(): number;
-  /** The remote connector, when it is on. */
-  remote: Remote | null;
+  /** The remote connector, when it is on (a getter: Settings can restart or stop it). */
+  readonly remote: Remote | null;
   close(): Promise<void>;
 }
 
@@ -134,6 +137,15 @@ export function parseDiffStat(stat: string): { added: number; removed: number; f
   const files = /(\d+) files? changed/.exec(last);
   if (!files) return null;
   return { files: Number(files[1]), added: Number(/(\d+) insertions?\(\+\)/.exec(last)?.[1] ?? 0), removed: Number(/(\d+) deletions?\(-\)/.exec(last)?.[1] ?? 0) };
+}
+
+/** "https://Muster.Example.com/mcp/" → "muster.example.com"; null/"" → null. Throws 400 on anything that isn't a hostname. */
+export function cleanHost(v: unknown): string | null {
+  if (v === null || v === undefined || (typeof v === 'string' && !v.trim())) return null;
+  if (typeof v !== 'string') throw new HttpError(400, 'publicHost must be a hostname');
+  const host = v.trim().toLowerCase().replace(/^https?:\/\//, '').replace(/\/mcp\/?$/, '').replace(/\/+$/, '');
+  if (!/^(?=.{1,253}$)([a-z0-9]([a-z0-9-]{0,61}[a-z0-9])?\.)+[a-z]{2,63}$/.test(host)) throw new HttpError(400, `"${v}" is not a hostname like muster.example.com`);
+  return host;
 }
 
 interface Client {
@@ -266,6 +278,42 @@ export async function startGateway(opts: GatewayOptions = {}): Promise<Gateway> 
     return live;
   };
   const remoteSettings = (): RemoteSettings => ({ confirmWrites: state.remote.confirmWrites, allowApprove: state.remote.allowApprove });
+  /** Saved config, else what the flags/env gave this process, else off. */
+  const remoteConfig = (): RemoteConfig =>
+    state.remote.config ?? { enabled: !!opts.remote, port: opts.remote?.port ?? DEFAULT_REMOTE_PORT, publicHost: opts.remote?.publicHost?.trim().toLowerCase() || null, tunnel: opts.remote?.tunnel ?? null };
+  let remoteError: string | null = null;
+  let lastTest: { ok: boolean; status?: number; error?: string; at: string } | null = null;
+  let applying: Promise<void> = Promise.resolve();
+  /** (Re)starts or stops the /mcp listener to match the config. Serialised: Settings may save twice quickly. */
+  const applyRemote = (): Promise<void> =>
+    (applying = applying.then(async () => {
+      const old = remote;
+      remote = null;
+      await old?.close();
+      remoteError = null;
+      const c = remoteConfig();
+      if (!c.enabled) return;
+      try {
+        remote = await startRemote(
+          { projects, state: stateOf, needs: () => collect(), write: remoteWrite, settings: remoteSettings },
+          {
+            port: c.port,
+            publicHost: c.publicHost ?? undefined,
+            tunnel: c.tunnel ?? undefined,
+            devToken: opts.remote?.devToken,
+            fetchMetadata: opts.remote?.fetchMetadata,
+            pcName: state.pcName,
+            dir,
+            now,
+            log,
+            onLock: (info) => void remoteAlert(lockText(info)),
+          },
+        );
+      } catch (e) {
+        remoteError = (e as NodeJS.ErrnoException).code === 'EADDRINUSE' ? `Port ${c.port} is in use by another program` : e instanceof Error ? e.message : String(e);
+        log(`remote connector did not start: ${remoteError}`);
+      }
+    }));
   /** For the "hold is off" banner on the desktop and the phone (which can't turn it back on). */
   const holdInfo = () => ({ on: state.remote.confirmWrites, offSince: state.remote.confirmWrites ? null : (state.remote.offSince ?? null), sentWithoutTap: state.remote.confirmWrites ? 0 : (state.remote.sentWithoutTap ?? 0) });
 
@@ -479,7 +527,73 @@ export async function startGateway(opts: GatewayOptions = {}): Promise<Gateway> 
     save();
     return state.defaultPrefs;
   });
-  admin('GET', '/admin/remote', (): RemoteStatus | { enabled: false } => (remote ? { ...remote.status(), hold: holdInfo() } : { enabled: false }));
+  admin('GET', '/admin/remote', () => {
+    const extra = { hold: holdInfo(), settings: remoteSettings(), config: remoteConfig(), lastTest, ...(remoteError ? { error: remoteError } : {}) };
+    return remote ? { ...remote.status(), ...extra } : { enabled: false as const, ...extra };
+  });
+  admin('GET', '/admin/remote/config', () => remoteConfig());
+  admin('PUT', '/admin/remote/config', async ({ body }) => {
+    const before = remoteConfig();
+    const next: RemoteConfig = { ...before };
+    for (const k of Object.keys(body)) if (!['enabled', 'port', 'publicHost', 'tunnel'].includes(k)) throw new HttpError(400, `Unknown setting "${k}"`);
+    if (body.enabled !== undefined) {
+      if (typeof body.enabled !== 'boolean') throw new HttpError(400, 'enabled must be true or false');
+      next.enabled = body.enabled;
+    }
+    if (body.port !== undefined) {
+      if (!Number.isInteger(body.port) || (body.port as number) < 0 || (body.port as number) > 65535) throw new HttpError(400, 'port must be a whole number 0–65535');
+      next.port = body.port as number;
+    }
+    if (body.publicHost !== undefined) next.publicHost = cleanHost(body.publicHost);
+    if (body.tunnel !== undefined) {
+      if (body.tunnel !== null && body.tunnel !== 'cloudflare' && body.tunnel !== 'tailscale') throw new HttpError(400, 'tunnel must be "cloudflare", "tailscale" or null');
+      next.tunnel = body.tunnel;
+    }
+    state.remote.config = next;
+    save();
+    auditRemote({ event: 'config_changed', before, after: next });
+    await applyRemote();
+    return { config: next, running: !!remote, ...(remoteError ? { error: remoteError } : {}) };
+  });
+  /** "Test": can this PC reach its own connector through the public address? Unauthenticated metadata only. */
+  admin('POST', '/admin/remote/test', async () => {
+    const host = remoteConfig().publicHost;
+    if (!host) throw new HttpError(409, 'Set the public address first');
+    const at = now().toISOString();
+    try {
+      const r = await (opts.remoteTestFetch ?? fetch)(`https://${host}/.well-known/oauth-protected-resource/mcp`, { signal: AbortSignal.timeout(8000), redirect: 'error' });
+      let resource: unknown;
+      try {
+        resource = ((await r.json()) as { resource?: unknown }).resource;
+      } catch {
+        /* not JSON: not our connector */
+      }
+      const ok = r.status === 200 && resource === `https://${host}/mcp`;
+      lastTest = { ok, status: r.status, at, ...(ok ? {} : { error: r.status === 200 ? 'Something answered, but it is not this Muster (wrong resource)' : `Answered ${r.status}` }) };
+    } catch (e) {
+      lastTest = { ok: false, at, error: e instanceof Error ? (e.cause instanceof Error ? e.cause.message : e.message) : String(e) };
+    }
+    auditRemote({ event: 'test', ok: lastTest.ok, status: lastTest.status, error: lastTest.error });
+    return lastTest;
+  });
+  admin('GET', '/admin/remote/log', ({ req }) => {
+    const limit = Math.min(200, Math.max(1, Number(new URL(req.url ?? '/', 'http://x').searchParams.get('limit')) || 50));
+    let lines: string[] = [];
+    try {
+      lines = readFileSync(phoneFiles(dir).remoteLog, 'utf8').trim().split('\n');
+    } catch {
+      return [];
+    }
+    const out: unknown[] = [];
+    for (let i = lines.length - 1; i >= 0 && out.length < limit; i--) {
+      try {
+        out.push(JSON.parse(lines[i]));
+      } catch {
+        /* a torn line */
+      }
+    }
+    return out;
+  });
   const remoteOn = (): Remote => {
     if (!remote) throw new HttpError(409, 'Remote access is off');
     return remote;
@@ -821,16 +935,7 @@ export async function startGateway(opts: GatewayOptions = {}): Promise<Gateway> 
       `if this keeps happening, someone is guessing at your tunnel's sign-in page.`
     );
   };
-  if (opts.remote) {
-    try {
-      remote = await startRemote(
-        { projects, state: stateOf, needs: () => collect(), write: remoteWrite, settings: remoteSettings },
-        { ...opts.remote, pcName: state.pcName, dir, now, log, onLock: (info) => void remoteAlert(lockText(info)) },
-      );
-    } catch (e) {
-      log(`remote connector did not start: ${e instanceof Error ? e.message : e}`);
-    }
-  }
+  await applyRemote();
 
   writeServerFile(dir, { port, pid: process.pid, startedAt: new Date().toISOString(), fingerprint: pair.fingerprint });
   log(`phone gateway listening on https://${opts.host ?? '0.0.0.0'}:${port} (fingerprint ${pair.fingerprint.slice(0, 16)}…)`);
@@ -844,7 +949,9 @@ export async function startGateway(opts: GatewayOptions = {}): Promise<Gateway> 
     dir,
     pollNow,
     readyClients: () => [...clients].filter((c) => c.ready).length,
-    remote,
+    get remote() {
+      return remote;
+    },
     close: () =>
       (closing ??= (async () => {
         clearInterval(pollTimer);

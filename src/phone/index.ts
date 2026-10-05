@@ -19,7 +19,8 @@ async function main(): Promise<void> {
   const port = values.port ? Number(values.port) : process.env.MUSTER_PHONE_PORT ? Number(process.env.MUSTER_PHONE_PORT) : DEFAULT_PHONE_PORT;
   let gateway;
   try {
-    // Remote connector (docs/REMOTE.md): opt-in with --remote-port or MUSTER_REMOTE_PORT;
+    // Remote connector (docs/REMOTE.md): normally switched on in Settings → Remote access (saved in state.json).
+    // These only seed it on a PC where it was never configured: --remote-port or MUSTER_REMOTE_PORT;
     // MUSTER_REMOTE_HOST = the tunnel's public hostname; MUSTER_REMOTE_DEV=1 also accepts the fixed dev token.
     const remotePort = values['remote-port'] ?? process.env.MUSTER_REMOTE_PORT;
     const devToken = process.env.MUSTER_REMOTE_DEV === '1' ? ensureRemoteDevToken(dir) : undefined;

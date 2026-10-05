@@ -143,7 +143,13 @@ describe('phone gateway: state and pairing', () => {
 
   it('keeps the remote connector off unless asked (docs/REMOTE.md)', async () => {
     expect(gw.remote).toBeNull();
-    expect((await admin('GET', '/admin/remote')).data).toEqual({ enabled: false });
+    expect((await admin('GET', '/admin/remote')).data).toMatchObject({
+      enabled: false,
+      config: { enabled: false, port: 47911, publicHost: null, tunnel: null },
+      hold: { on: true },
+      settings: { confirmWrites: true, allowApprove: false },
+      lastTest: null,
+    });
   });
 
   it('makes a pair code with its QR code', async () => {
@@ -694,5 +700,79 @@ describe('phone gateway: held remote writes (docs/REMOTE.md, confirmation gate)'
     await start3();
     expect((await remoteItems()).map((i) => i.summary)).toEqual(['Still here after restart']);
     expect((await tool('muster_send_goal', { text: 'next id' })).text).not.toMatch(/as P1 /); // ids keep counting
+  });
+});
+
+describe('phone gateway: remote access config from Settings (docs/REMOTE.md, milestone 4 contract)', () => {
+  let dir4: string;
+  let gw4: Gateway;
+  let testReply: () => Promise<Response> = async () => new Response('{}', { status: 200 });
+  const admin4 = async (method: string, path: string, body?: unknown) => {
+    const r = await adminRequest(dir4, method, path, body === undefined ? undefined : JSON.stringify(body));
+    return { status: r.status, data: r.body ? JSON.parse(r.body) : null };
+  };
+
+  beforeAll(async () => {
+    dir4 = join(secrets, 'phone-config');
+    gw4 = await startGateway({ dir: dir4, port: 0, host: '127.0.0.1', recentFile: null, pollMs: 60_000, log: () => {}, remoteTestFetch: (() => testReply()) as unknown as typeof fetch });
+  });
+  afterAll(async () => {
+    await gw4?.close();
+  });
+
+  it('turns the connector on and off, and restarts it on a new public host or tunnel', async () => {
+    expect(gw4.remote).toBeNull();
+    const on = await admin4('PUT', '/admin/remote/config', { enabled: true, port: 0, publicHost: 'https://Muster.Example.com/mcp/', tunnel: 'cloudflare' });
+    expect(on.status).toBe(200);
+    expect(on.data).toMatchObject({ running: true, config: { enabled: true, port: 0, publicHost: 'muster.example.com', tunnel: 'cloudflare' } });
+    const first = gw4.remote!;
+    expect(first.status()).toMatchObject({ publicHost: 'muster.example.com', tunnel: 'cloudflare' });
+    await admin4('PUT', '/admin/remote/config', { tunnel: 'tailscale' });
+    expect(gw4.remote).not.toBe(first); // restarted
+    expect(gw4.remote!.status().tunnel).toBe('tailscale');
+    const status = (await admin4('GET', '/admin/remote')).data;
+    expect(status).toMatchObject({ enabled: true, config: { tunnel: 'tailscale' }, hold: { on: true }, settings: { confirmWrites: true } });
+    await admin4('PUT', '/admin/remote/config', { enabled: false });
+    expect(gw4.remote).toBeNull();
+    expect((await admin4('GET', '/admin/remote')).data).toMatchObject({ enabled: false, config: { enabled: false, publicHost: 'muster.example.com' } });
+  });
+
+  it('refuses bad config and keeps the old one', async () => {
+    expect((await admin4('PUT', '/admin/remote/config', { publicHost: 'not a host' })).status).toBe(400);
+    expect((await admin4('PUT', '/admin/remote/config', { tunnel: 'ngrok' })).status).toBe(400);
+    expect((await admin4('PUT', '/admin/remote/config', { port: 99999 })).status).toBe(400);
+    expect((await admin4('PUT', '/admin/remote/config', { wild: 1 })).status).toBe(400);
+    expect((await admin4('GET', '/admin/remote/config')).data.publicHost).toBe('muster.example.com');
+  });
+
+  it('the config survives a gateway restart', async () => {
+    await admin4('PUT', '/admin/remote/config', { enabled: true, port: 0 });
+    await gw4.close();
+    gw4 = await startGateway({ dir: dir4, port: 0, host: '127.0.0.1', recentFile: null, pollMs: 60_000, log: () => {}, remoteTestFetch: (() => testReply()) as unknown as typeof fetch });
+    expect(gw4.remote).not.toBeNull();
+    expect(gw4.remote!.status().publicHost).toBe('muster.example.com');
+  });
+
+  it('Test reaches the public address and checks it is this connector', async () => {
+    testReply = async () => new Response(JSON.stringify({ resource: 'https://muster.example.com/mcp' }), { status: 200 });
+    expect((await admin4('POST', '/admin/remote/test')).data).toMatchObject({ ok: true, status: 200 });
+    testReply = async () => new Response(JSON.stringify({ resource: 'https://someone-else.dev/mcp' }), { status: 200 });
+    expect((await admin4('POST', '/admin/remote/test')).data).toMatchObject({ ok: false, error: expect.stringContaining('not this Muster') });
+    testReply = async () => new Response('bad gateway', { status: 502 });
+    expect((await admin4('POST', '/admin/remote/test')).data).toMatchObject({ ok: false, status: 502 });
+    testReply = async () => {
+      throw new TypeError('fetch failed', { cause: new Error('getaddrinfo ENOTFOUND muster.example.com') });
+    };
+    const down = (await admin4('POST', '/admin/remote/test')).data;
+    expect(down).toMatchObject({ ok: false, error: 'getaddrinfo ENOTFOUND muster.example.com' });
+    expect((await admin4('GET', '/admin/remote')).data.lastTest).toEqual(down);
+  });
+
+  it('serves the last log lines newest first', async () => {
+    const lines = (await admin4('GET', '/admin/remote/log?limit=3')).data;
+    expect(lines).toHaveLength(3);
+    expect(lines[0]).toMatchObject({ event: 'test', ok: false });
+    expect(Date.parse(lines[0].at)).toBeGreaterThanOrEqual(Date.parse(lines[2].at));
+    expect((await admin4('GET', '/admin/remote/log')).data.some((l: any) => l.event === 'config_changed')).toBe(true);
   });
 });
