@@ -46,6 +46,8 @@ export const phoneFiles = (dir: string) => ({
   cert: join(dir, 'cert.pem'),
   key: join(dir, 'key.pem'),
   adminToken: join(dir, 'admin-token'),
+  remoteToken: join(dir, 'remote-dev-token'),
+  remoteLog: join(dir, 'remote.log'),
   server: join(dir, 'server.json'),
   log: join(dir, 'gateway.log'),
 });
@@ -116,6 +118,21 @@ export function ensureAdminToken(dir: string): string {
   ensureDir(dir);
   const token = randomBytes(24).toString('hex');
   writePrivate(phoneFiles(dir).adminToken, token);
+  return token;
+}
+
+/** Milestone 1 of the remote connector (docs/REMOTE.md): one bearer token for /mcp until OAuth lands. */
+export function ensureRemoteDevToken(dir: string): string {
+  const file = phoneFiles(dir).remoteToken;
+  try {
+    const t = readFileSync(file, 'utf8').trim();
+    if (t) return t;
+  } catch {
+    /* first use */
+  }
+  ensureDir(dir);
+  const token = randomBytes(32).toString('base64url');
+  writePrivate(file, token);
   return token;
 }
 

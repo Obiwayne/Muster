@@ -18,12 +18,14 @@ import { repoKey, sameToken } from '../core/tokens.js';
 import { clonePrefs, mergePrefs, needsFromState, shouldNotify, type NeedItem, type Prefs } from './needs.js';
 import { hostsFor, lanHosts as realLanHosts, tailscaleInfo as realTailscale, type TailscaleInfo } from './net.js';
 import { displayCode, Pairing } from './pairing.js';
+import { startRemote, type Remote, type RemoteStatus } from './remote.js';
 import { desktopSettingsFile, listProjects, orchestratorFetch, orchestratorJson, OrchestratorError, recentRoots, type Project } from './projects.js';
 import {
   DEFAULT_PHONE_PORT,
   ensureAdminToken,
   ensureCert,
   ensureDir,
+  ensureRemoteDevToken,
   loadState,
   phoneDir,
   removeServerFile,
@@ -52,6 +54,8 @@ export interface GatewayOptions {
   /** Test seams for network detection. */
   lanHosts?: () => string[];
   tailscale?: () => Promise<TailscaleInfo>;
+  /** The remote connector (docs/REMOTE.md): off unless given. port 0 picks a free port (tests). */
+  remote?: { port: number; publicHost?: string; token?: string };
 }
 
 export interface Gateway {
@@ -64,6 +68,8 @@ export interface Gateway {
   pollNow(): Promise<void>;
   /** Phones connected to /api/events whose baseline is taken (tests). */
   readyClients(): number;
+  /** The remote connector, when it is on. */
+  remote: Remote | null;
   close(): Promise<void>;
 }
 
@@ -156,6 +162,7 @@ export async function startGateway(opts: GatewayOptions = {}): Promise<Gateway> 
   const adminToken = ensureAdminToken(dir);
   const save = () => saveState(dir, state);
   const lastSaved = new Map<string, number>();
+  let remote: Remote | null = null; // started after the routes exist (see "remote connector" below)
 
   // Claim the port before anything else: a second copy fails here and never touches the cert files.
   const server: Server = createServer({ minVersion: 'TLSv1.2' });
@@ -305,6 +312,7 @@ export async function startGateway(opts: GatewayOptions = {}): Promise<Gateway> 
     save();
     return state.defaultPrefs;
   });
+  admin('GET', '/admin/remote', (): RemoteStatus | { enabled: false } => remote?.status() ?? { enabled: false });
   admin('POST', '/admin/projects', ({ body }) => {
     const raw = text(body.root, 'root');
     if (!isAbsolute(raw)) throw new HttpError(400, 'root must be an absolute path');
@@ -577,6 +585,18 @@ export async function startGateway(opts: GatewayOptions = {}): Promise<Gateway> 
   pollTimer.unref();
   pingTimer.unref();
 
+  // ------------------------------------------------------------------ remote connector
+  if (opts.remote) {
+    try {
+      remote = await startRemote(
+        { projects, state: stateOf, needs: () => collect() },
+        { port: opts.remote.port, publicHost: opts.remote.publicHost, token: opts.remote.token ?? ensureRemoteDevToken(dir), dir, now, log },
+      );
+    } catch (e) {
+      log(`remote connector did not start: ${e instanceof Error ? e.message : e}`);
+    }
+  }
+
   writeServerFile(dir, { port, pid: process.pid, startedAt: new Date().toISOString(), fingerprint: pair.fingerprint });
   log(`phone gateway listening on https://${opts.host ?? '0.0.0.0'}:${port} (fingerprint ${pair.fingerprint.slice(0, 16)}…)`);
 
@@ -589,12 +609,14 @@ export async function startGateway(opts: GatewayOptions = {}): Promise<Gateway> 
     dir,
     pollNow,
     readyClients: () => [...clients].filter((c) => c.ready).length,
+    remote,
     close: () =>
       (closing ??= (async () => {
         clearInterval(pollTimer);
         clearInterval(pingTimer);
         for (const c of clients) c.ws.terminate();
         wss.close();
+        await remote?.close();
         removeServerFile(dir, process.pid, port);
         await new Promise<void>((r) => server.close(() => r()));
         server.closeAllConnections?.();

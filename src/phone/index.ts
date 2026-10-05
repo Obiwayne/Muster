@@ -1,11 +1,11 @@
-// Entry: node dist/phone/index.js [--port <n>]  — the phone gateway (one per PC; see docs/PHONE.md).
+// Entry: node dist/phone/index.js [--port <n>] [--remote-port <n>]  — the phone gateway (one per PC; see docs/PHONE.md).
 // Exits quietly when a live gateway already holds the state folder or the port.
 import { parseArgs } from 'node:util';
 import { startGateway } from './gateway.js';
 import { gatewayRunning } from './link.js';
 import { DEFAULT_PHONE_PORT, phoneDir } from './store.js';
 
-const { values } = parseArgs({ options: { port: { type: 'string' } } });
+const { values } = parseArgs({ options: { port: { type: 'string' }, 'remote-port': { type: 'string' } } });
 const log = (msg: string) => console.log(`${new Date().toISOString()} ${msg}`);
 
 async function main(): Promise<void> {
@@ -18,7 +18,11 @@ async function main(): Promise<void> {
   const port = values.port ? Number(values.port) : process.env.MUSTER_PHONE_PORT ? Number(process.env.MUSTER_PHONE_PORT) : DEFAULT_PHONE_PORT;
   let gateway;
   try {
-    gateway = await startGateway({ dir, port, log });
+    // Remote connector (docs/REMOTE.md), milestone 1: opt-in with --remote-port or MUSTER_REMOTE_PORT;
+    // MUSTER_REMOTE_HOST = the tunnel's public hostname.
+    const remotePort = values['remote-port'] ?? process.env.MUSTER_REMOTE_PORT;
+    const remote = remotePort ? { port: Number(remotePort), publicHost: process.env.MUSTER_REMOTE_HOST } : undefined;
+    gateway = await startGateway({ dir, port, log, remote });
   } catch (e) {
     if ((e as NodeJS.ErrnoException).code === 'EADDRINUSE') {
       log(`port ${port} is in use (another phone gateway is starting, or another program holds it); exiting`);

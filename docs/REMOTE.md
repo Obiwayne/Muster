@@ -78,10 +78,26 @@ If layer 2 is off, the write runs immediately and the audit log still records it
 
 ## Auth
 
-Open question to verify first, because it decides the work: **check the current claude.ai custom-connector docs** for
-which auth modes remote MCP servers support (OAuth 2.1 with dynamic client registration, authless, static header).
-Don't build from memory; also confirm whether the connector is called from Anthropic's cloud (it is expected to be, which
-is why a tailnet-only address cannot work and Funnel/Cloudflare is needed).
+**Checked 2026-10-05** against claude.com/docs/connectors/building/authentication, .../custom/add-unlisted and
+support.claude.com 11175166 / 11176164:
+
+- Supported by default: OAuth 2.0 with DCR (`oauth_dcr`), OAuth with a Client ID Metadata Document (`oauth_cimd`,
+  recommended; picked only when the AS metadata has `"client_id_metadata_document_supported": true` and `"none"` in
+  `token_endpoint_auth_methods_supported`), and authless. A static header/API key is **beta for a limited set of
+  organizations**, so it is not a plan. "Use your own OAuth client" (manual client ID, secret optional) also exists.
+- PKCE S256 required; no `client_credentials`. Auth specs 2025-03-26, 2025-06-18, 2025-11-25. Streamable HTTP.
+- Discovery: an unauthenticated request must get **401** (not 200) with
+  `WWW-Authenticate: Bearer resource_metadata="..."`; only the first `authorization_servers` entry is used; the
+  metadata `resource` must equal the URL the user enters.
+- Redirect URI to allow: `https://claude.ai/api/mcp/auth_callback` (web, Desktop, mobile). Claude Code uses
+  `http://localhost:<any port>/callback` (allow `127.0.0.1` too).
+- Calls come from Anthropic's cloud, outbound range **`160.79.104.0/21`**, for every client including mobile. So the
+  server must be public (tunnel), and the tunnel can allowlist that range as an extra layer.
+- Custom connectors added on the web show up in the iOS/Android apps.
+- Tool limits: ~150,000 characters per result, 240 s per call. Per-tool "Always allow / Needs approval / Blocked"
+  exists in Customize → Connectors, which is why the server-side hold matters.
+
+Plan: OAuth with **CIMD first, DCR as fallback**, as below.
 
 Plan assuming OAuth is required (the safe default):
 
@@ -119,15 +135,32 @@ Plan assuming OAuth is required (the safe default):
 
 ## UI (needs a Vellum design before building, user signs off)
 
-Settings → Phone gets a **Remote access** card: on/off, public URL field + Test, pairing code for the connector,
+Settings → Phone gets a **Remote access** card. Its header carries a **connection indicator**, so you can see at a
+glance whether the link actually works, not just that it's configured:
+
+- **Connected** (green dot): an authenticated MCP call came **through the tunnel** and succeeded in the last 15 min.
+  Subtext "Last call through the tunnel 3m ago (muster_status)".
+- **Not connected** (grey): remote is on but no successful tunnel call in 15 min, or ever. Subtext shows the last
+  success ("Last call 2h ago" / "No call through the tunnel yet"), plus the last tunnel failure when it is newer
+  ("Refused 401, wrong token, 5m ago"; a 421 means the public-host setting doesn't match the tunnel).
+- **Off** when remote is disabled.
+- A call counts as "through the tunnel" only when its `Host` is the configured public hostname. Calls from this PC
+  (inspector, tests) are shown separately as "Last local test" and never turn the dot green.
+- Data: `GET /admin/remote` → `{ enabled, port, publicHost, connected, lastTunnelOkAt, lastTunnelError, lastLocalOkAt }`
+  (built in milestone 1, in memory; resets when the gateway restarts). The card polls it every 10 s while open.
+  The "Test" button goes out through the public URL, so a passing Test also turns the dot green.
+
+The rest of the card: on/off, public URL field + Test, pairing code for the connector,
 connected clients with Disconnect, toggles (Hold goals for my OK: on, Allow approving merges: off, Hold replies and answers: on),
 last 50 audit lines. Needs you gets the `remote_write` card (goal text, Send to Captain / Discard). Phone app gets the
 same card on M04 with an approve notification action.
 
 ## Milestones
 
-1. Spike: `/mcp` listener + `muster_status` + `muster_needs` read-only, bearer from a dev token, test with the MCP
-   inspector. Confirm the claude.ai auth mode from the docs before step 2.
+1. **Done 2026-10-05** (`src/phone/remote.ts`): `/mcp` listener + `muster_status` + `muster_needs` read-only, dev
+   bearer token (`secretsBase()/phone/remote-dev-token`), Host guard, 30/min rate limit, audit log `remote.log`,
+   connection status + `GET /admin/remote`. Opt-in: `node dist/phone/index.js --remote-port 47911` or
+   `MUSTER_REMOTE_PORT`, `MUSTER_REMOTE_HOST=<public hostname>`. Auth docs checked (see Auth).
 2. OAuth + pairing-code consent page + token store + revoke. Tests: PKCE, wrong code, lockout, expired/revoked token.
 3. Write tools with the server-side hold, pending store, `remote_write` NeedItem, audit log. Tests: send_goal creates
    pending and does not call `/api/ask`; discard; expiry; approve disabled by default.

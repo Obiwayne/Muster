@@ -138,6 +138,11 @@ describe('phone gateway: state and pairing', () => {
     expect(state).toMatchObject({ devices: [], network: { mode: 'lan' } });
   });
 
+  it('keeps the remote connector off unless asked (docs/REMOTE.md)', async () => {
+    expect(gw.remote).toBeNull();
+    expect((await admin('GET', '/admin/remote')).data).toEqual({ enabled: false });
+  });
+
   it('makes a pair code with its QR code', async () => {
     const r = await admin('POST', '/admin/pair-code');
     expect(r.status).toBe(200);
