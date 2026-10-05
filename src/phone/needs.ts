@@ -31,7 +31,7 @@ export interface RemoteWriteView {
   client: string;
   text?: string;
   answers?: { choices?: string[]; other?: string }[];
-  replyTo?: { id: string; from: string; text: string };
+  replyTo?: { id: string; from: string; type: string; text: string; questions?: { header: string; question: string; multiSelect: boolean; options: string[] }[] };
   taskId?: string;
   taskTitle?: string;
   createdAt: string;
