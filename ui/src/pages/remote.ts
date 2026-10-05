@@ -1,5 +1,5 @@
-// Settings → Remote access: the remote connector's status, public address, tunnel type, signed-in apps, the hold and
-// approve switches, the sign-in code, and the audit log. Talks to the gateway's /admin/remote/* through this
+// Settings → Remote access: the remote connector's status, public address, tunnel type, the app allow-list (approve
+// or deny apps waiting to sign in, remove approved ones), the hold and approve switches, the sign-in code, and the audit log. Talks to the gateway's /admin/remote/* through this
 // orchestrator as /api/phone/remote/* (docs/REMOTE.md, "UI" and "Milestone 4 API contract").
 // The sign-in code is shown only from the POST .../code reply, kept in memory only, and dropped when it runs out,
 // is used (codeActiveUntil goes null) or is cancelled.
@@ -8,9 +8,9 @@ import { h, icon, select, setChildren, toast, toggle, type Child } from '../dom'
 import { api, ApiError } from '../api';
 import { errToast } from '../actions';
 import {
-  TUNNEL_OPTIONS, activityLines, codeCountdown, codeStillShown, configOf, connectionLine, connectionView, holdLine, hhmm,
-  isLocked, lockView, normalizeHost, publicUrl, refusedLine, testLine, validHost,
-  type RemoteCode, type RemoteConfig, type RemoteLogEntry, type RemoteStatus, type RemoteTestResult, type RemoteTunnel,
+  TUNNEL_OPTIONS, activityLines, appIcon, appsHeader, approvedLine, codeCountdown, codeStillShown, configOf, connectionLine, connectionView, holdLine, hhmm,
+  isLocked, lockView, normalizeHost, publicUrl, refusedLine, splitApps, testLine, validHost, waitingCount, waitingLine,
+  type RemoteApp, type RemoteCode, type RemoteConfig, type RemoteLogEntry, type RemoteStatus, type RemoteTestResult, type RemoteTunnel,
 } from '../remotemodel';
 
 const POLL_MS = 10_000;
@@ -26,6 +26,8 @@ export interface RemoteSection {
   banner(): HTMLElement | null;
   /** True while the hold is known to be off. */
   holdOff(): boolean;
+  /** How many connector apps wait for approval (for the badge on the tab). */
+  appsWaiting(): number;
 }
 
 /** The "Turn off the hold?" dialog. Resolves true only when the box was ticked and "Turn it off" pressed. */
@@ -62,10 +64,12 @@ function confirmHoldOff(): Promise<boolean> {
   });
 }
 
-export function createRemoteSection(onHoldChange: () => void): RemoteSection {
+/** `onChange` runs when the hold flips or the number of apps waiting for approval changes (banner, tab badge). */
+export function createRemoteSection(onChange: () => void): RemoteSection {
   let status: RemoteStatus | null = null;
   let statusErr = '';
   let polledAt = 0; // when the request behind `status` started
+  let apps: RemoteApp[] | null = null; // null: a gateway from before the allow-list (the old connections card shows)
   let log: RemoteLogEntry[] = [];
   let logErr = '';
   let code: RemoteCode | null = null; // from our own POST .../code reply only; never stored anywhere else
@@ -79,6 +83,7 @@ export function createRemoteSection(onHoldChange: () => void): RemoteSection {
   let pollTimer: number | undefined;
   let tickTimer: number | undefined;
   let lastHoldOff: boolean | null = null;
+  let lastWaiting = 0;
 
   const el = h('div.ra');
   const countEl = h('div.ra-count');
@@ -89,9 +94,22 @@ export function createRemoteSection(onHoldChange: () => void): RemoteSection {
       ? 'This Muster orchestrator or phone service has no remote access routes yet. Restart it on the latest build.'
       : e instanceof Error ? e.message : String(e);
 
-  function noteHold(): void {
+  function noteChange(): void {
     const off = status?.hold ? status.hold.on === false : null;
-    if (off !== lastHoldOff) { lastHoldOff = off; onHoldChange(); }
+    const waiting = waitingCount(status, apps);
+    if (off !== lastHoldOff || waiting !== lastWaiting) { lastHoldOff = off; lastWaiting = waiting; onChange(); }
+  }
+
+  /** The allow-list: from the status, or GET .../apps when the status doesn't carry it; null when neither has it. */
+  async function loadApps(s: RemoteStatus): Promise<RemoteApp[] | null> {
+    if (!s.enabled) return [];
+    if (Array.isArray(s.apps)) return s.apps;
+    try {
+      const r = await api.remoteApps();
+      return Array.isArray(r) ? r : null;
+    } catch {
+      return null;
+    }
   }
 
   async function loadStatus(): Promise<void> {
@@ -101,6 +119,7 @@ export function createRemoteSection(onHoldChange: () => void): RemoteSection {
       if (!next.settings && next.enabled) {
         try { next.settings = await api.remoteSettings(); } catch { /* older gateway: switches stay unknown */ }
       }
+      apps = await loadApps(next);
       status = next;
       polledAt = started;
       statusErr = '';
@@ -113,7 +132,7 @@ export function createRemoteSection(onHoldChange: () => void): RemoteSection {
       code = null;
       if (wasShown && used && !isLocked(status, Date.now())) toast('The sign-in code was used. It is gone now.');
     }
-    noteHold();
+    noteChange();
   }
 
   async function loadLog(): Promise<void> {
@@ -276,7 +295,8 @@ export function createRemoteSection(onHoldChange: () => void): RemoteSection {
         : null);
   }
 
-  function appsCard(): HTMLElement {
+  /** The old "Signed-in apps" card, for a gateway from before the allow-list. */
+  function connectionsCard(): HTMLElement {
     const list = status?.enabled ? status.connections ?? [] : [];
     const now = Date.now();
     return card('',
@@ -284,12 +304,42 @@ export function createRemoteSection(onHoldChange: () => void): RemoteSection {
         list.length ? h('button.ra-danger-link', { disabled: !!busy, onclick: () => void act('disc', () => api.remoteDisconnect(), 'Disconnected every app') }, 'Disconnect all') : null),
       list.length
         ? list.map((c) => h('div.ra-app', null,
-            h('div.ra-app-ic', null, icon(/code/i.test(c.clientName) ? 'terminal' : 'sparkle', 16)),
+            h('div.ra-app-ic', null, icon(appIcon(c.clientName), 16)),
             h('div.ra-lbl', null, h('div.ra-t', null, c.clientName), h('div.ra-s', null, connectionLine(c, now))),
             h('button.ra-disc', { disabled: !!busy, onclick: () => void act(`disc:${c.id}`, () => api.remoteDisconnect(c.id), `Disconnected ${c.clientName}`) }, 'Disconnect')))
         : h('div.ra-empty', null, status?.enabled
             ? 'No app is signed in. Make a sign-in code below, then add Muster as a custom connector in Claude.'
             : 'Turn remote access on to sign in an app.'));
+  }
+
+  function appsCard(): HTMLElement {
+    if (status?.enabled && apps === null) return connectionsCard();
+    const list = status?.enabled ? apps ?? [] : [];
+    const { waiting, approved } = splitApps(list);
+    const now = Date.now();
+    const ic = (name: string) => h('div.ra-app-ic', null, icon(appIcon(name), 16));
+    return card(waiting.length ? '.ra-apps-waiting' : '',
+      head(appsHeader(list),
+        approved.length ? h('button.ra-danger-link', { disabled: !!busy, onclick: () => void act('apps', () => api.remoteRemoveApp(), 'Removed every app') }, 'Remove all') : null),
+      waiting.length
+        ? h('div.ra-wait', null,
+            h('div.ra-wait-label', null, icon('bell', 12), 'Waiting for approval'),
+            waiting.map((a) => h('div.ra-app.ra-app-wait', null,
+              ic(a.name),
+              h('div.ra-lbl', null, h('div.ra-t', null, a.name), h('div.ra-s', null, waitingLine(a))),
+              h('button.btn.ra-btn', { disabled: !!busy, onclick: () => void act(`app:${a.id}`, () => api.remoteRemoveApp(a.id), `Denied ${a.name}`) }, 'Deny'),
+              h('button.btn.primary.ra-btn', { disabled: !!busy, onclick: () => void act(`app:${a.id}`, () => api.remoteApproveApp(a.id), `Approved ${a.name}`) }, 'Approve'))))
+        : null,
+      approved.map((a) => h('div.ra-app', null,
+        ic(a.name),
+        h('div.ra-lbl', null, h('div.ra-t', null, a.name), h('div.ra-s', null, approvedLine(a, now))),
+        h('button.ra-disc', { disabled: !!busy, onclick: () => void act(`app:${a.id}`, () => api.remoteRemoveApp(a.id), `Removed ${a.name}`) }, 'Remove'))),
+      list.length
+        ? null
+        : h('div.ra-empty', null, status?.enabled
+            ? "No apps yet. Make a code below and sign in from Claude; you'll approve the app here."
+            : 'Turn remote access on to sign in an app.'),
+      foot('shield', 'Only approved apps can sign in or use the connector, even with a correct code.'));
   }
 
   function mayDoCard(): HTMLElement {
@@ -411,6 +461,7 @@ export function createRemoteSection(onHoldChange: () => void): RemoteSection {
     el,
     banner,
     holdOff: () => status?.hold?.on === false,
+    appsWaiting: () => waitingCount(status, apps),
     refresh: async () => { await loadStatus(); if (visible) render(); },
     show() {
       if (visible) return;

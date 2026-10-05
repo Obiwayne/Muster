@@ -448,7 +448,10 @@ export function createSettings(): Page {
     return h('div.set-tabs', { role: 'tablist' }, SETTINGS_TABS.map((t) => h('a.set-tab', {
       class: [t.id === tab && 'on', `t-${t.id}`], role: 'tab', 'aria-selected': String(t.id === tab),
       href: t.id === 'general' ? '#/settings' : `#/settings?tab=${t.id}`,
-    }, t.id === 'phone' ? icon('phone', 14) : t.id === 'remote' ? icon('globe', 14) : null, t.label)));
+    }, t.id === 'phone' ? icon('phone', 14) : t.id === 'remote' ? icon('globe', 14) : null, t.label,
+    t.id === 'remote' && remote.appsWaiting() > 0
+      ? h('span.set-tab-badge', { title: `${remote.appsWaiting()} app${remote.appsWaiting() === 1 ? '' : 's'} waiting for approval` }, String(remote.appsWaiting()))
+      : null)));
   }
 
   const cols = (left: (HTMLElement | null)[], right: (HTMLElement | null)[] = []) =>

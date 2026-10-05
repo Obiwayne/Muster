@@ -1,8 +1,8 @@
 import { describe, expect, it } from 'vitest';
 import {
-  activityLines, codeCountdown, codeStillShown, configOf, connectionView, hhmm, holdLine, isLocked, lockView, logLine,
-  normalizeHost, publicUrl, refusedLine, span, testLine, validHost,
-  type RemoteCode, type RemoteLogEntry, type RemoteStatus } from './remotemodel';
+  activityLines, appIcon, appKindText, appsHeader, approvedLine, codeCountdown, codeStillShown, configOf, connectionView, hhmm, holdLine, isLocked, lockView, logLine,
+  normalizeHost, publicUrl, refusedLine, span, splitApps, testLine, validHost, waitingCount, waitingLine,
+  type RemoteApp, type RemoteCode, type RemoteLogEntry, type RemoteStatus } from './remotemodel';
 import { parseSettingsTab } from './phonemodel';
 
 const NOW = new Date(2026, 9, 5, 14, 45, 0).getTime(); // local 14:45
@@ -142,6 +142,52 @@ describe('hold', () => {
   });
 });
 
+describe('approved apps', () => {
+  const app = (over: Partial<RemoteApp>): RemoteApp => ({
+    id: 'app_0123456789abcdef', clientId: 'https://claude.ai/oauth/mcp-client', name: 'Claude', kind: 'cimd', status: 'approved',
+    requestedAt: local(14, 41), connections: 0, ...over,
+  });
+  const waiting = app({ id: 'app_w', status: 'waiting', ip: '86.12.44.170' });
+  const code = app({ id: 'app_c', name: 'Claude Code', kind: 'dcr', approvedAt: local(14, 2), approvedBy: 'desktop', lastUsedAt: at(3), connections: 1 });
+  const old = app({ id: 'app_o', approvedAt: local(9, 0), approvedBy: 'existing', lastUsedAt: at(60 * 3), connections: 2 });
+
+  it('picks the icon by name', () => {
+    expect(appIcon('Claude')).toBe('sparkle');
+    expect(appIcon('Claude Code')).toBe('terminal');
+    expect(appIcon('VS Code helper')).toBe('terminal');
+    expect(appIcon('Some app')).toBe('grid');
+  });
+  it('says how the app identified itself', () => {
+    expect(appKindText('dcr')).toBe('Registered itself');
+    expect(appKindText('cimd')).toBe('Published identity');
+  });
+  it('splits waiting from approved and counts the waiting ones', () => {
+    const { waiting: w, approved: a } = splitApps([waiting, code, old]);
+    expect(w.map((x) => x.id)).toEqual(['app_w']);
+    expect(a.map((x) => x.id)).toEqual(['app_c', 'app_o']);
+    expect(splitApps(undefined)).toEqual({ waiting: [], approved: [] });
+    expect(waitingCount(on({ apps: [waiting, code] }))).toBe(1);
+    expect(waitingCount(on({ apps: [waiting, code], appsWaiting: 3 }))).toBe(3);
+    expect(waitingCount(on(), [waiting])).toBe(1);
+    expect(waitingCount({ enabled: false, appsWaiting: 2 })).toBe(0);
+    expect(waitingCount(null)).toBe(0);
+  });
+  it('describes a waiting app', () => {
+    expect(waitingLine(waiting)).toBe('Published identity · asked 14:41 · from 86.12.44.170');
+    expect(waitingLine(app({ status: 'waiting', kind: 'dcr', requestedAt: local(9, 5) }))).toBe('Registered itself · asked 09:05');
+  });
+  it('describes an approved app', () => {
+    expect(approvedLine(code, NOW)).toBe('Approved today 14:02 · last used 3 min ago · 1 connection');
+    expect(approvedLine(old, NOW)).toBe('Approved before the allow-list · last used 3 h ago · 2 connections');
+    expect(approvedLine(app({ approvedAt: local(14, 44) }), NOW)).toBe('Approved today 14:44 · not used yet · 0 connections');
+  });
+  it('counts the header', () => {
+    expect(appsHeader([waiting, code, old])).toBe('Approved apps · 2 · 1 waiting');
+    expect(appsHeader([code])).toBe('Approved apps · 1');
+    expect(appsHeader([])).toBe('Approved apps · 0');
+  });
+});
+
 describe('activity', () => {
   it('formats every event as a short line with a tone', () => {
     const t = (e: Record<string, unknown>) => logLine({ at: at(0), ...e });
@@ -166,6 +212,15 @@ describe('activity', () => {
     expect(t({ tool: 'muster_needs', ok: true, client: 'Claude', via: 'tunnel' }).text).toBe('muster_needs · Claude');
     expect(t({ tool: 'muster_send_goal', ok: true, client: 'Claude', held: true, pendingId: 'P6', via: 'tunnel' }).text).toBe('muster_send_goal · Claude · held as P6');
     expect(t({ tool: 'muster_reply', ok: false, error: 'note closed', client: 'Claude' })).toEqual({ text: 'muster_reply · Claude · failed: note closed', tone: 'red' });
+    expect(t({ event: 'app_waiting', app: 'Claude', ip: '86.12.44.170' })).toEqual({ text: 'Claude is waiting for approval · 86.12.44.170', tone: 'warm' });
+    expect(t({ event: 'app_waiting', app: 'Claude' }).text).toBe('Claude is waiting for approval');
+    expect(t({ event: 'app_approved', app: 'Claude' })).toEqual({ text: 'approved Claude', tone: 'text' });
+    expect(t({ event: 'app_removed', app: 'Claude Code', revoked: 2 })).toEqual({ text: 'removed Claude Code · 2 connections revoked', tone: 'muted' });
+    expect(t({ event: 'app_removed', app: 'Claude', revoked: 1 }).text).toBe('removed Claude · 1 connection revoked');
+    expect(t({ event: 'app_removed', app: 'Claude', revoked: 0 }).text).toBe('removed Claude');
+    expect(t({ event: 'app_denied', app: 'Claude' })).toEqual({ text: 'denied Claude', tone: 'muted' });
+    expect(t({ event: 'login_failed', reason: 'not_approved', client: 'Claude', ip: '86.12.44.170' }))
+      .toEqual({ text: 'sign-in refused: app not approved · Claude · 86.12.44.170', tone: 'red' });
     expect(t({ event: 'something_new' }).text).toBe('something new');
   });
   it('folds runs of the same line, keeping the newest time', () => {
