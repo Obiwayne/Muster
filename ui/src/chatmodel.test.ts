@@ -1,7 +1,8 @@
 import { describe, expect, it } from 'vitest';
 import type { FeedItem } from '../../src/types';
 import {
-  badgeLabel, buildRows, eventText, isPathLike, needsYouCount, parseBlocks, parseHandoff, parseTaskRow, summarizeReactions, tokenize, typingAgent, unreadIndex,
+  badgeLabel, buildRows, eventText, isPathLike, isRemoteMine, mineTarget, needsYouCount, parseBlocks, parseHandoff, parseTaskRow, summarizeReactions, tokenize,
+  typingAgent, unreadIndex, viaView,
 } from './chatmodel';
 
 const T0 = Date.parse('2026-10-03T21:00:00');
@@ -156,5 +157,58 @@ describe('reactions, typing, badges', () => {
       { open: true, type: 'stuck' },
     ])).toBe(4);
     expect([0, 1, 9, 10, 42].map(badgeLabel)).toEqual(['', '1', '9', '9+', '9+']);
+  });
+});
+
+describe('sent via the remote connector', () => {
+  const via = (approvedOn: 'phone' | 'desktop' | 'not held', min = 6) => ({ client: 'Claude', approvedOn, approvedAt: at(min) });
+
+  it('renders a remote reply of yours as its own right-side bubble and keeps it in the note card', () => {
+    n = 0;
+    const list = [
+      fi(0, 'note', 'ada', 'Should invite links expire after 7 days or 30?', { noteId: 'N12', noteType: 'question' }),
+      fi(1, 'reply', 'captain', 'Hold on 7 days.', { noteId: 'N12' }),
+      fi(6, 'reply', 'you', 'Go with 7 days.', { noteId: 'N12', via: via('phone') }),
+      fi(7, 'reply', 'you', 'Typed myself.', { noteId: 'N12' }),
+    ];
+    const rows = buildRows(list);
+    expect(rows.map((r) => r.t)).toEqual(['day', 'card', 'group']);
+    const card = rows[1].t === 'card' ? rows[1] : null;
+    expect(card?.replies.map((r) => r.text)).toEqual(['Hold on 7 days.', 'Go with 7 days.', 'Typed myself.']);
+    const g = rows[2].t === 'group' ? rows[2] : null;
+    expect(g?.items.map((r) => r.text)).toEqual(['Go with 7 days.']); // the one you typed stays only in the card
+    expect(g?.items[0].from).toBe('you');
+  });
+
+  it('keeps a via line out of a group with lines you typed', () => {
+    n = 0;
+    const rows = buildRows([
+      fi(0, 'message', 'you', 'typed', { to: 'captain' }),
+      fi(1, 'message', 'you', 'from Claude', { to: 'captain', via: via('desktop', 1) }),
+    ]);
+    expect(rows.map((r) => r.t)).toEqual(['day', 'group', 'group']);
+  });
+
+  it('only your lines with via count as remote', () => {
+    expect(isRemoteMine({ from: 'you', via: via('phone') })).toBe(true);
+    expect(isRemoteMine({ from: 'you' })).toBe(false);
+    expect(isRemoteMine({ from: 'ada', via: via('phone') })).toBe(false);
+  });
+
+  it('describes the chip: where you approved it, or that the hold was off', () => {
+    expect(viaView(via('phone', 66))).toEqual({
+      chip: 'via Claude', title: 'Sent from the Claude app', detail: 'approved on your phone at 22:06',
+      text: 'Sent from the Claude app · approved on your phone at 22:06',
+    });
+    expect(viaView(via('desktop', 66)).detail).toBe('approved on your desktop at 22:06');
+    expect(viaView(via('not held')).text).toBe('Sent from the Claude app · the hold was off');
+    expect(viaView({ client: '', approvedOn: 'phone', approvedAt: at(0) }).chip).toBe('via Claude');
+  });
+
+  it('addresses a remote reply to the note author and links the note', () => {
+    const notes = [{ id: 'N12', from: 'ada' }];
+    expect(mineTarget({ kind: 'reply', noteId: 'N12' }, notes)).toEqual({ to: 'ada', noteId: 'N12' });
+    expect(mineTarget({ kind: 'reply', noteId: 'N99' }, notes)).toEqual({ noteId: 'N99' });
+    expect(mineTarget({ kind: 'message', to: 'captain' }, notes)).toEqual({ to: 'captain' });
   });
 });

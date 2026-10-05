@@ -1,6 +1,6 @@
 // Crew chat v2: pure helpers (no DOM) for structured text, grouping, the unread divider,
 // reactions and the needs-you badge. Rendered by pages/chat.ts and main.ts.
-import type { FeedItem, FeedReaction, Note, NoteType } from '../../src/types';
+import type { FeedItem, FeedReaction, Note, NoteType, RemoteVia } from '../../src/types';
 import { REACTION_EMOJI } from '../../src/types';
 
 // ---------------------------------------------------------------- structured text
@@ -174,6 +174,7 @@ export function unreadIndex(lines: Pick<FeedItem, 'id' | 'from'>[], lastSeen: st
 function sameGroup(a: FeedItem, b: FeedItem): boolean {
   if (a.kind !== b.kind || (a.kind !== 'message' && a.kind !== 'reply')) return false;
   if (a.from !== b.from || (a.to ?? '') !== (b.to ?? '') || (a.noteId ?? '') !== (b.noteId ?? '')) return false;
+  if (!!a.via !== !!b.via) return false; // a line sent through the connector carries its own chip
   if (dayOf(a.at) !== dayOf(b.at)) return false;
   return tms(b.at) - tms(a.at) < GROUP_MS && tms(b.at) >= tms(a.at);
 }
@@ -191,8 +192,11 @@ export function buildRows(list: FeedItem[], opts: { lastSeen?: string | null } =
   const top: FeedItem[] = [];
   for (const f of list) {
     const card = f.kind === 'reply' && f.noteId ? cards.get(f.noteId) : undefined;
-    if (card && feedNum(f.id) > feedNum(card.item.id)) card.replies.push(f);
-    else top.push(f);
+    if (card && feedNum(f.id) > feedNum(card.item.id)) {
+      card.replies.push(f);
+      // your reply/answer sent through the connector also shows as your own bubble (the card keeps it too)
+      if (isRemoteMine(f)) top.push(f);
+    } else top.push(f);
   }
 
   const ui = unreadIndex(top, opts.lastSeen);
@@ -222,6 +226,37 @@ export function buildRows(list: FeedItem[], opts: { lastSeen?: string | null } =
     }
   }
   return rows;
+}
+
+// ---------------------------------------------------------------- sent via the remote connector
+
+/** Your line that came through the remote connector (the Claude app), approved by you or sent with the hold off. */
+export function isRemoteMine(f: Pick<FeedItem, 'from' | 'via'>): boolean {
+  return f.from === 'you' && !!f.via;
+}
+
+const clock = (iso: string) => {
+  const d = new Date(tms(iso));
+  return `${String(d.getHours()).padStart(2, '0')}:${String(d.getMinutes()).padStart(2, '0')}`;
+};
+
+export interface ViaView { chip: string; title: string; detail: string; text: string }
+
+/** The "via Claude" chip and its tooltip: "Sent from the Claude app · approved on your phone at 22:06". */
+export function viaView(via: RemoteVia): ViaView {
+  const client = via.client?.trim() || 'Claude';
+  const title = `Sent from the ${client} app`;
+  const detail = via.approvedOn === 'not held' ? 'the hold was off' : `approved on your ${via.approvedOn} at ${clock(via.approvedAt)}`;
+  return { chip: `via ${client}`, title, detail, text: `${title} · ${detail}` };
+}
+
+/** Who your own bubble is to: a message's `to`, or a reply's note author (with the note to link). */
+export function mineTarget(f: Pick<FeedItem, 'kind' | 'to' | 'noteId'>, notes: Pick<Note, 'id' | 'from'>[]): { to?: string; noteId?: string } {
+  if (f.kind === 'reply' && f.noteId) {
+    const from = notes.find((n) => n.id === f.noteId)?.from;
+    return { ...(from && from !== 'you' ? { to: from } : {}), noteId: f.noteId };
+  }
+  return f.to ? { to: f.to } : {};
 }
 
 // ---------------------------------------------------------------- reactions, typing
