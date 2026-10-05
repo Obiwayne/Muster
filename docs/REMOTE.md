@@ -224,5 +224,15 @@ same card on M04 with an approve notification action.
    bubble (design first, as an addition to the signed-off "Crew chat — v2" artboard).
 5. Real run: Cloudflare named tunnel → add as custom connector in claude.ai → "what's the status?" → "send goal X" →
    tap Send on the phone → Captain receives it.
+   Checklist before and during the run:
+   - [ ] **`MUSTER_REMOTE_TUNNEL` is set** (`cloudflare` for the named tunnel) along with `MUSTER_REMOTE_HOST`.
+     `GET /admin/remote` must show `tunnel: "cloudflare"`, not `null`; unset, every logged IP is the tunnel's
+     127.0.0.1 and the failed-login log loses its point.
+   - [ ] After the first call through the tunnel, `remote.log` lines show `ipFrom: "cf-connecting-ip"` with a real
+     public IP, and `/admin/remote` shows `connected: true`.
+   - [ ] One wrong code on the consent page → a `login_failed` line with the browser's public IP.
+   - [ ] Lockout end to end: 5 wrong codes → the Bulletin board note **and the Windows toast actually appear on screen**.
+   - [ ] Desktop revoke → claude.ai's next call fails and it asks to reconnect.
+   - [ ] claude.ai picked CIMD (or DCR): note which in this doc.
 
 Tests follow the existing gateway tests (`src/phone/gateway.test.ts`, `testfakes.ts`); set `MUSTER_SECRETS_DIR` in tests.
