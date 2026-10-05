@@ -28,6 +28,28 @@ expose agent tools such as merge_task or set_roadmap.
 4. **Audit log**: `secretsBase()/phone/remote.log`, one JSON line per tool call (time, tool, project, args summary,
    result, confirmed y/n). Shown in Settings under Remote access (last 50).
 
+## Remote messages live in crew chat
+
+Everything sent through the connector (goals, replies, answers) is posted to **crew chat as a normal message from
+you**, so the whole conversation stays in one place. `remote.log` stays as the security record (refusals, held and
+discarded items, the confirm switch), but crew chat is where the conversation is read.
+
+- **When:** at the moment it is really sent, i.e. after your tap on Send (or straight away if the hold is off). A held
+  or discarded item never appears in crew chat; it lives in Needs you until then.
+- **Data:** `FeedItem.via?: 'remote'` (types.ts). The gateway passes `via: 'remote'` on `POST /api/ask`,
+  `/api/notes/:id/reply` and `/api/notes/:id/answer`. The orchestrator accepts `via` only from the human token (an agent
+  token sending it → 403) and copies it onto the feed item that `board.addFeed` / `replyNote` makes. Held items record
+  which client asked (`claude.ai`) so the tag can say so.
+- **Side:** on the **right**, as your own messages (`.cmsg.mine`, blue), never on the left with the agents. Goals
+  already render there (`from: 'you'`). Replies and answers from you currently only show inside the note card's
+  thread; a reply or answer with `via: 'remote'` **also** renders as its own right-side bubble with a `↳ N12` link to
+  the note (the card thread keeps showing it too, so the note history stays complete).
+- **Tag:** a small muted chip in the bubble head after your name: "via Claude" (title: "Sent from the Claude app
+  through the remote connector, approved on <phone/desktop> at 14:02"). Same chip on the phone app's Crew tab.
+- **Answers** render as one line per question (`Export format: MP4`), like the note thread does today.
+- Tests: feed item carries `via`, an agent token can't set it, held → not in feed, sent → in feed once, chat renders a
+  remote reply on the right with the chip and the note link.
+
 ## Tools
 
 All take optional `project` (id or name; default = the only running project, else an error listing running ones).
@@ -164,7 +186,10 @@ same card on M04 with an approve notification action.
 2. OAuth + pairing-code consent page + token store + revoke. Tests: PKCE, wrong code, lockout, expired/revoked token.
 3. Write tools with the server-side hold, pending store, `remote_write` NeedItem, audit log. Tests: send_goal creates
    pending and does not call `/api/ask`; discard; expiry; approve disabled by default.
-4. Settings card + desktop board card + phone card (design first).
+   Remote writes post to crew chat as yours (`FeedItem.via: 'remote'`, right side, "via Claude" chip); see
+   "Remote messages live in crew chat".
+4. Settings card + desktop board card + phone card + the crew-chat "via Claude" chip and right-side remote reply
+   bubble (design first, as an addition to the signed-off "Crew chat — v2" artboard).
 5. Real run: Cloudflare named tunnel → add as custom connector in claude.ai → "what's the status?" → "send goal X" →
    tap Send on the phone → Captain receives it.
 
