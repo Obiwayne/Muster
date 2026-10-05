@@ -149,6 +149,13 @@ export function cleanHost(v: unknown): string | null {
   return host;
 }
 
+/** Headers a tunnel or reverse proxy adds (Tailscale Funnel/Serve, Cloudflare Tunnel, generic proxies). The phone
+ *  connects to the gateway directly (LAN or tailnet IP), so it never sends them. */
+const TUNNEL_HEADERS = ['tailscale-funnel-request', 'tailscale-user-login', 'cf-connecting-ip', 'cf-ray', 'x-forwarded-for', 'x-forwarded-host', 'forwarded'];
+export function viaTunnelProxy(req: Pick<IncomingMessage, 'headers'>): boolean {
+  return TUNNEL_HEADERS.some((h) => req.headers[h] !== undefined);
+}
+
 interface Client {
   ws: WebSocket;
   deviceId: string;
@@ -822,6 +829,9 @@ export async function startGateway(opts: GatewayOptions = {}): Promise<Gateway> 
   };
 
   const handle = async (req: IncomingMessage, res: ServerResponse): Promise<void> => {
+    // The phone gateway is never meant to sit behind a tunnel (only the connector's own listener is). A tunnel daemon
+    // connects from 127.0.0.1, which would pass the admin API's loopback check, so refuse anything that came through one.
+    if (viaTunnelProxy(req)) throw new HttpError(403, 'The phone gateway is not served through a tunnel; expose only the remote connector port');
     const url = new URL(req.url ?? '/', 'https://gateway');
     const path = url.pathname.replace(/\/+$/, '') || '/';
     const method = req.method ?? 'GET';
@@ -878,6 +888,10 @@ export async function startGateway(opts: GatewayOptions = {}): Promise<Gateway> 
   // ------------------------------------------------------------------ events websocket
   const wss = new WebSocketServer({ noServer: true });
   server.on('upgrade', (req, socket, head) => {
+    if (viaTunnelProxy(req)) {
+      socket.write('HTTP/1.1 403 Forbidden\r\n\r\n');
+      return socket.destroy();
+    }
     const url = new URL(req.url ?? '/', 'https://gateway');
     const device = url.pathname === '/api/events' ? deviceByKey(bearer(req.headers.authorization)) : undefined;
     if (!device) {
