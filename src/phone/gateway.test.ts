@@ -1,5 +1,5 @@
 import { mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
-import { createServer, type Server } from 'node:http';
+import { createServer, request as httpRequest, type Server } from 'node:http';
 import { request } from 'node:https';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
@@ -825,5 +825,80 @@ describe('phone gateway: remote access config from Settings (docs/REMOTE.md, mil
     expect((await admin4('GET', '/admin/remote/log?limit=20')).data.some((l: any) => l.event === 'test' && l.ok === false)).toBe(true);
     expect(Date.parse(lines[0].at)).toBeGreaterThanOrEqual(Date.parse(lines[2].at));
     expect((await admin4('GET', '/admin/remote/log')).data.some((l: any) => l.event === 'config_changed')).toBe(true);
+  });
+});
+
+describe('what a tunnel exposes (Tailscale Funnel / Cloudflare): only the connector, never admin or phone routes', () => {
+  const PUBLIC = 'wayne-pc.tail1234.ts.net';
+  let dir5: string;
+  let gw5: Gateway;
+  let cert5: string;
+  /** A request as the tunnel daemon delivers it: from 127.0.0.1, public Host, the tunnel's headers. */
+  const viaFunnel = (port: number, method: string, path: string, extra: Record<string, string> = {}, tls = false): Promise<number> =>
+    new Promise((ok, fail) => {
+      const headers = { host: PUBLIC, 'tailscale-funnel-request': '?1', 'x-forwarded-for': '203.0.113.7', ...extra };
+      const done = (res: { statusCode?: number; resume(): void }) => {
+        res.resume();
+        ok(res.statusCode ?? 0);
+      };
+      const req = tls
+        ? request({ host: '127.0.0.1', port, method, path, headers, ca: cert5, checkServerIdentity: () => undefined }, done)
+        : httpRequest({ host: '127.0.0.1', port, method, path, headers }, done);
+      req.on('error', fail);
+      req.end(method === 'GET' ? undefined : '{}');
+    });
+
+  beforeAll(async () => {
+    dir5 = join(secrets, 'phone-funnel');
+    gw5 = await startGateway({ dir: dir5, port: 0, host: '127.0.0.1', recentFile: null, pollMs: 60_000, log: () => {}, remote: { port: 0, publicHost: PUBLIC, tunnel: 'tailscale' } });
+    cert5 = readFileSync(phoneFiles(dir5).cert, 'utf8');
+  });
+  afterAll(async () => {
+    await gw5?.close();
+  });
+
+  it('the connector listener serves /mcp and the sign-in pages on the public host', async () => {
+    const port = gw5.remote!.port;
+    expect(await viaFunnel(port, 'POST', '/mcp')).toBe(401); // exists, needs sign-in
+    expect(await viaFunnel(port, 'GET', '/.well-known/oauth-protected-resource/mcp')).toBe(200);
+    expect(await viaFunnel(port, 'GET', '/.well-known/oauth-authorization-server')).toBe(200);
+  });
+
+  it('the connector listener has no admin or phone routes, even with the admin token', async () => {
+    const port = gw5.remote!.port;
+    const admin = { 'x-muster-admin': gw5.adminToken };
+    for (const [m, p] of [
+      ['GET', '/admin/remote'],
+      ['GET', '/admin/status'],
+      ['POST', '/admin/remote/code'],
+      ['GET', '/admin/remote/apps'],
+      ['PUT', '/admin/remote/settings'],
+      ['PUT', '/admin/remote/config'],
+      ['GET', '/admin/remote/pending'],
+      ['GET', '/api/needs'],
+      ['GET', '/api/health'],
+      ['POST', '/pair'],
+      ['GET', '/api/events'],
+      ['GET', '/'],
+    ] as const) {
+      expect([m, p, await viaFunnel(port, m, p, admin)]).toEqual([m, p, 404]);
+    }
+  });
+
+  it('the phone gateway refuses anything that came through a tunnel (if the wrong port were exposed)', async () => {
+    const admin = { 'x-muster-admin': gw5.adminToken };
+    for (const [m, p] of [
+      ['GET', '/admin/remote'],
+      ['GET', '/admin/status'],
+      ['POST', '/admin/remote/code'],
+      ['GET', '/api/needs'],
+      ['GET', '/api/health'],
+      ['POST', '/pair'],
+    ] as const) {
+      expect([m, p, await viaFunnel(gw5.port, m, p, admin, true)]).toEqual([m, p, 403]);
+      expect([m, p, await viaFunnel(gw5.port, m, p, { ...admin, 'tailscale-funnel-request': '', 'x-forwarded-for': '', 'cf-connecting-ip': '203.0.113.7' }, true)]).toEqual([m, p, 403]);
+    }
+    // the phone itself connects directly (LAN or tailnet IP): no tunnel headers, still served
+    expect((await call('GET', '/api/health')).status).toBe(200);
   });
 });
