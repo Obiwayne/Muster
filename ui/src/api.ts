@@ -5,7 +5,7 @@ import type {
 } from '../../src/types';
 // Phone gateway admin API types (forwarded by the orchestrator's /api/phone/*, docs/PHONE.md).
 import type { PhoneNetworkMode, PhonePairCode, PhoneSendPrefs, PhoneStatus } from './phonemodel';
-import type { RemoteCode, RemoteConfig, RemoteLogEntry, RemoteSettings, RemoteStatus, RemoteTestResult } from './remotemodel';
+import type { RemoteApp, RemoteCode, RemoteConfig, RemoteLogEntry, RemoteSettings, RemoteStatus, RemoteTestResult } from './remotemodel';
 import type { PendingRemote } from './heldmodel';
 
 // TODO: import StationDef from src/types.ts once T9 (crew-6) merges.
@@ -215,6 +215,10 @@ export const api = {
   remoteCancelCode: () => req<{ ok: boolean; cancelled: boolean }>('DELETE', '/api/phone/remote/code'),
   remoteDisconnect: (id?: string) => req<{ ok: boolean; revoked: number }>('DELETE', `/api/phone/remote/connections${id ? `/${enc(id)}` : ''}`),
   remoteSettings: () => req<RemoteSettings>('GET', '/api/phone/remote/settings'),
+  // the connector-app allow-list (docs/REMOTE.md, "App allow-list"); DELETE one = Deny (waiting) or Remove (approved)
+  remoteApps: () => req<RemoteApp[]>('GET', '/api/phone/remote/apps'),
+  remoteApproveApp: (id: string) => req<{ ok: boolean; app: RemoteApp }>('POST', `/api/phone/remote/apps/${enc(id)}/approve`),
+  remoteRemoveApp: (id?: string) => req<{ ok: boolean; removed: number; revoked: number }>('DELETE', `/api/phone/remote/apps${id ? `/${enc(id)}` : ''}`),
   /** Turning the hold off needs confirm: true (the warning dialog); turning it back on doesn't. */
   remoteSetSettings: (patch: Partial<RemoteSettings> & { confirm?: boolean }) => req<RemoteSettings>('PUT', '/api/phone/remote/settings', patch),
   // remote connector: writes Claude asked for, held until you tap Send (docs/REMOTE.md, milestone 4 contract)

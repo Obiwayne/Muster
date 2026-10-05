@@ -10,6 +10,20 @@ export interface RemoteSettings { confirmWrites: boolean; allowApprove: boolean 
 export interface RemoteConnection { id: string; clientName: string; createdAt: string; lastUsedAt: string }
 export interface RemoteTestResult { ok: boolean; status?: number; error?: string; at: string }
 export interface RemoteCode { code: string; display: string; expiresAt: string }
+/** A connector app on the allow-list (docs/REMOTE.md, "App allow-list"). `id` is `app_<16 hex>`. */
+export interface RemoteApp {
+  id: string;
+  clientId: string;
+  name: string;
+  kind: 'dcr' | 'cimd';
+  status: 'waiting' | 'approved';
+  requestedAt: string;
+  approvedAt?: string | null;
+  approvedBy?: string | null;
+  lastUsedAt?: string | null;
+  connections: number;
+  ip?: string | null;
+}
 
 /** GET /api/phone/remote. Remote off: only enabled/config/hold/settings. On: RemoteStatus plus hold/settings/config/lastTest. */
 export interface RemoteStatus {
@@ -29,6 +43,9 @@ export interface RemoteStatus {
   settings?: RemoteSettings;
   config?: RemoteConfig;
   lastTest?: RemoteTestResult | null;
+  /** The allow-list, waiting first. Missing on a gateway from before the allow-list. */
+  apps?: RemoteApp[];
+  appsWaiting?: number;
 }
 
 /** One remote.log line as stored (GET /api/phone/remote/log). Every field but `at` depends on the event. */
@@ -138,6 +155,53 @@ export function connectionLine(c: RemoteConnection, now: number): string {
   return `Signed in ${dayTime(c.createdAt, now)} · last used ${ago(c.lastUsedAt, now)}`;
 }
 
+// ---------------------------------------------------------------- approved apps
+
+/** The row icon: a terminal for Claude Code (any name with "Code"), the sparkle for Claude, a generic one otherwise. */
+export function appIcon(name: string): 'terminal' | 'sparkle' | 'grid' {
+  if (/code/i.test(name)) return 'terminal';
+  return /claude/i.test(name) ? 'sparkle' : 'grid';
+}
+
+/** How the app identified itself: DCR registers on the spot, CIMD points at an identity document it publishes. */
+export function appKindText(kind: RemoteApp['kind'] | string): string {
+  return kind === 'cimd' ? 'Published identity' : kind === 'dcr' ? 'Registered itself' : 'Unknown kind';
+}
+
+/** Waiting first (as the gateway sends them), then approved. */
+export function splitApps(apps: RemoteApp[] | null | undefined): { waiting: RemoteApp[]; approved: RemoteApp[] } {
+  const list = Array.isArray(apps) ? apps : [];
+  return { waiting: list.filter((a) => a.status === 'waiting'), approved: list.filter((a) => a.status === 'approved') };
+}
+
+/** How many apps wait for approval (appsWaiting, or counted from the list). 0 while remote access is off. */
+export function waitingCount(s: RemoteStatus | null, apps?: RemoteApp[] | null): number {
+  if (!s?.enabled) return 0;
+  if (typeof s.appsWaiting === 'number') return s.appsWaiting;
+  return splitApps(apps ?? s.apps).waiting.length;
+}
+
+/** "Published identity · asked 14:41 · from 86.12.44.170". */
+export function waitingLine(a: RemoteApp): string {
+  const asked = hhmm(a.requestedAt);
+  return [appKindText(a.kind), asked ? `asked ${asked}` : '', a.ip ? `from ${a.ip}` : ''].filter(Boolean).join(' · ');
+}
+
+/** "Approved today 14:02 · last used 3 min ago · 1 connection" (or "Approved before the allow-list", "not used yet"). */
+export function approvedLine(a: RemoteApp, now: number): string {
+  const when = a.approvedBy === 'existing' ? 'Approved before the allow-list'
+    : a.approvedAt ? `Approved ${dayTime(a.approvedAt, now)}` : 'Approved';
+  const used = a.lastUsedAt ? `last used ${ago(a.lastUsedAt, now)}` : 'not used yet';
+  const n = a.connections ?? 0;
+  return `${when} · ${used} · ${n} connection${n === 1 ? '' : 's'}`;
+}
+
+/** The card header: "Approved apps · 2" or "Approved apps · 2 · 1 waiting". */
+export function appsHeader(apps: RemoteApp[]): string {
+  const { waiting, approved } = splitApps(apps);
+  return `Approved apps · ${approved.length}${waiting.length ? ` · ${waiting.length} waiting` : ''}`;
+}
+
 // ---------------------------------------------------------------- login code
 
 /**
@@ -214,6 +278,7 @@ const LOGIN_REASON: Record<string, string> = {
   redirect_mismatch: 'sign-in failed: wrong redirect',
   bad_refresh: 'bad refresh token',
   refresh_reused: 'refresh token reused: connection revoked',
+  not_approved: 'sign-in refused: app not approved',
 };
 
 const onOff = (v: unknown) => (v ? 'on' : 'off');
@@ -278,6 +343,13 @@ export function logLine(e: RemoteLogEntry): { text: string; tone: LogTone } {
       return { text: join(who, reused ? 'refresh token reused' : str(e.reason).replace(/_/g, ' ')), tone: reused ? 'red' : 'muted' };
     }
     case 'connected': return { text: join(`${str(e.client) || 'an app'} connected`), tone: 'muted' };
+    case 'app_waiting': return { text: join(`${str(e.app) || 'an app'} is waiting for approval`, e.ip), tone: 'warm' };
+    case 'app_approved': return { text: join(`approved ${str(e.app) || 'an app'}`), tone: 'text' };
+    case 'app_denied': return { text: join(`denied ${str(e.app) || 'an app'}`), tone: 'muted' };
+    case 'app_removed': {
+      const n = typeof e.revoked === 'number' ? e.revoked : 0;
+      return { text: join(`removed ${str(e.app) || 'an app'}`, n ? `${n} connection${n === 1 ? '' : 's'} revoked` : ''), tone: 'muted' };
+    }
     case 'client_registered': return { text: join('registered app', e.client), tone: 'muted' };
     case 'settings_changed': return settingsText(e);
     case 'config_changed': return { text: configText(e), tone: 'muted' };

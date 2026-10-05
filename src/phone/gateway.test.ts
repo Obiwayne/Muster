@@ -801,10 +801,28 @@ describe('phone gateway: remote access config from Settings (docs/REMOTE.md, mil
     expect((await admin4('GET', '/admin/remote')).data.lastTest).toEqual(down);
   });
 
+  it('the app allow-list can be read and pruned with remote access off', async () => {
+    await admin4('PUT', '/admin/remote/config', { enabled: false });
+    expect(gw4.remote).toBeNull();
+    const at = '2026-10-04T10:00:00.000Z';
+    writeFileSync(
+      join(dir4, 'remote.json'),
+      JSON.stringify({ clients: [], grants: [], apps: [{ id: 'app_0123456789abcdef', clientId: 'https://claude.ai/oauth/x', name: 'Claude', kind: 'cimd', status: 'waiting', requestedAt: at, ip: '86.12.44.170' }] }),
+    );
+    const status = (await admin4('GET', '/admin/remote')).data;
+    expect(status).toMatchObject({ enabled: false, appsWaiting: 1, apps: [{ id: 'app_0123456789abcdef', status: 'waiting', connections: 0 }] });
+    expect((await admin4('POST', '/admin/remote/apps/app_0123456789abcdef/approve')).data).toMatchObject({ ok: true, app: { status: 'approved', approvedBy: 'desktop' } });
+    expect((await admin4('GET', '/admin/remote/apps')).data[0].status).toBe('approved');
+    expect((await admin4('DELETE', '/admin/remote/apps/app_nope')).status).toBe(404);
+    expect((await admin4('DELETE', '/admin/remote/apps')).data).toEqual({ ok: true, removed: 1, revoked: 0 });
+    expect((await admin4('GET', '/admin/remote/apps')).data).toEqual([]);
+  });
+
   it('serves the last log lines newest first', async () => {
     const lines = (await admin4('GET', '/admin/remote/log?limit=3')).data;
     expect(lines).toHaveLength(3);
-    expect(lines[0]).toMatchObject({ event: 'test', ok: false });
+    expect(lines[0]).toMatchObject({ event: 'app_removed', app: 'Claude' }); // the allow-list test ran last
+    expect((await admin4('GET', '/admin/remote/log?limit=20')).data.some((l: any) => l.event === 'test' && l.ok === false)).toBe(true);
     expect(Date.parse(lines[0].at)).toBeGreaterThanOrEqual(Date.parse(lines[2].at));
     expect((await admin4('GET', '/admin/remote/log')).data.some((l: any) => l.event === 'config_changed')).toBe(true);
   });

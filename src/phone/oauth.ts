@@ -7,6 +7,9 @@
 // - /token: authorization_code (PKCE S256 required) and refresh_token (rotated; a reused old refresh token revokes the
 //   whole grant). Access tokens 1 h, refresh tokens 30 d; only sha256 hashes are stored (remote.json).
 // - Every failed login (wrong/expired code, lockout, bad PKCE, bad refresh) is written to the audit log.
+// - App allow-list: a correct code is not enough. An app (OAuth client) that isn't approved waits on the consent page
+//   until you Approve or Deny it on the desktop; tokens and /mcp calls need the app approved, and removing it revokes
+//   its grants (docs/REMOTE.md "App allow-list").
 import { createHash, randomBytes } from 'node:crypto';
 import { readFileSync } from 'node:fs';
 import type { IncomingMessage, ServerResponse } from 'node:http';
@@ -53,7 +56,31 @@ export interface Grant {
 interface AuthFile {
   clients: OAuthClient[];
   grants: Grant[];
+  apps: App[];
 }
+
+/** An app on the allow-list (or asking to be). One per OAuth client_id. */
+export interface App {
+  id: string; // app_<16 hex of sha256(clientId)>: URL-safe, unlike a CIMD client_id
+  clientId: string;
+  name: string;
+  kind: 'dcr' | 'cimd';
+  status: 'waiting' | 'approved';
+  requestedAt: string;
+  approvedAt?: string;
+  approvedBy?: 'desktop' | 'existing';
+  ip?: string;
+}
+
+/** Settings' Approved apps card: the app plus its live connections. */
+export interface AppSummary extends App {
+  connections: number;
+  lastUsedAt?: string;
+}
+
+export const APP_WAIT_MS = 10 * 60_000;
+const WAIT_REFRESH_S = 3;
+const appIdOf = (clientId: string) => `app_${sha256hex(clientId).slice(0, 16)}`;
 
 /** What Settings lists under Remote access: one row per connection, each with its own Disconnect. */
 export interface GrantSummary {
@@ -75,6 +102,21 @@ export interface OAuthOptions {
   onLock?: (info: { until: string; ip: string; ipFrom: string; client: string }) => void;
   /** CIMD: fetch a client's metadata document (test seam). */
   fetchMetadata?: (url: string) => Promise<unknown>;
+  /** An app not on the allow-list just signed in with a correct code and is waiting: tell the user on the desktop. */
+  onAppWaiting?: (info: { app: string; ip: string; ipFrom: string }) => void;
+}
+
+/** A sign-in that passed the code but waits for the app's approval (the consent page refreshes on it). */
+interface WaitingSignIn {
+  appId: string;
+  clientId: string;
+  clientName: string;
+  redirectUri: string;
+  state?: string;
+  challenge: string;
+  scope: string;
+  resource: string;
+  expiresAt: number;
 }
 
 /** claude.ai's callback, or a loopback http URL on any port (Claude Code). */
@@ -160,6 +202,7 @@ export class RemoteAuth {
   private fails: number[] = [];
   private lockedUntil = 0;
   private readonly codes = new Map<string, PendingCode>();
+  private readonly waiting = new Map<string, WaitingSignIn>(); // by request id (the consent page's ?r=)
   private readonly cimd = new Map<string, { client: OAuthClient; until: number }>();
   private lastSave = 0;
 
@@ -170,12 +213,26 @@ export class RemoteAuth {
   }
 
   private load(): AuthFile {
+    let d: AuthFile;
     try {
       const v = JSON.parse(readFileSync(this.file, 'utf8'));
-      return { clients: Array.isArray(v.clients) ? v.clients : [], grants: Array.isArray(v.grants) ? v.grants : [] };
+      d = { clients: Array.isArray(v.clients) ? v.clients : [], grants: Array.isArray(v.grants) ? v.grants : [], apps: Array.isArray(v.apps) ? v.apps : [] };
     } catch {
-      return { clients: [], grants: [] };
+      return { clients: [], grants: [], apps: [] };
     }
+    // Before the allow-list: apps that already hold a grant were signed in with a code, so they start approved.
+    let migrated = false;
+    for (const g of d.grants) {
+      if (d.apps.some((a) => a.clientId === g.clientId)) continue;
+      const c = d.clients.find((x) => x.id === g.clientId);
+      d.apps.push({ id: appIdOf(g.clientId), clientId: g.clientId, name: g.clientName, kind: c?.kind ?? (g.clientId.startsWith('https://') ? 'cimd' : 'dcr'), status: 'approved', requestedAt: g.createdAt, approvedAt: g.createdAt, approvedBy: 'existing' });
+      migrated = true;
+    }
+    if (migrated) {
+      this.data = d;
+      this.save();
+    }
+    return d;
   }
 
   private save(): void {
@@ -218,6 +275,54 @@ export class RemoteAuth {
     return this.data.grants.filter((g) => Date.parse(g.refreshExpiresAt) > t).map((g) => ({ id: g.id, clientName: g.clientName, createdAt: g.createdAt, lastUsedAt: g.lastUsedAt }));
   }
 
+  // ---- app allow-list (desktop)
+
+  private approved(clientId: string): boolean {
+    return this.data.apps.some((a) => a.clientId === clientId && a.status === 'approved');
+  }
+
+  /** Waiting apps first, then approved ones; each with its live connections. */
+  apps(): AppSummary[] {
+    const t = this.t();
+    const live = this.data.grants.filter((g) => Date.parse(g.refreshExpiresAt) > t);
+    return [...this.data.apps]
+      .sort((a, b) => (a.status === b.status ? b.requestedAt.localeCompare(a.requestedAt) : a.status === 'waiting' ? -1 : 1))
+      .map((a) => {
+        const mine = live.filter((g) => g.clientId === a.clientId);
+        const last = mine.map((g) => g.lastUsedAt).sort().at(-1);
+        return { ...a, connections: mine.length, ...(last ? { lastUsedAt: last } : {}) };
+      });
+  }
+
+  approveApp(id: string): App | null {
+    const a = this.data.apps.find((x) => x.id === id);
+    if (!a) return null;
+    if (a.status !== 'approved') {
+      a.status = 'approved';
+      a.approvedAt = this.iso();
+      a.approvedBy = 'desktop';
+      this.save();
+      this.opts.audit({ event: 'app_approved', app: a.name });
+    }
+    return a;
+  }
+
+  /** Deny a waiting app or remove an approved one (and every grant it holds). All of them when `id` is left out. */
+  removeApp(id?: string): { removed: number; revoked: number } {
+    const gone = this.data.apps.filter((a) => !id || a.id === id);
+    if (!gone.length) return { removed: 0, revoked: 0 };
+    let revoked = 0;
+    for (const a of gone) {
+      const n = this.data.grants.filter((g) => g.clientId === a.clientId).length;
+      revoked += n;
+      this.data.grants = this.data.grants.filter((g) => g.clientId !== a.clientId);
+      this.data.apps = this.data.apps.filter((x) => x.clientId !== a.clientId);
+      this.opts.audit(a.status === 'waiting' ? { event: 'app_denied', app: a.name } : { event: 'app_removed', app: a.name, revoked: n });
+    }
+    this.save();
+    return { removed: gone.length, revoked };
+  }
+
   /** One connection, or every one when `id` is left out. Returns how many were revoked. */
   revoke(id?: string, reason = 'desktop'): number {
     const before = this.data.grants.length;
@@ -235,7 +340,7 @@ export class RemoteAuth {
     const hash = sha256hex(accessToken);
     const t = this.t();
     const g = this.data.grants.find((x) => sameToken(x.accessHash, hash));
-    if (!g || Date.parse(g.accessExpiresAt) <= t || g.resource !== resource) return null;
+    if (!g || Date.parse(g.accessExpiresAt) <= t || g.resource !== resource || !this.approved(g.clientId)) return null;
     g.lastUsedAt = this.iso(t);
     if (t - this.lastSave > 60_000) this.save();
     return g;
@@ -283,6 +388,11 @@ export class RemoteAuth {
     if (path === '/register') {
       if (method !== 'POST') throw new OAuthError(405, 'invalid_request', 'POST only');
       json(res, 201, this.register(await readForm(req)));
+      return true;
+    }
+    if (path === '/authorize/wait') {
+      if (method !== 'GET') throw new OAuthError(405, 'invalid_request', 'GET only');
+      this.authorizeWait(req, res, new URL(req.url ?? '/', base).searchParams.get('r') ?? '');
       return true;
     }
     if (path === '/authorize') {
@@ -439,10 +549,72 @@ export class RemoteAuth {
       const msg = lockNow ? 'Too many wrong codes. Logins are locked for 10 minutes.' : result === 'expired' ? 'That code has expired. Make a new one in Muster.' : 'Wrong code.';
       return this.authorizePage(req, res, f, resource, msg);
     }
+    const signIn = { clientId: checked.client.id, clientName: checked.client.name, redirectUri: f.redirect_uri, challenge: f.code_challenge, scope: checked.scope, resource };
+    if (this.approved(checked.client.id)) {
+      this.opts.audit({ event: 'login_ok', client: checked.client.name, ...ip });
+      return back({ code: this.authCode(signIn) });
+    }
+    // Not on the allow-list: the code was right, but the app waits for your Approve on the desktop.
+    const app = this.askApproval(checked.client, ip);
+    const r = b64url(randomBytes(18));
+    this.waiting.set(r, { ...signIn, appId: app.id, ...(f.state ? { state: f.state } : {}), expiresAt: this.t() + APP_WAIT_MS });
+    this.opts.audit({ event: 'login_failed', reason: 'not_approved', client: checked.client.name, ...ip });
+    this.waitPage(res, r, app.name);
+  }
+
+  /** An authorization code for a sign-in that passed (code right, app approved). */
+  private authCode(s: Omit<PendingCode, 'expiresAt'>): string {
     const code = b64url(randomBytes(32));
-    this.codes.set(sha256hex(code), { clientId: checked.client.id, clientName: checked.client.name, redirectUri: f.redirect_uri, challenge: f.code_challenge, scope: checked.scope, resource, expiresAt: this.t() + AUTH_CODE_TTL_MS });
-    this.opts.audit({ event: 'login_ok', client: checked.client.name, ...ip });
-    back({ code });
+    this.codes.set(sha256hex(code), { ...s, expiresAt: this.t() + AUTH_CODE_TTL_MS });
+    return code;
+  }
+
+  /** Puts an app on the waiting list (or refreshes its entry) and tells the desktop. */
+  private askApproval(client: OAuthClient, ip: { ip: string; ipFrom: string }): App {
+    let a = this.data.apps.find((x) => x.clientId === client.id);
+    if (!a) {
+      a = { id: appIdOf(client.id), clientId: client.id, name: client.name, kind: client.kind, status: 'waiting', requestedAt: this.iso(), ip: ip.ip };
+      this.data.apps.push(a);
+    } else {
+      a.requestedAt = this.iso();
+      a.ip = ip.ip;
+    }
+    this.save();
+    this.opts.audit({ event: 'app_waiting', app: a.name, ...ip });
+    this.opts.onAppWaiting?.({ app: a.name, ...ip });
+    return a;
+  }
+
+  /** The consent page while the app waits: refreshes itself until you Approve or Deny it on the desktop. */
+  private authorizeWait(req: IncomingMessage, res: ServerResponse, r: string): void {
+    for (const [k, v] of this.waiting) if (v.expiresAt <= this.t()) this.waiting.delete(k);
+    const w = this.waiting.get(r);
+    if (!w) return this.page(res, 410, 'This sign-in timed out', '<p>Nobody approved the app on the PC within 10 minutes, so nothing was connected. Start the sign-in again from Claude.</p>');
+    const app = this.data.apps.find((a) => a.id === w.appId);
+    const back = (params: Record<string, string>) => {
+      this.waiting.delete(r);
+      const u = new URL(w.redirectUri);
+      for (const [k, v] of Object.entries(params)) u.searchParams.set(k, v);
+      if (w.state) u.searchParams.set('state', w.state);
+      res.writeHead(302, { location: u.toString(), 'cache-control': 'no-store' });
+      res.end();
+    };
+    if (!app) return back({ error: 'access_denied' }); // denied (removed from the list) on the desktop
+    if (app.status !== 'approved') return this.waitPage(res, r, app.name);
+    this.opts.audit({ event: 'login_ok', client: w.clientName, ...this.where(req) });
+    back({ code: this.authCode({ clientId: w.clientId, clientName: w.clientName, redirectUri: w.redirectUri, challenge: w.challenge, scope: w.scope, resource: w.resource }) });
+  }
+
+  private waitPage(res: ServerResponse, r: string, name: string): void {
+    this.page(
+      res,
+      202,
+      'Waiting for approval',
+      `<p>The code was right. <b>${esc(name)}</b> isn't on Muster's list of approved apps yet.</p>
+      <p>On <b>${esc(this.opts.pcName)}</b>, open Muster › <b>Settings › Remote access</b> and press <b>Approve</b> next to ${esc(name)}. This page carries on by itself.</p>
+      <p class="muted">Waiting… (gives up after 10 minutes)</p>`,
+      `<meta http-equiv="refresh" content="${WAIT_REFRESH_S};url=/authorize/wait?r=${encodeURIComponent(r)}">`,
+    );
   }
 
   private token(f: Record<string, string>, resource: string, req: IncomingMessage): Record<string, unknown> {
@@ -463,6 +635,7 @@ export class RemoteAuth {
       if (pending.redirectUri !== f.redirect_uri) return fail('redirect_mismatch', 'redirect_uri does not match the code');
       if (!f.code_verifier || !sameToken(s256(f.code_verifier), pending.challenge)) return fail('bad_pkce', 'PKCE verification failed');
       if (f.resource && f.resource.replace(/\/+$/, '') !== pending.resource) return fail('bad_resource', 'resource does not match the code', 'invalid_target');
+      if (!this.approved(pending.clientId)) return fail('not_approved', 'This app is not on the approved list');
       const access = token('mra');
       const refresh = token('mrr');
       const g: Grant = {
@@ -494,6 +667,7 @@ export class RemoteAuth {
       const g = this.data.grants.find((x) => sameToken(x.refreshHash, hash));
       if (!g || Date.parse(g.refreshExpiresAt) <= t) return fail('bad_refresh', 'Unknown, expired or revoked refresh token');
       if (f.client_id && f.client_id !== g.clientId) return fail('client_mismatch', 'client_id does not match the refresh token');
+      if (!this.approved(g.clientId)) return fail('not_approved', 'This app is not on the approved list');
       const access = token('mra');
       const refresh = token('mrr');
       g.prevRefreshHash = g.refreshHash;
@@ -508,7 +682,7 @@ export class RemoteAuth {
     return fail('bad_grant_type', 'grant_type must be authorization_code or refresh_token', 'unsupported_grant_type');
   }
 
-  private page(res: ServerResponse, status: number, title: string, body: string): void {
+  private page(res: ServerResponse, status: number, title: string, body: string, head = ''): void {
     res.writeHead(status, {
       'content-type': 'text/html; charset=utf-8',
       'cache-control': 'no-store',
@@ -516,12 +690,12 @@ export class RemoteAuth {
       'content-security-policy': "default-src 'none'; style-src 'unsafe-inline'; frame-ancestors 'none'",
       'referrer-policy': 'no-referrer',
     });
-    res.end(`<!doctype html><html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>${esc(title)}</title>
+    res.end(`<!doctype html><html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">${head}<title>${esc(title)}</title>
 <style>
 :root{color-scheme:dark}body{margin:0;min-height:100vh;display:grid;place-items:center;background:#0e0f12;color:#e6e7ea;font:15px/1.5 system-ui,sans-serif}
 main{width:min(420px,calc(100vw - 32px));background:#16181d;border:1px solid #262a33;border-radius:14px;padding:28px}
 h1{font-size:18px;margin:0 0 12px}.brand{color:#a99cff;font-size:12px;letter-spacing:.08em;text-transform:uppercase;margin-bottom:6px}
-p{color:#b4b8c2;margin:0 0 12px}b{color:#e6e7ea}.err{color:#ff8a8a}
+p{color:#b4b8c2;margin:0 0 12px}b{color:#e6e7ea}.err{color:#ff8a8a}.muted{color:#6b7080}
 input[name=code]{width:100%;box-sizing:border-box;font:600 22px/1 ui-monospace,monospace;letter-spacing:.2em;text-align:center;text-transform:uppercase;padding:12px;border-radius:10px;border:1px solid #333845;background:#0e0f12;color:#fff;margin:4px 0 14px}
 .row{display:flex;gap:8px}button{flex:1;padding:11px;border-radius:10px;border:0;font:600 14px system-ui;background:#7c6cff;color:#fff;cursor:pointer}
 button.ghost{background:transparent;border:1px solid #333845;color:#b4b8c2}button:disabled{opacity:.5}

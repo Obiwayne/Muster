@@ -1,10 +1,10 @@
 import { createHash, randomBytes } from 'node:crypto';
-import { mkdtempSync, readFileSync, rmSync } from 'node:fs';
+import { mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import { request } from 'node:http';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { afterAll, beforeAll, beforeEach, describe, expect, it } from 'vitest';
-import { ACCESS_TTL_MS, AUTH_CODE_TTL_MS, CLAUDE_CALLBACK, LOCK_MS, allowedRedirect } from './oauth.js';
+import { ACCESS_TTL_MS, APP_WAIT_MS, AUTH_CODE_TTL_MS, CLAUDE_CALLBACK, LOCK_MS, RemoteAuth, allowedRedirect } from './oauth.js';
 import { startRemote, type Remote, type RemoteContext } from './remote.js';
 import { fakeState } from './testfakes.js';
 
@@ -15,6 +15,7 @@ let remote: Remote;
 let clock = Date.parse('2026-10-05T12:00:00.000Z');
 let metadataFetches = 0;
 const locks: { until: string; ip: string; ipFrom: string; client: string }[] = [];
+const waits: { app: string; ip: string; ipFrom: string }[] = [];
 
 const ctx: RemoteContext = {
   projects: async () => [{ id: 'p1', name: 'StarCut', root: '/x', running: true, port: 1 }],
@@ -68,10 +69,31 @@ const pkce = () => {
 const base = () => `http://127.0.0.1:${remote.port}`;
 const listTools = (bearer: string, host?: string) => http('POST', '/mcp', { host, bearer, json: { jsonrpc: '2.0', id: 1, method: 'tools/list', params: {} } });
 
-async function register(name = 'Claude'): Promise<string> {
+/** Registers a client and, unless told not to, puts it on the allow-list the way you would: a first sign-in with a
+ *  correct code leaves it waiting, then the desktop approves it. */
+async function register(name = 'Claude', approve = true): Promise<string> {
   const r = await http('POST', '/register', { json: { client_name: name, redirect_uris: [CLAUDE_CALLBACK], token_endpoint_auth_method: 'none' } });
   expect(r.status).toBe(201);
+  if (approve) await approveClient(r.json.client_id);
   return r.json.client_id;
+}
+
+/** A sign-in with a correct code from an unapproved app: 202 "Waiting for approval", and its ?r= request id. */
+async function signInWaiting(clientId: string, challenge = pkce().challenge): Promise<{ r: string; res: Res }> {
+  const { code } = remote.auth.issueCode();
+  const res = await http('POST', '/authorize', { form: { ...authParams(clientId, challenge), code, decision: 'allow' } });
+  expect(res.status).toBe(202);
+  const m = /url=\/authorize\/wait\?r=([^"&]+)/.exec(res.text);
+  expect(m).not.toBeNull();
+  return { r: decodeURIComponent(m![1]), res };
+}
+
+const appOf = (clientId: string) => remote.auth.apps().find((a) => a.clientId === clientId);
+
+async function approveClient(clientId: string): Promise<void> {
+  if (appOf(clientId)?.status === 'approved') return;
+  await signInWaiting(clientId);
+  expect(remote.auth.approveApp(appOf(clientId)!.id)).not.toBeNull();
 }
 
 function authParams(clientId: string, challenge: string, extra: Record<string, string> = {}): Record<string, string> {
@@ -91,6 +113,7 @@ async function consent(clientId: string, challenge: string): Promise<string> {
 
 async function connect(clientId?: string): Promise<{ access: string; refresh: string; clientId: string }> {
   const id = clientId ?? (await register());
+  await approveClient(id);
   const { verifier, challenge } = pkce();
   const code = await consent(id, challenge);
   const t = await http('POST', '/token', { form: { grant_type: 'authorization_code', code, code_verifier: verifier, client_id: id, redirect_uri: CLAUDE_CALLBACK, resource: `${base()}/mcp` } });
@@ -106,6 +129,7 @@ beforeAll(async () => {
     pcName: 'Obi',
     tunnel: 'cloudflare',
     onLock: (info) => locks.push(info),
+    onAppWaiting: (info) => waits.push(info),
     dir,
     now: () => new Date(clock),
     fetchMetadata: async (url) => {
@@ -336,5 +360,106 @@ describe('remote OAuth: tokens', () => {
     expect(evil.status).toBe(400);
     const unknown = await http('GET', `/authorize?${new URLSearchParams(authParams('https://nope.example/meta', pkce().challenge))}`);
     expect(unknown.status).toBe(400);
+  });
+});
+
+describe('remote OAuth: app allow-list (a correct code is not enough)', () => {
+  const tokenFor = async (clientId: string, verifier: string, code: string) =>
+    http('POST', '/token', { form: { grant_type: 'authorization_code', code, code_verifier: verifier, client_id: clientId, redirect_uri: CLAUDE_CALLBACK, resource: `${base()}/mcp` } });
+
+  it('an unapproved app with a correct code waits: no code goes back, the desktop is told, and it is on the list', async () => {
+    const id = await register('Stranger', false);
+    const before = waits.length;
+    const { res } = await signInWaiting(id);
+    expect(res.headers.location).toBeUndefined();
+    expect(res.text).toContain('Waiting for approval');
+    expect(res.text).toContain('<b>Stranger</b> isn');
+    expect(waits.slice(before)).toEqual([{ app: 'Stranger', ip: '127.0.0.1', ipFrom: 'socket' }]);
+    expect(appOf(id)).toMatchObject({ name: 'Stranger', kind: 'dcr', status: 'waiting', ip: '127.0.0.1', connections: 0 });
+    expect(appOf(id)!.id).toMatch(/^app_[0-9a-f]{16}$/);
+    expect(remote.status().appsWaiting).toBeGreaterThanOrEqual(1);
+    expect(audit().some((l) => l.event === 'app_waiting' && l.app === 'Stranger')).toBe(true);
+    expect(audit().some((l) => l.event === 'login_failed' && l.reason === 'not_approved' && l.client === 'Stranger')).toBe(true);
+  });
+
+  it('the waiting page keeps waiting, then carries on with a code once you approve, and the code works', async () => {
+    const id = await register('Approve me', false);
+    const { verifier, challenge } = pkce();
+    const { r } = await signInWaiting(id, challenge);
+    const still = await http('GET', `/authorize/wait?r=${encodeURIComponent(r)}`);
+    expect(still.status).toBe(202);
+    expect(still.text).toContain('http-equiv="refresh"');
+    remote.auth.approveApp(appOf(id)!.id);
+    const go = await http('GET', `/authorize/wait?r=${encodeURIComponent(r)}`);
+    expect(go.status).toBe(302);
+    const loc = new URL(String(go.headers.location));
+    expect(loc.searchParams.get('state')).toBe('st8');
+    const t = await tokenFor(id, verifier, loc.searchParams.get('code')!);
+    expect(t.status).toBe(200);
+    expect((await listTools(t.json.access_token)).status).toBe(200);
+    expect(appOf(id)).toMatchObject({ status: 'approved', approvedBy: 'desktop', connections: 1 });
+    expect((await http('GET', `/authorize/wait?r=${encodeURIComponent(r)}`)).status).toBe(410); // used once
+  });
+
+  it('Deny sends access_denied back and takes the app off the list', async () => {
+    const id = await register('Deny me', false);
+    const { r } = await signInWaiting(id);
+    expect(remote.auth.removeApp(appOf(id)!.id)).toEqual({ removed: 1, revoked: 0 });
+    const back = await http('GET', `/authorize/wait?r=${encodeURIComponent(r)}`);
+    expect(back.status).toBe(302);
+    expect(String(back.headers.location)).toContain('error=access_denied');
+    expect(appOf(id)).toBeUndefined();
+    expect(audit().some((l) => l.event === 'app_denied' && l.app === 'Deny me')).toBe(true);
+  });
+
+  it('a waiting sign-in gives up after 10 minutes', async () => {
+    const id = await register('Slow', false);
+    const { r } = await signInWaiting(id);
+    clock += APP_WAIT_MS + 1;
+    const late = await http('GET', `/authorize/wait?r=${encodeURIComponent(r)}`);
+    expect(late.status).toBe(410);
+    expect(late.text).toContain('timed out');
+  });
+
+  it('removing an approved app cuts it off at once: calls 401, refresh fails, and a correct code only puts it back in the queue', async () => {
+    const { access, refresh, clientId } = await connect(await register('Remove me'));
+    expect((await listTools(access)).status).toBe(200);
+    const app = appOf(clientId)!;
+    expect(remote.auth.removeApp(app.id)).toEqual({ removed: 1, revoked: 1 });
+    expect((await listTools(access)).status).toBe(401);
+    const r = await http('POST', '/token', { form: { grant_type: 'refresh_token', refresh_token: refresh, client_id: clientId } });
+    expect(r.status).toBe(400);
+    expect(audit().some((l) => l.event === 'app_removed' && l.app === 'Remove me' && l.revoked === 1)).toBe(true);
+    await signInWaiting(clientId); // the right code again, but it waits
+    expect(appOf(clientId)!.status).toBe('waiting');
+  });
+
+  it('an approved app that later loses approval cannot use a token it already has', async () => {
+    const { access, clientId } = await connect(await register('Pulled'));
+    // simulate the list changing under a live token (e.g. remove-all from another window)
+    remote.auth.removeApp();
+    expect(remote.auth.apps()).toEqual([]);
+    expect((await listTools(access)).status).toBe(401);
+    expect(appOf(clientId)).toBeUndefined();
+  });
+
+  it('apps that already held a grant before the allow-list existed start approved', () => {
+    const d = mkdtempSync(join(tmpdir(), 'muster-allow-'));
+    try {
+      mkdirSync(d, { recursive: true });
+      const at = '2026-10-04T10:00:00.000Z';
+      writeFileSync(
+        join(d, 'remote.json'),
+        JSON.stringify({
+          clients: [{ id: 'mc_old', name: 'Claude', redirectUris: [CLAUDE_CALLBACK], kind: 'dcr', createdAt: at }],
+          grants: [{ id: 'g1', clientId: 'mc_old', clientName: 'Claude', scope: 'muster:read', resource: 'x', accessHash: 'a', accessExpiresAt: at, refreshHash: 'b', refreshExpiresAt: '2099-01-01T00:00:00.000Z', createdAt: at, lastUsedAt: at }],
+        }),
+      );
+      const auth = new RemoteAuth({ dir: d, pcName: 'Obi', now: () => new Date(), audit: () => {} });
+      expect(auth.apps()).toEqual([expect.objectContaining({ clientId: 'mc_old', name: 'Claude', status: 'approved', approvedBy: 'existing', connections: 1 })]);
+      expect(JSON.parse(readFileSync(join(d, 'remote.json'), 'utf8')).apps).toHaveLength(1); // saved
+    } finally {
+      rmSync(d, { recursive: true, force: true });
+    }
   });
 });

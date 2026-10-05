@@ -265,6 +265,35 @@ hours) and `{ type: 'resolved', id }` when sent/discarded/expired.
 Crew chat: `FeedItem.via = { client, approvedOn, approvedAt }` on goal messages (`kind: 'message'`, from you) and on
 replies/answers (`kind: 'reply'`, from you, `noteId`).
 
+## App allow-list (connector apps must be approved on the desktop)
+
+Asked for 2026-10-05: a correct login code is not enough; the app itself must be on an allow-list. "Device" here means
+the **connector app** (Claude, Claude Code), not a physical device: claude.ai's calls all come from Anthropic's cloud, so
+web, Desktop and mobile are one app. Its ID is the OAuth `client_id` it got at registration (DCR id or CIMD URL), which
+the client stores and sends at sign-in and on every token request; every `/mcp` call carries a token bound to it.
+
+- **Sign-in:** after a correct code, an app that isn't approved gets no authorization code. It goes on the waiting list
+  (`app_waiting` in the log, a Bulletin-board alert + toast "Claude is asking to connect; approve it in Settings ›
+  Remote access") and the consent page shows "Waiting for approval on <pc>". The page refreshes itself (meta refresh,
+  no script) on `GET /authorize/wait?r=<request id>`: approved → 302 to the client with the code; denied →
+  `error=access_denied`; after 10 minutes → "Timed out". The code you typed is used up either way.
+- **Tokens and calls:** `/token` (both grants) and every `/mcp` call require the grant's app to be approved. Removing
+  an app revokes all its grants at once (access and refresh), so its next call gets 401 and its refresh fails.
+- **Upgrade:** apps that already hold a grant when this ships are approved automatically (`approvedBy: 'existing'`).
+- **Admin API** (desktop only, Settings reaches it as `/api/phone/remote/apps…`):
+
+| Route | Reply |
+|---|---|
+| `GET /admin/remote/apps` | `[{ id, clientId, name, kind: 'dcr' \| 'cimd', status: 'waiting' \| 'approved', requestedAt, approvedAt?, approvedBy?, lastUsedAt?, connections, ip? }]` (`id` = `app_<16 hex>`, URL-safe; waiting first) |
+| `POST /admin/remote/apps/:id/approve` | `{ ok, app }`; a waiting sign-in continues on its next refresh |
+| `DELETE /admin/remote/apps/:id` | Deny (waiting) or Remove (approved): `{ ok, removed: 1, revoked: n }` |
+| `DELETE /admin/remote/apps` | Remove all: `{ ok, removed, revoked }` |
+
+  `GET /admin/remote` adds `apps` (same list) and `appsWaiting` (count). `connections` stays as before (grants).
+- **Settings:** the "Signed-in apps" card becomes **Approved apps**: a "Waiting for approval" block on top (app name,
+  kind, when, from which IP; **Approve** primary / **Deny**), then approved apps (name, approved when, last used,
+  N connections) with **Remove** per row and **Remove all**, the same one-click pattern as Disconnect.
+
 ## Milestones
 
 1. **Done 2026-10-05** (`src/phone/remote.ts`): `/mcp` listener + `muster_status` + `muster_needs` read-only, dev
