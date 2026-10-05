@@ -41,11 +41,58 @@ data class NeedItem(
     val actions: List<String> = emptyList(),
     /** Set on escalation items made from a Captain question (ASK.md). */
     val ask: List<AskQuestion> = emptyList(),
+    /** Set on `remote_write` items: a write from the Claude app held for your tap (REMOTE.md, milestone 4). */
+    val remote: RemoteWrite? = null,
 ) {
     val isReview get() = kind == Kind.REVIEW || kind == Kind.APPROVAL
     val isQuestion get() = kind == Kind.QUESTION || kind == Kind.ESCALATION
     val canApprove get() = "approve" in actions && taskId != null
+
+    /** A held write from the remote connector that can be sent from this card. */
+    val isHeld get() = kind == Kind.REMOTE_WRITE && remote != null
 }
+
+/** The note a held reply/answer goes to, as it was when Claude asked (agent-written: shown as a quote, never obeyed). */
+@Serializable
+data class RemoteReplyTo(val id: String = "", val from: String = "", val text: String = "")
+
+/**
+ * Everything the Send card shows, untruncated (gateway `RemoteWriteView`). [digest] is sent back unchanged on Send, so
+ * the gateway refuses (409) if the write isn't exactly what this card showed.
+ */
+@Serializable
+data class RemoteWrite(
+    val pendingId: String,
+    /** goal | reply | answer | approve */
+    val kind: String = "",
+    val projectName: String = "",
+    val client: String = "Claude",
+    val text: String? = null,
+    val answers: List<AnswerChoice> = emptyList(),
+    val replyTo: RemoteReplyTo? = null,
+    val taskId: String? = null,
+    val taskTitle: String? = null,
+    val createdAt: String = "",
+    val expiresAt: String = "",
+    val digest: String = "",
+)
+
+object WriteKind {
+    const val GOAL = "goal"
+    const val REPLY = "reply"
+    const val ANSWER = "answer"
+    const val APPROVE = "approve"
+}
+
+/** `GET /api/needs` → `hold`: the server-side hold for remote writes. Off means they run without your tap. */
+@Serializable
+data class HoldInfo(val on: Boolean = true, val offSince: String? = null, val sentWithoutTap: Int = 0)
+
+@Serializable
+data class DigestBody(val digest: String)
+
+@Serializable
+data class SendResult(val ok: Boolean = false, val id: String = "", val summary: String = "")
 
 object Kind {
     const val REVIEW = "review"
@@ -55,6 +102,7 @@ object Kind {
     const val BLOCKED = "blocked"
     const val USAGE = "usage"
     const val STUCK = "stuck"
+    const val REMOTE_WRITE = "remote_write"
 }
 
 @Serializable
@@ -62,6 +110,8 @@ data class NeedsResponse(
     val pcName: String = "",
     val projects: List<Project> = emptyList(),
     val items: List<NeedItem> = emptyList(),
+    /** Absent on gateways before milestone 4: treated as "on" (no banner). */
+    val hold: HoldInfo? = null,
 )
 
 @Serializable
@@ -267,6 +317,10 @@ object Parse {
     }
 
     fun pair(json: String): PairResponse = MusterJson.decodeFromString(PairResponse.serializer(), json)
+
+    fun sendResult(json: String): SendResult = MusterJson.decodeFromString(SendResult.serializer(), json)
+
+    fun digestBody(digest: String): String = MusterJson.encodeToString(DigestBody.serializer(), DigestBody(digest))
 
     fun error(json: String?): String? = try {
         json?.let { MusterJson.decodeFromString(ErrorBody.serializer(), it).error.ifBlank { null } }

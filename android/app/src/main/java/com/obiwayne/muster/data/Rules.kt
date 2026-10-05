@@ -32,7 +32,7 @@ object QuietHours {
     /** Which prefs switch governs a need kind. */
     fun category(kind: String): String = when (kind) {
         Kind.REVIEW, Kind.APPROVAL -> "review"
-        Kind.QUESTION, Kind.ESCALATION -> "question"
+        Kind.QUESTION, Kind.ESCALATION, Kind.REMOTE_WRITE -> "question"
         Kind.BLOCKED -> "blocked"
         Kind.USAGE -> "usage"
         Kind.STUCK -> "stuck"
@@ -50,8 +50,99 @@ object QuietHours {
             else -> false
         }
         if (!on) return false
-        if (isQuiet(prefs.quiet, minuteOfDay) && item.kind != Kind.BLOCKED) return false
+        // A held remote write is something you just asked for in the Claude app: it ignores quiet hours (as the gateway does).
+        if (isQuiet(prefs.quiet, minuteOfDay) && item.kind != Kind.BLOCKED && item.kind != Kind.REMOTE_WRITE) return false
         return true
+    }
+}
+
+/** Text rules for the held-write Send card and the "hold is off" banner (REMOTE.md, milestone 4). */
+object Held {
+    /** Under this many seconds the countdown turns warm orange. */
+    const val WARN_SECONDS = 180L
+
+    fun secondsLeft(r: RemoteWrite, now: Instant = Instant.now()): Long? =
+        Ago.parse(r.expiresAt)?.let { Duration.between(now, it).seconds }
+
+    fun isExpired(r: RemoteWrite, now: Instant = Instant.now()): Boolean = (secondsLeft(r, now) ?: 1) <= 0
+
+    /** "12:41 left"; "0:00 left" at the end. Empty when the time can't be read. */
+    fun countdown(r: RemoteWrite, now: Instant = Instant.now()): String {
+        val s = secondsLeft(r, now)?.coerceAtLeast(0) ?: return ""
+        return "%d:%02d left".format(s / 60, s % 60)
+    }
+
+    fun clockTime(iso: String?, zone: ZoneId = ZoneId.systemDefault()): String =
+        iso?.let(Ago::parse)?.atZone(zone)?.let { "%02d:%02d".format(it.hour, it.minute) } ?: ""
+
+    /** "HELD · GOAL" */
+    fun chip(r: RemoteWrite) = "HELD · " + r.kind.uppercase().ifEmpty { "WRITE" }
+
+    private fun questions(n: Int) = if (n == 1) "question" else "$n questions"
+
+    /** "Claude wants to give the Captain a goal" (or "wanted to", once expired). */
+    fun title(item: NeedItem, r: RemoteWrite, expired: Boolean = false): String {
+        val who = r.client.ifBlank { "Claude" }
+        val verb = if (expired) "wanted to" else "wants to"
+        val note = r.replyTo?.id?.ifBlank { null } ?: item.noteId ?: "a note"
+        return when (r.kind) {
+            WriteKind.GOAL -> "$who $verb give the Captain a goal"
+            WriteKind.REPLY -> "$who $verb reply on $note"
+            WriteKind.ANSWER -> "$who $verb answer the Captain's ${questions(r.answers.size.coerceAtLeast(1))} on $note"
+            WriteKind.APPROVE -> "$who $verb approve ${r.taskId ?: item.taskId ?: "a task"} for merge"
+            else -> item.title.ifBlank { "$who $verb send something" }
+        }
+    }
+
+    /** The route chip after "To": "StarCut · Captain", "StarCut · note N12", "StarCut · T58". */
+    fun route(item: NeedItem, r: RemoteWrite): String {
+        val project = r.projectName.ifBlank { item.projectName }
+        val target = when (r.kind) {
+            WriteKind.REPLY -> "note " + (r.replyTo?.id?.ifBlank { null } ?: item.noteId ?: "")
+            WriteKind.APPROVE -> r.taskId ?: item.taskId ?: ""
+            else -> "Captain"
+        }.trim()
+        return listOf(project, target).filter { it.isNotBlank() }.joinToString(" · ")
+    }
+
+    /** "asked 2 min ago in the Claude app" */
+    fun asked(r: RemoteWrite, now: Instant = Instant.now()): String {
+        val t = Ago.parse(r.createdAt)
+        val ago = if (t == null) "" else {
+            val m = Duration.between(t, now).toMinutes().coerceAtLeast(0)
+            when {
+                m < 1 -> "just now"
+                m < 60 -> "$m min ago"
+                else -> "${m / 60} h ago"
+            }
+        }
+        val where = r.client.let { if (it.isBlank() || it.equals("claude", ignoreCase = true)) "in the Claude app" else "via $it" }
+        return listOf("asked", ago, where).filter { it.isNotBlank() }.joinToString(" ")
+    }
+
+    /** The line under "Nothing has been sent yet." */
+    fun lockText(r: RemoteWrite): String {
+        val who = r.client.ifBlank { "Claude" }
+        return when (r.kind) {
+            WriteKind.REPLY -> {
+                val from = r.replyTo?.from?.ifBlank { null }
+                val to = if (from == null || from == "captain") "the Captain" else "$from and the Captain"
+                "Locked. It reaches $to, as yours via $who, only when you tap Send."
+            }
+            WriteKind.ANSWER -> if (r.answers.size > 1) "Locked. They reach the Captain, as yours via $who, only when you tap Send."
+            else "Locked. It reaches the Captain, as yours via $who, only when you tap Send."
+            WriteKind.APPROVE -> "Locked. The Captain merges and pushes ${r.taskId ?: "it"} only when you tap Send."
+            else -> "Locked. It reaches the Captain, as yours via $who, only when you tap Send."
+        }
+    }
+
+    /** "off since 14:40 · 3 sent without your tap" */
+    fun holdLine(h: HoldInfo, zone: ZoneId = ZoneId.systemDefault()): String {
+        val since = clockTime(h.offSince, zone)
+        return listOfNotNull(
+            since.ifEmpty { null }?.let { "off since $it" },
+            "${h.sentWithoutTap} sent without your tap",
+        ).joinToString(" · ")
     }
 }
 
