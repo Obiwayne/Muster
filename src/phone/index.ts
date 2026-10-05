@@ -3,7 +3,7 @@
 import { parseArgs } from 'node:util';
 import { startGateway } from './gateway.js';
 import { gatewayRunning } from './link.js';
-import { DEFAULT_PHONE_PORT, phoneDir } from './store.js';
+import { DEFAULT_PHONE_PORT, ensureRemoteDevToken, phoneDir } from './store.js';
 
 const { values } = parseArgs({ options: { port: { type: 'string' }, 'remote-port': { type: 'string' } } });
 const log = (msg: string) => console.log(`${new Date().toISOString()} ${msg}`);
@@ -18,10 +18,11 @@ async function main(): Promise<void> {
   const port = values.port ? Number(values.port) : process.env.MUSTER_PHONE_PORT ? Number(process.env.MUSTER_PHONE_PORT) : DEFAULT_PHONE_PORT;
   let gateway;
   try {
-    // Remote connector (docs/REMOTE.md), milestone 1: opt-in with --remote-port or MUSTER_REMOTE_PORT;
-    // MUSTER_REMOTE_HOST = the tunnel's public hostname.
+    // Remote connector (docs/REMOTE.md): opt-in with --remote-port or MUSTER_REMOTE_PORT;
+    // MUSTER_REMOTE_HOST = the tunnel's public hostname; MUSTER_REMOTE_DEV=1 also accepts the fixed dev token.
     const remotePort = values['remote-port'] ?? process.env.MUSTER_REMOTE_PORT;
-    const remote = remotePort ? { port: Number(remotePort), publicHost: process.env.MUSTER_REMOTE_HOST } : undefined;
+    const devToken = process.env.MUSTER_REMOTE_DEV === '1' ? ensureRemoteDevToken(dir) : undefined;
+    const remote = remotePort ? { port: Number(remotePort), publicHost: process.env.MUSTER_REMOTE_HOST, devToken } : undefined;
     gateway = await startGateway({ dir, port, log, remote });
   } catch (e) {
     if ((e as NodeJS.ErrnoException).code === 'EADDRINUSE') {

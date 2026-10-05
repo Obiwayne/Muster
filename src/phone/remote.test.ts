@@ -78,7 +78,7 @@ beforeAll(async () => {
     [fakeTask('T1'), fakeTask('T2', { status: 'in_progress' })],
   );
   state.goal = { text: 'Ship the export dialog', at };
-  remote = await startRemote(ctx, { port: 0, token: TOKEN, publicHost: PUBLIC, dir, now: () => new Date(clock) });
+  remote = await startRemote(ctx, { port: 0, devToken: TOKEN, publicHost: PUBLIC, dir, now: () => new Date(clock) });
 });
 
 afterAll(async () => {

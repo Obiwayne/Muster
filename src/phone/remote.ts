@@ -1,6 +1,7 @@
 // The remote connector: an MCP endpoint (/mcp, Streamable HTTP, stateless) that claude.ai reaches through a tunnel
 // (Cloudflare Tunnel / Tailscale Funnel). Plain HTTP bound to 127.0.0.1 only; the tunnel terminates TLS.
-// Milestone 1: read-only tools and a dev bearer token (OAuth comes in milestone 2). Contract: docs/REMOTE.md.
+// Auth: OAuth access tokens from ./oauth.ts (what claude.ai uses); a fixed dev token only when one is configured.
+// Contract: docs/REMOTE.md.
 import { appendFileSync } from 'node:fs';
 import { createServer, type IncomingMessage, type Server, type ServerResponse } from 'node:http';
 import { join } from 'node:path';
@@ -12,6 +13,7 @@ import { computeProgress, localDate } from '../core/roadmap.js';
 import { sameToken } from '../core/tokens.js';
 import { clip, relTime } from '../mcp/format.js';
 import type { NeedItem } from './needs.js';
+import { OAuthError, RemoteAuth, type GrantSummary } from './oauth.js';
 import type { Project } from './projects.js';
 
 export const DEFAULT_REMOTE_PORT = 47911;
@@ -29,8 +31,12 @@ export interface RemoteContext {
 export interface RemoteOptions {
   /** Default 47911; 0 picks a free port (tests). */
   port?: number;
-  /** Milestone 1 auth: the bearer every request must carry. */
-  token: string;
+  /** A fixed bearer accepted besides OAuth tokens (tests, MUSTER_REMOTE_DEV=1). Leave out in normal use. */
+  devToken?: string;
+  /** Shown on the consent page ("connect to Muster on <pcName>"). */
+  pcName?: string;
+  /** CIMD metadata fetch (test seam). */
+  fetchMetadata?: (url: string) => Promise<unknown>;
   /** The tunnel's public hostname (e.g. muster.example.com). When set, other Host headers are refused, and only
    *  requests with this Host count as "through the tunnel" for the connection status. */
   publicHost?: string;
@@ -52,11 +58,16 @@ export interface RemoteStatus {
   lastTunnelError: { at: string; status: number; reason: string } | null;
   /** Last successful call from this PC (MCP inspector, tests); doesn't count as connected. */
   lastLocalOkAt: string | null;
+  /** Live OAuth connections; each can be revoked on its own (DELETE /admin/remote/connections/:id) or all at once. */
+  connections: GrantSummary[];
+  /** True for 10 minutes after 5 wrong login codes in a minute. */
+  loginLocked: boolean;
 }
 
 export interface Remote {
   port: number;
   status(): RemoteStatus;
+  auth: RemoteAuth;
   close(): Promise<void>;
 }
 
@@ -208,23 +219,30 @@ export async function startRemote(ctx: RemoteContext, opts: RemoteOptions): Prom
   };
   const hostOf = (req: IncomingMessage) => String(req.headers.host ?? '').toLowerCase().replace(/:\d+$/, '');
   const viaTunnel = (req: IncomingMessage) => publicHost !== null && hostOf(req) === publicHost;
+  const auth = new RemoteAuth({ dir: opts.dir, pcName: opts.pcName ?? 'this PC', now, audit, fetchMetadata: opts.fetchMetadata });
 
   const handle = async (req: IncomingMessage, res: ServerResponse): Promise<void> => {
     const path = new URL(req.url ?? '/', 'http://remote').pathname.replace(/\/+$/, '');
     const host = hostOf(req);
     // DNS-rebinding guard: only the tunnel's hostname or this PC's own names.
     if (!['127.0.0.1', 'localhost', '[::1]', ...(publicHost ? [publicHost] : [])].includes(host)) throw new HttpError(421, `Unknown host "${host}"`);
+    // The URL the client sees: the tunnel's https name, or this PC's own address (local tests, the MCP inspector).
+    const base = viaTunnel(req) ? `https://${publicHost}` : `http://${String(req.headers.host).toLowerCase()}`;
+    if (req.method === 'POST') {
+      const t = now().getTime();
+      while (hits.length && t - hits[0] > 60_000) hits.shift();
+      if (hits.length >= RATE_PER_MIN) throw new HttpError(429, 'Too many calls; wait a minute');
+      hits.push(t);
+    }
+    if (await auth.handle(req, res, path, base)) return;
     if (path !== '/mcp') throw new HttpError(404, 'Not found');
     const token = /^Bearer\s+(\S+)$/i.exec(req.headers.authorization ?? '')?.[1];
-    if (!token || !sameToken(token, opts.token)) {
-      res.setHeader('www-authenticate', 'Bearer realm="muster"');
-      throw new HttpError(401, 'Missing or wrong bearer token');
+    const dev = !!token && !!opts.devToken && sameToken(token, opts.devToken);
+    if (!token || (!dev && !auth.verify(token, `${base}/mcp`))) {
+      res.setHeader('www-authenticate', `Bearer resource_metadata="${base}/.well-known/oauth-protected-resource/mcp"`);
+      throw new HttpError(401, token ? 'Unknown, expired or revoked token' : 'Sign in first (OAuth)');
     }
     if (req.method !== 'POST') throw new HttpError(405, 'This server is stateless: POST only');
-    const t = now().getTime();
-    while (hits.length && t - hits[0] > 60_000) hits.shift();
-    if (hits.length >= RATE_PER_MIN) throw new HttpError(429, 'Too many calls; wait a minute');
-    hits.push(t);
 
     const body = await readJson(req);
     const tunnel = viaTunnel(req);
@@ -253,14 +271,14 @@ export async function startRemote(ctx: RemoteContext, opts: RemoteOptions): Prom
   });
   server.on('request', (req: IncomingMessage, res: ServerResponse) => {
     handle(req, res).catch((e) => {
-      const status = e instanceof HttpError ? e.status : 500;
+      const status = e instanceof HttpError || e instanceof OAuthError ? e.status : 500;
       if (status === 500) log(`remote error on ${req.method} ${req.url}: ${e instanceof Error ? e.stack : e}`);
       const reason = e instanceof Error ? e.message : String(e);
       if (viaTunnel(req)) st.lastTunnelError = { at: now().toISOString(), status, reason };
       if (status === 401 || status === 421 || status === 429) audit({ refused: status, reason, via: viaTunnel(req) ? 'tunnel' : 'local' });
       if (res.headersSent) return void res.end();
       res.writeHead(status, { 'content-type': 'application/json; charset=utf-8', 'cache-control': 'no-store' });
-      res.end(JSON.stringify({ error: reason }));
+      res.end(JSON.stringify(e instanceof OAuthError ? { error: e.code, error_description: reason } : { error: reason }));
     });
   });
   log(`remote connector listening on http://127.0.0.1:${port}/mcp${publicHost ? ` (public host ${publicHost})` : ''}`);
@@ -275,7 +293,10 @@ export async function startRemote(ctx: RemoteContext, opts: RemoteOptions): Prom
       lastTunnelOkAt: st.lastTunnelOkAt,
       lastTunnelError: st.lastTunnelError,
       lastLocalOkAt: st.lastLocalOkAt,
+      connections: auth.grants(),
+      loginLocked: auth.locked(),
     }),
+    auth,
     close: () =>
       new Promise<void>((r) => {
         server.close(() => r());

@@ -54,7 +54,7 @@ export const phoneFiles = (dir: string) => ({
 
 export const sha256hex = (s: string | Buffer): string => createHash('sha256').update(s).digest('hex');
 
-function writePrivate(file: string, text: string): void {
+export function writePrivate(file: string, text: string): void {
   const tmp = `${file}.${process.pid}.tmp`;
   writeFileSync(tmp, text, { mode: 0o600 });
   try {

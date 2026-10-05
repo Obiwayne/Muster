@@ -25,7 +25,6 @@ import {
   ensureAdminToken,
   ensureCert,
   ensureDir,
-  ensureRemoteDevToken,
   loadState,
   phoneDir,
   removeServerFile,
@@ -55,7 +54,7 @@ export interface GatewayOptions {
   lanHosts?: () => string[];
   tailscale?: () => Promise<TailscaleInfo>;
   /** The remote connector (docs/REMOTE.md): off unless given. port 0 picks a free port (tests). */
-  remote?: { port: number; publicHost?: string; token?: string };
+  remote?: { port: number; publicHost?: string; devToken?: string; fetchMetadata?: (url: string) => Promise<unknown> };
 }
 
 export interface Gateway {
@@ -313,6 +312,18 @@ export async function startGateway(opts: GatewayOptions = {}): Promise<Gateway> 
     return state.defaultPrefs;
   });
   admin('GET', '/admin/remote', (): RemoteStatus | { enabled: false } => remote?.status() ?? { enabled: false });
+  const remoteOn = (): Remote => {
+    if (!remote) throw new HttpError(409, 'Remote access is off');
+    return remote;
+  };
+  /** The code the consent page asks for: single use, 2 minutes; a new one kills the old one. */
+  admin('POST', '/admin/remote/code', () => remoteOn().auth.issueCode());
+  /** Disconnect: one connection, or every one. */
+  admin('DELETE', '/admin/remote/connections/:id', ({ params }) => {
+    if (!remoteOn().auth.revoke(params.id)) throw new HttpError(404, `No connection "${params.id}"`);
+    return { ok: true, revoked: 1 };
+  });
+  admin('DELETE', '/admin/remote/connections', () => ({ ok: true, revoked: remoteOn().auth.revoke() }));
   admin('POST', '/admin/projects', ({ body }) => {
     const raw = text(body.root, 'root');
     if (!isAbsolute(raw)) throw new HttpError(400, 'root must be an absolute path');
@@ -590,7 +601,7 @@ export async function startGateway(opts: GatewayOptions = {}): Promise<Gateway> 
     try {
       remote = await startRemote(
         { projects, state: stateOf, needs: () => collect() },
-        { port: opts.remote.port, publicHost: opts.remote.publicHost, token: opts.remote.token ?? ensureRemoteDevToken(dir), dir, now, log },
+        { ...opts.remote, pcName: state.pcName, dir, now, log },
       );
     } catch (e) {
       log(`remote connector did not start: ${e instanceof Error ? e.message : e}`);

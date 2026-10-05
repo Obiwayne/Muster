@@ -183,7 +183,21 @@ same card on M04 with an approve notification action.
    bearer token (`secretsBase()/phone/remote-dev-token`), Host guard, 30/min rate limit, audit log `remote.log`,
    connection status + `GET /admin/remote`. Opt-in: `node dist/phone/index.js --remote-port 47911` or
    `MUSTER_REMOTE_PORT`, `MUSTER_REMOTE_HOST=<public hostname>`. Auth docs checked (see Auth).
-2. OAuth + pairing-code consent page + token store + revoke. Tests: PKCE, wrong code, lockout, expired/revoked token.
+2. **Done 2026-10-05** (`src/phone/oauth.ts`): OAuth + login-code consent page + token store + revoke. User's
+   acceptance criteria, all tested (`oauth.test.ts`, 15 tests) and checked with the MCP SDK's own client auth helpers:
+   - **The login code is single use and expires quickly**: 6 characters, 2 minutes, consumed on first use, a new code
+     kills the old one (`POST /admin/remote/code`). 5 wrong codes in a minute lock logins for 10 minutes.
+   - **Tokens are revoked from the desktop in one click**: `DELETE /admin/remote/connections/:id` (one connection) or
+     `DELETE /admin/remote/connections` (all); the next call with that token gets 401 and its refresh token is dead.
+     `GET /admin/remote` lists `connections` (client name, connected, last used) for the Settings card.
+   - **Failed logins are logged** in `remote.log` as `event: "login_failed"` with `reason` (wrong, expired, locked,
+     bad_request, bad_code, bad_pkce, client_mismatch, redirect_mismatch, bad_refresh, refresh_reused) and the caller's IP
+     (`cf-connecting-ip` / `x-forwarded-for`), plus `refused: 401` for bad bearer tokens on `/mcp`.
+   Also: CIMD + DCR, redirect allowlist (claude.ai callback, loopback), PKCE S256 required, auth codes 60 s single use,
+   access 1 h / refresh 30 d rotated with reuse detection (reuse revokes the connection), tokens bound to their resource
+   (a token issued for the local URL doesn't work through the tunnel), only hashes on disk (`remote.json`), consent page
+   escapes the client name and can't be framed. The dev token is now off unless `MUSTER_REMOTE_DEV=1`.
+   Not yet verified: claude.ai's real CIMD document (needs the tunnel, milestone 5).
 3. Write tools with the server-side hold, pending store, `remote_write` NeedItem, audit log. Tests: send_goal creates
    pending and does not call `/api/ask`; discard; expiry; approve disabled by default.
    Remote writes post to crew chat as yours (`FeedItem.via: 'remote'`, right side, "via Claude" chip); see
