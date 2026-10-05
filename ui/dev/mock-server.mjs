@@ -621,6 +621,9 @@ async function phoneApi(req, m, p) {
 // /api/phone/remote/* (docs/REMOTE.md "Milestone 4 API contract"; the gateway's /admin/remote/*).
 // MOCK_REMOTE=warn: hold off, sign-ins locked, tunnel type not set, not connected, last refusal a 421 (the warnings
 // artboard). MOCK_REMOTE=off: remote access disabled. MOCK_REMOTE=empty: on, but nothing signed in and no log.
+// The app allow-list (docs/REMOTE.md "App allow-list"): a waiting "Claude" (CIMD, from 86.12.44.170), an approved
+// "Claude Code" (DCR) and a "Claude" approved before the allow-list. Approving the waiting one signs it in (a new
+// connection); removing an app drops its connections.
 const REMOTE = process.env.MOCK_REMOTE ?? '';
 const today = (h, mi) => new Date(new Date(now).setHours(h, mi, 0, 0)).toISOString();
 const remote = {
@@ -637,8 +640,13 @@ const remote = {
   code: null,
   lastTest: null,
   connections: REMOTE === 'empty' ? [] : [
-    { id: 'g1', clientName: 'Claude', createdAt: iso(43), lastUsedAt: iso(3) },
-    { id: 'g2', clientName: 'Claude Code', createdAt: iso(60 * 50), lastUsedAt: iso(60 * 16) },
+    { id: 'g1', clientName: 'Claude', createdAt: iso(43), lastUsedAt: iso(3), appId: 'app_9c41d07e2b6f3a15' },
+    { id: 'g2', clientName: 'Claude Code', createdAt: iso(60 * 50), lastUsedAt: iso(60 * 16), appId: 'app_3f0a8e61c2d94b77' },
+  ],
+  apps: REMOTE === 'empty' ? [] : [
+    { id: 'app_e57b2c90d1a84f36', clientId: 'https://claude.ai/oauth/mcp-oauth-client-metadata', name: 'Claude', kind: 'cimd', status: 'waiting', requestedAt: iso(1), ip: '86.12.44.170' },
+    { id: 'app_3f0a8e61c2d94b77', clientId: 'dcr_5d2e9a7c41b3f086', name: 'Claude Code', kind: 'dcr', status: 'approved', requestedAt: iso(60 * 51), approvedAt: iso(60 * 50), approvedBy: 'desktop' },
+    { id: 'app_9c41d07e2b6f3a15', clientId: 'dcr_a81f04c6e93b2d57', name: 'Claude', kind: 'dcr', status: 'approved', requestedAt: iso(60 * 72), approvedAt: iso(60 * 3), approvedBy: 'existing' },
   ],
   log: REMOTE === 'empty' ? [] : REMOTE === 'warn' ? [
     { at: iso(1), tool: 'muster_reply', ok: true, client: 'Claude', via: 'tunnel' },
@@ -649,6 +657,7 @@ const remote = {
     { at: iso(4), refused: 421, reason: 'unknown host muster.wayne.dev', via: 'tunnel', ip: '127.0.0.1', ipFrom: 'socket (tunnel type not set)' },
     { at: iso(55), event: 'write_discarded', id: 'P5', kind: 'reply', project: 'wall-education', client: 'Claude', on: 'desktop' },
   ].sort((a, b) => b.at.localeCompare(a.at)) : [
+    { at: iso(1), event: 'app_waiting', app: 'Claude', ip: '86.12.44.170', ipFrom: 'cf-connecting-ip' },
     { at: iso(3), tool: 'muster_status', ok: true, client: 'Claude', via: 'tunnel' },
     { at: iso(14), event: 'write_sent', id: 'P6', kind: 'goal', project: 'wall-education', client: 'Claude', approvedOn: 'phone' },
     { at: iso(16), tool: 'muster_send_goal', ok: true, client: 'Claude', held: true, pendingId: 'P6', via: 'tunnel' },
@@ -660,6 +669,14 @@ const remote = {
     { at: iso(55), event: 'write_discarded', id: 'P5', kind: 'reply', project: 'wall-education', client: 'Claude', on: 'desktop' },
   ],
 };
+/** The apps as GET .../apps sends them: waiting first, lastUsedAt and connections from the grants. */
+function remoteApps() {
+  return remote.apps.map((a) => {
+    const conns = remote.connections.filter((c) => c.appId === a.id);
+    const lastUsedAt = conns.map((c) => c.lastUsedAt).sort().pop() ?? a.lastUsedAt ?? null;
+    return { ...a, lastUsedAt, connections: conns.length };
+  }).sort((a, b) => (a.status === b.status ? 0 : a.status === 'waiting' ? -1 : 1));
+}
 const remoteLog = (e) => { remote.log.unshift({ at: new Date().toISOString(), ...e }); };
 const remoteHold = () => ({ on: remote.settings.confirmWrites, offSince: remote.settings.confirmWrites ? null : remote.offSince, sentWithoutTap: remote.settings.confirmWrites ? 0 : remote.sentWithoutTap });
 function remoteStatus() {
@@ -674,7 +691,8 @@ function remoteStatus() {
     connected: !!ok && t - Date.parse(ok) < 15 * 60_000,
     lastTunnelOkAt: ok, lastTunnelError: remote.lastTunnelError, lastLocalOkAt: remote.lastLocalOkAt,
     connections: remote.connections, loginLocked: locked, loginLockedUntil: locked ? remote.lockedUntil : null,
-    codeActiveUntil: remote.code?.expiresAt ?? null, tunnel: remote.config.tunnel, lastTest: remote.lastTest, ...base,
+    codeActiveUntil: remote.code?.expiresAt ?? null, tunnel: remote.config.tunnel, lastTest: remote.lastTest,
+    apps: remoteApps(), appsWaiting: remote.apps.filter((a) => a.status === 'waiting').length, ...base,
   };
 }
 async function remoteApi(req, m, p) {
@@ -732,6 +750,38 @@ async function remoteApi(req, m, p) {
     remote.connections = id ? remote.connections.filter((c) => c.id !== id) : [];
     remoteLog({ event: 'revoked', grant: id ?? 'all', count: n, reason: 'desktop' });
     return { ok: true, revoked: n };
+  }
+  if (m === 'GET' && sub === '/apps') { remoteOn(); return remoteApps(); }
+  const am = /^\/apps\/([^/]+)\/approve$/.exec(sub);
+  if (m === 'POST' && am) {
+    remoteOn();
+    const a = remote.apps.find((x) => x.id === decodeURIComponent(am[1]));
+    need(a, 404, 'No such app');
+    if (a.status === 'waiting') {
+      Object.assign(a, { status: 'approved', approvedAt: new Date().toISOString(), approvedBy: 'desktop' });
+      remoteLog({ event: 'app_approved', app: a.name });
+      // the waiting sign-in continues on its next refresh: one new connection
+      const t = new Date().toISOString();
+      remote.connections.push({ id: `g${Date.now().toString(36)}`, clientName: a.name, createdAt: t, lastUsedAt: t, appId: a.id });
+      remoteLog({ event: 'login_ok', client: a.name, ip: a.ip ?? undefined, ipFrom: 'cf-connecting-ip' });
+    }
+    return { ok: true, app: remoteApps().find((x) => x.id === a.id) };
+  }
+  const dm = /^\/apps(?:\/([^/]+))?$/.exec(sub);
+  if (m === 'DELETE' && dm) {
+    remoteOn();
+    const id = dm[1] && decodeURIComponent(dm[1]);
+    const gone = id ? remote.apps.filter((a) => a.id === id) : remote.apps;
+    need(!id || gone.length, 404, 'No such app');
+    let revoked = 0;
+    for (const a of gone) {
+      const n = remote.connections.filter((c) => c.appId === a.id).length;
+      revoked += n;
+      remote.connections = remote.connections.filter((c) => c.appId !== a.id);
+      remoteLog(a.status === 'waiting' ? { event: 'app_denied', app: a.name } : { event: 'app_removed', app: a.name, revoked: n });
+    }
+    remote.apps = remote.apps.filter((a) => !gone.includes(a));
+    return { ok: true, removed: gone.length, revoked };
   }
   if (m === 'GET' && sub === '/pending') return [];
   if (m === 'GET' && sub === '/settings') return remote.settings;
