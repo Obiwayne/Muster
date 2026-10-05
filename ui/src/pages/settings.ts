@@ -1,6 +1,7 @@
 // Settings: bound to GET/PATCH /api/config, saved on every change. "Research browser" and "Intel" read
 // GET /api/browser and use the human browser writes in browserapi.ts (login window, Opera import, forget).
-// Tabs (#/settings?tab=usage|line|phone): General, Usage guard, Factory line, and Phone (pages/phone.ts, /api/phone/*).
+// Tabs (#/settings?tab=usage|line|phone|remote): General, Usage guard, Factory line, Phone (pages/phone.ts, /api/phone/*)
+// and Remote access (pages/remote.ts, /api/phone/remote/*). While the remote hold is off, a red banner tops every tab.
 import '../intelcheck.css';
 import type { BrowseMode, IntelConfig, MusterConfig, ResearchBrowserConfig, ResearchBrowserStatus, WatchCadence } from '../../../src/types';
 import { h, icon, select, setChildren, toast, toggle } from '../dom';
@@ -16,6 +17,7 @@ import { closeLogin, forgetSite, openLogin, operaImport, setSiteVisible } from '
 import { addAllowed, availabilityLine, blockedHint, honestLimits, operaSummary, siteLine } from '../browsermodel';
 import { SETTINGS_TABS, parseSettingsTab, type SettingsTab } from '../phonemodel';
 import { createPhoneSection } from './phone';
+import { createRemoteSection } from './remote';
 
 const BROWSE_MODES = [
   { value: 'profile', label: 'Research profile' },
@@ -80,6 +82,7 @@ export function createSettings(): Page {
   let pollTimer: number | undefined;
   let tab: SettingsTab = 'general';
   const phone = createPhoneSection();
+  const remote = createRemoteSection(() => { if (cfg) render(cfg); });
   const body = h('div.settings');
   const el = h('div.page', null, body);
 
@@ -434,13 +437,18 @@ export function createSettings(): Page {
 
   function syncPhone(): void {
     if (visible && tab === 'phone') phone.show(); else phone.hide();
+    if (visible && tab === 'remote') remote.show();
+    else {
+      remote.hide();
+      if (visible) void remote.refresh(); // the hold-off banner shows on every tab
+    }
   }
 
   function tabs(): HTMLElement {
     return h('div.set-tabs', { role: 'tablist' }, SETTINGS_TABS.map((t) => h('a.set-tab', {
-      class: t.id === tab && 'on', role: 'tab', 'aria-selected': String(t.id === tab),
+      class: [t.id === tab && 'on', `t-${t.id}`], role: 'tab', 'aria-selected': String(t.id === tab),
       href: t.id === 'general' ? '#/settings' : `#/settings?tab=${t.id}`,
-    }, t.id === 'phone' ? icon('phone', 14) : null, t.label)));
+    }, t.id === 'phone' ? icon('phone', 14) : t.id === 'remote' ? icon('globe', 14) : null, t.label)));
   }
 
   const cols = (left: (HTMLElement | null)[], right: (HTMLElement | null)[] = []) =>
@@ -473,13 +481,16 @@ export function createSettings(): Page {
   }
 
   function render(c: MusterConfig): void {
-    const content = tab === 'phone' ? phone.el : tab === 'usage' ? usageTab(c) : tab === 'line' ? lineTab(c) : generalTab(c);
+    const content = tab === 'phone' ? phone.el : tab === 'remote' ? remote.el : tab === 'usage' ? usageTab(c) : tab === 'line' ? lineTab(c) : generalTab(c);
     setChildren(body,
+      remote.banner(),
       h('div', { style: 'display:flex;flex-direction:column;gap:4px' },
         h('div.settings-title', null, 'Settings'),
         h('div.muted', { style: 'font-size:13px' }, tab === 'phone'
           ? 'Link your Android phone to approve, answer and get pinged when the crew needs you.'
-          : 'Saved to .muster/config.json in this repo. The CLI reads the same file.')),
+          : tab === 'remote'
+            ? `Control the Captain from the Claude app, through your own tunnel.${remote.holdOff() ? '' : ' Everything Claude sends waits for your tap.'}`
+            : 'Saved to .muster/config.json in this repo. The CLI reads the same file.')),
       tabs(),
       content);
   }

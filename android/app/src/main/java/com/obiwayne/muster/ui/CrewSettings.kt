@@ -114,6 +114,8 @@ fun CrewScreen() {
                     Txt(sub, ts(14, 20, color = C.muted))
                 }
             }
+            // M14: with the hold off nothing from Claude lands in Needs you, so say so here too. No toggle on the phone.
+            needs?.hold?.takeIf { !it.on }?.let { HoldOffBanner(it, state.pcName) }
             crew?.let { c ->
                 c.roadmap?.let { WhereWeAre(it) }
                 Column(Modifier.fillMaxWidth().card().padding(16.dp), verticalArrangement = Arrangement.spacedBy(14.dp)) {

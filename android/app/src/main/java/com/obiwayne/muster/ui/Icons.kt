@@ -73,4 +73,11 @@ object Ic {
         icon("M4 5h16a2 2 0 0 1 2 2v10a2 2 0 0 1-2 2H4a2 2 0 0 1-2-2V7a2 2 0 0 1 2-2z", "M6 9h.01M10 9h.01M14 9h.01M18 9h.01M8 13h.01M12 13h.01M16 13h.01M7 16h10")
     }
     val alert by lazy { icon(circle(12f, 12f, 10f), "M12 8v4", "M12 16h.01") }
+    val alertSmall by lazy { icon(circle(12f, 12f, 9f), "M12 8v4", "M12 16h.01") }
+    val send by lazy { icon("M22 2 11 13M22 2l-7 20-4-9-9-4 20-7z", w = 2.2f) }
+    val closeBold by lazy { icon("M18 6 6 18M6 6l12 12", w = 2.2f) }
+    val refreshBold by lazy { icon("M21 12a9 9 0 1 1-3-6.7L21 8", "M21 3v5h-5", w = 2.2f) }
+    val timer by lazy { icon(circle(12f, 13f, 8f), "M12 9v4l2 2M9 2h6") }
+    val lock by lazy { icon("M7 11h10a2 2 0 0 1 2 2v6a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2v-6a2 2 0 0 1 2-2z", "M8 11V7a4 4 0 0 1 8 0v4") }
+    val warning by lazy { icon("M10.3 3.9 1.8 18a2 2 0 0 0 1.7 3h17a2 2 0 0 0 1.7-3L13.7 3.9a2 2 0 0 0-3.4 0zM12 9v4M12 17h.01") }
 }

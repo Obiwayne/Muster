@@ -141,6 +141,18 @@ describe('identity comes from the token', () => {
     expect((await call('GET', '/api/state', agentTok('crew-2'))).status).toBe(200);
   });
 
+  it('only you (the phone gateway) can raise a remote-access alert; it lands on the board for you', async () => {
+    for (const tok of [agentTok('crew-2'), agentTok('captain')]) {
+      expect((await call('POST', '/api/remote/alert', tok, { text: 'fake: logins locked', toast: true })).status).toBe(403);
+    }
+    const r = await call('POST', '/api/remote/alert', human(), { text: 'Remote access: logins are locked until 14:32.', toast: false });
+    expect(r.status).toBe(200);
+    const notes = (await call('GET', '/api/notes', human())).data as Note[];
+    const n = notes.find((x) => x.id === (r.data as { noteId: string }).noteId)!;
+    expect(n).toMatchObject({ from: 'muster', to: 'you', type: 'system', topic: 'remote', open: true });
+    expect(notes.some((x) => x.text.startsWith('fake:'))).toBe(false);
+  });
+
   it('overwrites a claimed actor with the caller', async () => {
     const note = (await call('POST', '/api/notes', agentTok('crew-2'), { actor: 'you', type: 'progress', text: 'pretending' })).data as Note;
     expect(note.from).toBe('crew-2');
@@ -238,6 +250,125 @@ describe('reactions and read receipts', () => {
     expect(forbiddenReason({ actor: 'scout', human: false, role: 'research' }, 'POST', '/api/feed/F1/react')).toMatch(/research/);
     expect(forbiddenReason({ actor: 'crew-2', human: false, role: 'crew' }, 'POST', '/api/feed/F1/react')).toBeUndefined();
     expect(forbiddenReason({ actor: 'captain', human: false, role: 'captain' }, 'POST', '/api/feed/F1/react')).toBeUndefined();
+  });
+});
+
+describe('remote messages carry a via record (docs/REMOTE.md)', () => {
+  const via = { client: 'Claude Desktop', approvedOn: 'phone', approvedAt: '2026-10-05T09:30:00.000Z' };
+  const feedNow = async () => ((await call('GET', '/api/state', human())).data as { state: MusterState }).state.feed;
+  const repliesOn = async (noteId: string) => (await feedNow()).filter((f) => f.kind === 'reply' && f.noteId === noteId);
+  const newNote = async (text: string) => (await call('POST', '/api/notes', agentTok('crew-2'), { type: 'question', text })).data as Note;
+
+  it('a reply from you with via puts via on its feed item; the reply itself is as usual', async () => {
+    const n = await newNote('which port for the remote?');
+    const r = await call('POST', `/api/notes/${n.id}/reply`, human(), { text: 'use 4455', via });
+    expect(r.status).toBe(200);
+    expect((r.data as Note).replies.at(-1)).toMatchObject({ from: 'you', text: 'use 4455' });
+    const items = await repliesOn(n.id);
+    expect(items).toHaveLength(1);
+    expect(items[0]).toMatchObject({ from: 'you', text: 'use 4455', via });
+  });
+
+  it('an agent claiming via is refused (crew and Captain) and nothing reaches the feed', async () => {
+    const n = await newNote('pass me off as you?');
+    const before = (await feedNow()).length;
+    for (const tok of [agentTok('crew-2'), agentTok('captain')]) {
+      const r = await call('POST', `/api/notes/${n.id}/reply`, tok, { actor: 'you', text: 'approved by you', via });
+      expect(r.status).toBe(403);
+    }
+    expect((await feedNow()).length).toBe(before);
+    expect(await repliesOn(n.id)).toEqual([]);
+    const notes = (await call('GET', '/api/notes', human())).data as Note[];
+    expect(notes.find((x) => x.id === n.id)!.replies).toEqual([]);
+  });
+
+  it('a malformed via is a 400 and adds nothing', async () => {
+    const n = await newNote('bad via');
+    const before = (await feedNow()).length;
+    for (const bad of ['Claude', ['phone'], { client: 'Claude', approvedOn: 'tablet', approvedAt: via.approvedAt }, { client: 'Claude' }]) {
+      expect((await call('POST', `/api/notes/${n.id}/reply`, human(), { text: 'x', via: bad })).status).toBe(400);
+    }
+    expect((await feedNow()).length).toBe(before);
+  });
+
+  it('a reply without via has no via property', async () => {
+    const n = await newNote('plain reply');
+    expect((await call('POST', `/api/notes/${n.id}/reply`, human(), { text: 'typed at the desk' })).status).toBe(200);
+    expect((await call('POST', `/api/notes/${n.id}/reply`, human(), { text: 'null via', via: null })).status).toBe(200);
+    const items = await repliesOn(n.id);
+    expect(items).toHaveLength(2);
+    for (const f of items) expect(f).not.toHaveProperty('via');
+  });
+
+  it('answering a question menu with via puts via on the reply; an agent with via is refused', async () => {
+    const questions = [{ header: 'Port', question: 'Which port?', options: [{ label: '4455' }, { label: '4456' }] }];
+    const n = (await call('POST', '/api/ask-user', agentTok('captain'), { questions })).data as Note;
+    for (const tok of [agentTok('crew-2'), agentTok('captain')]) {
+      expect((await call('POST', `/api/notes/${n.id}/answer`, tok, { answers: [{ choices: ['4455'] }], via })).status).toBe(403);
+    }
+    expect(await repliesOn(n.id)).toEqual([]);
+    const done = await call('POST', `/api/notes/${n.id}/answer`, human(), { answers: [{ choices: ['4455'] }], via: { ...via, approvedOn: 'not held' } });
+    expect(done.status).toBe(200);
+    expect(done.data as Note).toMatchObject({ open: false, replies: [{ from: 'you', text: 'Port: 4455' }] });
+    const items = await repliesOn(n.id);
+    expect(items).toHaveLength(1);
+    expect(items[0]).toMatchObject({ from: 'you', text: 'Port: 4455', via: { ...via, approvedOn: 'not held' } });
+  });
+
+  it('a goal through /api/ask with via lands on the message to the Captain', async () => {
+    const r = await call('POST', '/api/ask', human(), { text: 'ship the remote connector', via: { ...via, approvedOn: 'desktop' } });
+    expect(r.status).toBe(200);
+    const msg = (await feedNow()).filter((f) => f.kind === 'message' && f.text === 'ship the remote connector');
+    expect(msg).toHaveLength(1);
+    expect(msg[0]).toMatchObject({ from: 'you', to: 'captain', via: { ...via, approvedOn: 'desktop' } });
+    expect((await call('POST', '/api/ask', human(), { text: 'a goal from the desk' })).status).toBe(200);
+    expect((await feedNow()).find((f) => f.kind === 'message' && f.text === 'a goal from the desk')).not.toHaveProperty('via');
+    expect((await call('POST', '/api/ask', human(), { text: 'bad', via: { approvedOn: 'tablet' } })).status).toBe(400);
+    expect((await call('POST', '/api/ask', agentTok('captain'), { text: 'sneaky', via })).status).toBe(403);
+    expect((await feedNow()).some((f) => f.text === 'bad' || f.text === 'sneaky')).toBe(false);
+  });
+
+  it('sanitises the client name and fills a missing or bad approvedAt', async () => {
+    const n = await newNote('sanitise');
+    const t0 = Date.now();
+    await call('POST', `/api/notes/${n.id}/reply`, human(), { text: 'a', via: { client: 'Evil\u0007\nClaude\u001b[31m\u007f', approvedOn: 'phone', approvedAt: 'not a date' } });
+    await call('POST', `/api/notes/${n.id}/reply`, human(), { text: 'b', via: { client: 'x'.repeat(200), approvedOn: 'phone' } });
+    await call('POST', `/api/notes/${n.id}/reply`, human(), { text: 'c', via: { client: '   ', approvedOn: 'desktop', approvedAt: 42 } });
+    await call('POST', `/api/notes/${n.id}/reply`, human(), { text: 'd', via: { approvedOn: 'desktop' } });
+    const [a, b, c, d] = (await repliesOn(n.id)).map((f) => f.via!);
+    expect(a.client).toBe('EvilClaude[31m');
+    expect(b.client).toBe('x'.repeat(80));
+    expect(c.client).toBe('Claude');
+    expect(d.client).toBe('Claude');
+    for (const v of [a, b, c, d]) {
+      expect(Number.isNaN(Date.parse(v.approvedAt))).toBe(false);
+      expect(Date.parse(v.approvedAt)).toBeGreaterThanOrEqual(t0 - 1000);
+    }
+  });
+
+  it('keeps a well-formed held-write id on via and drops anything else', async () => {
+    const n = await newNote('pending-id');
+    await call('POST', `/api/notes/${n.id}/reply`, human(), { text: 'a', via: { approvedOn: 'phone', pendingId: 'P8' } });
+    await call('POST', `/api/notes/${n.id}/reply`, human(), { text: 'b', via: { approvedOn: 'phone', pendingId: '<img src=x>' } });
+    const [a, b] = (await repliesOn(n.id)).map((f) => f.via!);
+    expect(a.pendingId).toBe('P8');
+    expect(b).not.toHaveProperty('pendingId');
+  });
+
+  it('tells the board its project id, the same one the phone gateway uses', async () => {
+    const r = await call('GET', '/api/project/id', human());
+    expect(r.status).toBe(200);
+    expect((r.data as { id: string }).id).toMatch(/^[0-9a-f]{16}$/);
+  });
+
+  it('a name of only control characters falls back to Claude; an emoji at the cut stays whole; dates are normalised', async () => {
+    const n = await newNote('sanitise-2');
+    await call('POST', `/api/notes/${n.id}/reply`, human(), { text: 'a', via: { client: '\u0001\u0002\u007f', approvedOn: 'phone' } });
+    await call('POST', `/api/notes/${n.id}/reply`, human(), { text: 'b', via: { client: 'x'.repeat(79) + '🙌🙌', approvedOn: 'phone', approvedAt: '2026-10-05 09:30Z' } });
+    const [a, b] = (await repliesOn(n.id)).map((f) => f.via!);
+    expect(a.client).toBe('Claude');
+    expect(b.client).toBe('x'.repeat(79) + '🙌'); // 80 characters, no half surrogate
+    expect(b.approvedAt).toBe(new Date('2026-10-05 09:30Z').toISOString());
   });
 });
 

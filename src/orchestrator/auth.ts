@@ -42,6 +42,7 @@ const HUMAN_ONLY: [string, RegExp, string][] = [
   ['PUT', /^\/api\/lines\/[^/]+$/, 'edit lines'],
   ['DELETE', /^\/api\/lines\/[^/]+$/, 'reset or remove lines'],
   ['POST', /^\/api\/shutdown$/, 'shut Muster down'],
+  ['POST', /^\/api\/remote\/alert$/, 'raise remote-access alerts'],
   ['POST', /^\/api\/project\/github$/, 'create a GitHub repo'],
   ['POST', /^\/api\/ask$/, 'set the goal'],
   ['POST', /^\/api\/agents\/[^/]+\/role$/, 'change roles'],

@@ -21,6 +21,8 @@ import { createTasks } from './pages/tasks';
 import { createBranches } from './pages/branches';
 import { createVellum } from './pages/vellum';
 import { createSettings } from './pages/settings';
+import { projectId as heldProjectId } from './pages/heldcard';
+import { forProject, isExpired } from './heldmodel';
 
 type RouteId = 'dashboard' | 'roadmap' | 'research' | 'intel' | 'board' | 'chat' | 'tasks' | 'branches' | 'vellum' | 'settings';
 type NavId = Exclude<RouteId, 'research'>;
@@ -215,7 +217,7 @@ function renderShell(s: Snapshot): void {
 
   // nav counts
   const openNotes = state.notes.filter((n) => n.open && !n.dismissed).length;
-  const needsYou = needsYouCount(state.notes);
+  const needsYou = needsYouCount(state.notes) + heldWaiting; // held remote writes wait on your tap too
   const setCount = (id: NavId, n: number, badge = false) => {
     const el = navCounts.get(id)!;
     el.className = badge && n > 0 ? 'nav-badge' : 'nav-count';
@@ -325,6 +327,30 @@ events.onConnection((c) => {
 setTimeout(() => { if (!events.connected) connBanner.hidden = false; }, 2500);
 // keep relative times fresh
 setInterval(() => { if (events.snapshot) renderShell(events.snapshot); }, 30_000);
+
+// Held remote writes (docs/REMOTE.md) count in the needs-you badge and the taskbar. Every 15 s; 60 s while the
+// gateway or remote access is off, quietly.
+let heldWaiting = 0;
+let heldProject: string | null | undefined;
+async function pollHeld(): Promise<void> {
+  let next = 15_000;
+  const s = events.snapshot;
+  try {
+    if (s) {
+      if (heldProject === undefined) heldProject = await heldProjectId(s.state.repoRoot);
+      const name = s.config.projectName || s.state.repoRoot.split(/[\/]/).filter(Boolean).pop() || '';
+      const n = forProject(await api.remotePending(), { id: heldProject, name }).filter((p) => !isExpired(p)).length;
+      if (n !== heldWaiting) {
+        heldWaiting = n;
+        renderShell(s);
+      }
+    }
+  } catch {
+    next = 60_000;
+  }
+  setTimeout(() => void pollHeld(), next);
+}
+void pollHeld();
 
 onHash();
 events.start();

@@ -3,8 +3,8 @@
 import type { AskQuestion, MusterState, Note, Task } from '../types.js';
 import { HUMAN, isNeedsYou } from '../core/board.js';
 
-export type NeedKind = 'review' | 'approval' | 'question' | 'escalation' | 'blocked' | 'usage' | 'stuck';
-export type NeedAction = 'approve' | 'open' | 'answer' | 'commit' | 'stash';
+export type NeedKind = 'review' | 'approval' | 'question' | 'escalation' | 'blocked' | 'usage' | 'stuck' | 'remote_write';
+export type NeedAction = 'approve' | 'open' | 'answer' | 'commit' | 'stash' | 'send' | 'discard'; // send/discard: a held remote write
 
 export interface NeedItem {
   id: string; // `${projectId}:${noteId}`
@@ -19,7 +19,24 @@ export interface NeedItem {
   createdAt: string;
   evidence?: { id: string; files: number; thumbs: string[] };
   ask?: AskQuestion[]; // escalation from the Captain's question menu: answer with POST .../notes/:nid/answer
+  remote?: RemoteWriteView; // kind 'remote_write': the held write in full; Send must quote back its digest
   actions: NeedAction[];
+}
+
+/** A held remote write as the Send card shows it (docs/REMOTE.md): nothing clipped, plus when it expires. */
+export interface RemoteWriteView {
+  pendingId: string;
+  kind: 'goal' | 'reply' | 'answer' | 'approve';
+  projectName: string;
+  client: string;
+  text?: string;
+  answers?: { choices?: string[]; other?: string }[];
+  replyTo?: { id: string; from: string; type: string; text: string; questions?: { header: string; question: string; multiSelect: boolean; options: string[] }[] };
+  taskId?: string;
+  taskTitle?: string;
+  createdAt: string;
+  expiresAt: string;
+  digest: string;
 }
 
 export interface Prefs {
@@ -82,6 +99,10 @@ export function needFromNote(state: MusterState, n: Note, projectId: string, pro
     kind = 'usage';
     actions = ['open'];
     title = n.topic === 'weekly_usage' ? 'Weekly usage' : 'Five-hour usage';
+  } else if (n.topic === 'remote') {
+    kind = 'question';
+    actions = ['open'];
+    title = 'Remote access';
   } else if (n.type === 'stuck') {
     kind = 'stuck';
     actions = ['answer', 'open'];
@@ -127,6 +148,7 @@ export function prefKey(kind: NeedKind): keyof Prefs['notify'] {
       return 'review';
     case 'question':
     case 'escalation':
+    case 'remote_write':
       return 'question';
     case 'blocked':
       return 'blocked';
@@ -156,7 +178,8 @@ export function inQuietHours(quiet: Prefs['quiet'], now: Date): boolean {
 export function shouldNotify(item: NeedItem, prefs: Prefs, now: Date): boolean {
   if (prefs.projects[item.projectId] === false) return false;
   if (!prefs.notify[prefKey(item.kind)]) return false;
-  if (inQuietHours(prefs.quiet, now) && item.kind !== 'blocked') return false;
+  // A held remote write is something you just asked Claude for, so it reaches you in quiet hours too.
+  if (inQuietHours(prefs.quiet, now) && item.kind !== 'blocked' && item.kind !== 'remote_write') return false;
   return true;
 }
 

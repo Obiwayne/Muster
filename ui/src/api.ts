@@ -5,6 +5,8 @@ import type {
 } from '../../src/types';
 // Phone gateway admin API types (forwarded by the orchestrator's /api/phone/*, docs/PHONE.md).
 import type { PhoneNetworkMode, PhonePairCode, PhoneSendPrefs, PhoneStatus } from './phonemodel';
+import type { RemoteCode, RemoteConfig, RemoteLogEntry, RemoteSettings, RemoteStatus, RemoteTestResult } from './remotemodel';
+import type { PendingRemote } from './heldmodel';
 
 // TODO: import StationDef from src/types.ts once T9 (crew-6) merges.
 // Contract with T12/T14 (crew-8): GET /api/lines.
@@ -189,6 +191,7 @@ export const api = {
     req<StationDef>('PUT', `/api/stations/${enc(name)}`, body),
   deleteStation: (name: string) => req<StationDef[]>('DELETE', `/api/stations/${enc(name)}`),
   project: () => req<ProjectInfo>('GET', '/api/project'),
+  projectId: () => req<{ id: string }>('GET', '/api/project/id'),
   createGithub: (body: { name: string; private?: boolean; description?: string }) => req<{ url: string }>('POST', '/api/project/github', body),
   usage: () => req<UsageState & { paused: boolean }>('GET', '/api/usage'),
 
@@ -201,6 +204,24 @@ export const api = {
   phoneTest: () => req<unknown>('POST', '/api/phone/test'),
   phoneSendPrefs: () => req<PhoneSendPrefs>('GET', '/api/phone/send'),
   phoneSetSendPrefs: (prefs: PhoneSendPrefs) => req<PhoneSendPrefs>('PUT', '/api/phone/send', prefs),
+
+  // remote access (Settings → Remote access): the gateway's /admin/remote/*, docs/REMOTE.md "Milestone 4 API contract"
+  remoteStatus: () => req<RemoteStatus>('GET', '/api/phone/remote'),
+  remoteSetConfig: (patch: Partial<RemoteConfig>) => req<RemoteConfig>('PUT', '/api/phone/remote/config', patch),
+  remoteTest: () => req<RemoteTestResult>('POST', '/api/phone/remote/test'),
+  remoteLog: (limit = 50) => req<RemoteLogEntry[]>('GET', `/api/phone/remote/log?limit=${limit}`),
+  /** The only place a login code appears. Never store it. */
+  remoteNewCode: () => req<RemoteCode>('POST', '/api/phone/remote/code'),
+  remoteCancelCode: () => req<{ ok: boolean; cancelled: boolean }>('DELETE', '/api/phone/remote/code'),
+  remoteDisconnect: (id?: string) => req<{ ok: boolean; revoked: number }>('DELETE', `/api/phone/remote/connections${id ? `/${enc(id)}` : ''}`),
+  remoteSettings: () => req<RemoteSettings>('GET', '/api/phone/remote/settings'),
+  /** Turning the hold off needs confirm: true (the warning dialog); turning it back on doesn't. */
+  remoteSetSettings: (patch: Partial<RemoteSettings> & { confirm?: boolean }) => req<RemoteSettings>('PUT', '/api/phone/remote/settings', patch),
+  // remote connector: writes Claude asked for, held until you tap Send (docs/REMOTE.md, milestone 4 contract)
+  remotePending: () => req<PendingRemote[]>('GET', '/api/phone/remote/pending'),
+  /** `digest` is the one on the card you saw: the gateway sends exactly that or refuses (409, nothing sent). */
+  remoteSend: (id: string, digest: string) => req<{ ok: boolean; id: string; summary: string }>('POST', `/api/phone/remote/pending/${enc(id)}/send`, { digest }),
+  remoteDiscard: (id: string) => req<{ ok: boolean; id: string }>('POST', `/api/phone/remote/pending/${enc(id)}/discard`),
 
   // roadmap (the Captain owns the plan; you approve it, send it back, tick criteria)
   roadmap: () => req<RoadmapResponse>('GET', '/api/roadmap'),

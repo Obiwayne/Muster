@@ -8,7 +8,7 @@ import type { Page } from '../page';
 import { api } from '../api';
 import { errToast, run } from '../actions';
 import { NOTE_BADGE, dayLabel, displayName, hhmm, idNum, initial, ms, noteLabel, roleOf, sortedAgents } from '../util';
-import { buildRows, eventText, feedNum, parseBlocks, summarizeReactions, typingAgent, type Block, type Row, type Seg } from '../chatmodel';
+import { buildRows, eventText, feedNum, mineTarget, parseBlocks, summarizeReactions, typingAgent, viaView, type Block, type Row, type Seg } from '../chatmodel';
 
 const SHOW_EVENTS_KEY = 'muster.chat.showEvents';
 const SEEN_KEY = 'muster.chat.lastSeen';
@@ -249,7 +249,25 @@ export function createChat(): Page {
       read);
   }
 
+  /** "via Claude": your line came through the remote connector. Hover or focus shows where you approved it. */
+  function viaChip(f: FeedItem): HTMLElement | null {
+    if (!f.via) return null;
+    const v = viaView(f.via);
+    return h('span.via-chip', { tabindex: '0', 'aria-label': v.text },
+      icon('sparkle', 11, 2.2), v.chip,
+      h('span.via-tip', { role: 'tooltip' }, h('span.vt', null, v.title), h('span.vd', null, v.detail)));
+  }
+
   function head(state: MusterState, f: FeedItem, target: Child, mine = false): HTMLElement {
+    if (mine && f.via) {
+      // sent through the connector: "you to ada  [via Claude]  22:06  ↳ N12"
+      const tgt = mineTarget(f, state.notes);
+      return h('div.chead', null,
+        h('span.t', null, `${displayName('you')}${tgt.to ? ` to ${displayName(tgt.to)}` : ''}`),
+        viaChip(f),
+        h('span.tm', null, hhmm(f.at)),
+        tgt.noteId ? h('a.t.link.via-link.mono', { href: `#/board?note=${encodeURIComponent(tgt.noteId)}`, title: 'Open the note on the bulletin board' }, `↳ ${tgt.noteId}`) : null);
+    }
     if (mine) return h('div.chead', null, h('span.t', null, `${displayName('you')}${f.to ? ` to ${displayName(f.to)}` : ''}`), h('span.tm', null, hhmm(f.at)));
     return h('div.chead', null,
       h('span.n', { class: role(state, f.from) }, displayName(f.from)),
@@ -305,7 +323,7 @@ export function createChat(): Page {
             replies.length ? h('div.nreplies', null, replies.map((r) => h('div.nreply', null,
               avatar(state, r.from, 'csm'),
               h('div.ccol', null,
-                h('div.chead.sm', null, h('span.n', { class: role(state, r.from) }, displayName(r.from)), h('span.tm', null, hhmm(r.at))),
+                h('div.chead.sm', null, h('span.n', { class: role(state, r.from) }, displayName(r.from)), viaChip(r), h('span.tm', null, hhmm(r.at))),
                 textOf(state, r),
                 reactions(state, r, { small: true }))))) : null),
           hoverBar(f)),
