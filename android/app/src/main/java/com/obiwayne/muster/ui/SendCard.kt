@@ -38,11 +38,10 @@ import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.dp
-import com.obiwayne.muster.MusterApp
-import com.obiwayne.muster.data.AskQuestion
 import com.obiwayne.muster.data.Held
 import com.obiwayne.muster.data.HoldInfo
 import com.obiwayne.muster.data.NeedItem
+import com.obiwayne.muster.data.RemoteQuestion
 import com.obiwayne.muster.data.RemoteWrite
 import com.obiwayne.muster.data.WriteKind
 import kotlinx.coroutines.delay
@@ -65,8 +64,11 @@ sealed interface HeldPhase {
     /** 409 or no answer: still held and unchanged; offers Try again / Discard. */
     data class Failed(val error: String) : HeldPhase
 
-    /** Time ran out (or the gateway said 404): greyed, Dismiss only. */
-    data object Expired : HeldPhase
+    /**
+     * Time ran out (or the gateway said 404): greyed, Dismiss only. [maybeSent]: a Send got no answer and the retry got
+     * 404, so the first one may have gone through.
+     */
+    data class Expired(val maybeSent: Boolean = false) : HeldPhase
 }
 
 /** The current time, ticking once a second (aligned to the second, so countdowns change together). */
@@ -84,11 +86,11 @@ fun rememberNow(): Instant {
 
 /** The card's phase: expired by time or by [expiredKept], else busy, failed or held. */
 @Composable
-fun heldPhase(item: NeedItem, expiredKept: Boolean, busy: String?, error: String?): HeldPhase {
+fun heldPhase(item: NeedItem, expiredKept: Boolean, busy: String?, error: String?, maybeSent: Boolean = false): HeldPhase {
     val now = rememberNow()
     val r = item.remote
     return when {
-        expiredKept || (r != null && Held.isExpired(r, now)) -> HeldPhase.Expired
+        expiredKept || (r != null && Held.isExpired(r, now)) -> HeldPhase.Expired(maybeSent && expiredKept)
         busy == "send" -> HeldPhase.Sending
         busy == "discard" -> HeldPhase.Discarding
         error != null -> HeldPhase.Failed(error)
@@ -96,25 +98,11 @@ fun heldPhase(item: NeedItem, expiredKept: Boolean, busy: String?, error: String
     }
 }
 
-/** The Captain's questions for a held answer (from the note), so each answer shows under its question. Null while loading. */
-@Composable
-fun rememberHeldQuestions(item: NeedItem): List<AskQuestion>? {
-    val nid = item.noteId ?: item.remote?.replyTo?.id
-    var qs by remember(item.id) { mutableStateOf<List<AskQuestion>?>(null) }
-    if (item.remote?.kind == WriteKind.ANSWER && nid != null) {
-        LaunchedEffect(item.id) {
-            qs = MusterApp.state.call { note(item.projectId, nid) }?.ask
-        }
-    }
-    return qs
-}
-
 /** The whole card: body plus (unless [showActions] is false, i.e. pinned elsewhere) the callout and buttons. */
 @Composable
 fun SendCard(
     item: NeedItem,
     phase: HeldPhase,
-    questions: List<AskQuestion>?,
     showActions: Boolean,
     onSend: () -> Unit,
     onDiscard: () -> Unit,
@@ -122,7 +110,7 @@ fun SendCard(
     modifier: Modifier = Modifier,
     bodyModifier: Modifier = Modifier,
 ) {
-    val expired = phase == HeldPhase.Expired
+    val expired = phase is HeldPhase.Expired
     Column(
         modifier.fillMaxWidth().card(
             bg = if (expired) C.surface else C.mix(C.glowBlue, 7, C.surface),
@@ -130,7 +118,7 @@ fun SendCard(
         ).padding(14.dp),
         verticalArrangement = Arrangement.spacedBy(12.dp),
     ) {
-        SendCardBody(item, expired, questions, bodyModifier)
+        SendCardBody(item, expired, bodyModifier, maybeSent = (phase as? HeldPhase.Expired)?.maybeSent == true)
         if (showActions) SendCardActions(item, phase, onSend, onDiscard, onDismiss)
     }
 }
@@ -138,7 +126,7 @@ fun SendCard(
 /** Meta row, title, route, the quoted note (reply/answer) and the exact text. Never truncated. */
 @OptIn(ExperimentalLayoutApi::class)
 @Composable
-fun SendCardBody(item: NeedItem, expired: Boolean, questions: List<AskQuestion>?, modifier: Modifier = Modifier) {
+fun SendCardBody(item: NeedItem, expired: Boolean, modifier: Modifier = Modifier, maybeSent: Boolean = false) {
     val r = item.remote ?: return
     val now = rememberNow()
     Column(modifier.fillMaxWidth(), verticalArrangement = Arrangement.spacedBy(12.dp)) {
@@ -182,15 +170,18 @@ fun SendCardBody(item: NeedItem, expired: Boolean, questions: List<AskQuestion>?
                 Txt(Held.asked(r, now), ts(13, 18, color = C.faint), Modifier.align(Alignment.CenterVertically))
             }
         }
-        val ask = questions.orEmpty()
+        // The question menu travels with a held answer (replyTo.questions): each answer shows under its question, and
+        // the quote is left out (M12).
+        val ask = r.replyTo?.questions.orEmpty()
         val inlineQuestions = r.kind == WriteKind.ANSWER && ask.isNotEmpty()
+        val notSent = if (maybeSent) "MAY HAVE BEEN SENT" else "WAS NOT SENT"
         if ((r.kind == WriteKind.REPLY || r.kind == WriteKind.ANSWER) && r.replyTo != null && !inlineQuestions) {
             ReplyingTo(r)
         }
         when (r.kind) {
-            WriteKind.ANSWER -> AnswersBox(r, ask, expired)
-            WriteKind.APPROVE -> ExactBox(if (expired) "WAS NOT SENT" else "WILL APPROVE THIS FOR MERGE", listOfNotNull(r.taskId, r.taskTitle).joinToString(" · "), expired)
-            else -> ExactBox(if (expired) "WAS NOT SENT" else "WILL SEND EXACTLY THIS", r.text.orEmpty(), expired)
+            WriteKind.ANSWER -> AnswersBox(r, ask, expired, notSent)
+            WriteKind.APPROVE -> ExactBox(if (expired) notSent else "WILL APPROVE THIS FOR MERGE", listOfNotNull(r.taskId, r.taskTitle).joinToString(" · "), expired)
+            else -> ExactBox(if (expired) notSent else "WILL SEND EXACTLY THIS", r.text.orEmpty(), expired)
         }
     }
 }
@@ -222,7 +213,7 @@ private fun ReplyingTo(r: RemoteWrite) {
     Column(Modifier.fillMaxWidth().leftRule().padding(start = 12.dp, top = 2.dp, bottom = 2.dp), verticalArrangement = Arrangement.spacedBy(6.dp)) {
         Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(6.dp)) {
             Txt("REPLYING TO", Type.label)
-            Txt("${q.id} · from", ts(12, 16, color = C.muted, mono = true))
+            Txt(listOf(q.id, "·", q.type, "from").filter { it.isNotBlank() }.joinToString(" "), ts(12, 16, color = C.muted, mono = true))
             Txt(q.from.ifBlank { "?" }, ts(12, 16, color = agentColor(q.from), mono = true))
         }
         Txt(q.text, ts(14, 20, color = C.muted))
@@ -248,7 +239,7 @@ private fun ExactBox(label: String, text: String, expired: Boolean) {
 /** Every answer, under its question when the note's questions are known: chips for choices, then the free text. */
 @OptIn(ExperimentalLayoutApi::class)
 @Composable
-private fun AnswersBox(r: RemoteWrite, ask: List<AskQuestion>, expired: Boolean) {
+private fun AnswersBox(r: RemoteWrite, ask: List<RemoteQuestion>, expired: Boolean, notSentLabel: String) {
     val shape = RoundedCornerShape(10.dp)
     val n = r.answers.size
     Column(
@@ -256,7 +247,7 @@ private fun AnswersBox(r: RemoteWrite, ask: List<AskQuestion>, expired: Boolean)
             .then(if (expired) Modifier.dashedBox(C.line, 10.dp) else Modifier.border(1.dp, C.line, shape)),
     ) {
         val label = when {
-            expired -> "WAS NOT SENT"
+            expired -> notSentLabel
             n == 1 -> "WILL SEND EXACTLY THIS ANSWER"
             else -> "WILL SEND EXACTLY THESE $n ANSWERS"
         }
@@ -298,12 +289,21 @@ fun SendCardActions(item: NeedItem, phase: HeldPhase, onSend: () -> Unit, onDisc
     val r = item.remote ?: return
     Column(modifier.fillMaxWidth(), verticalArrangement = Arrangement.spacedBy(12.dp)) {
         when (phase) {
-            HeldPhase.Expired -> {
-                Callout(
-                    Ic.timer, C.muted, C.surface, C.line,
-                    "Expired after 15 minutes. Nothing was sent.",
-                    "It can't be sent any more. If you still want it, ask Claude again and it comes back as a new card.",
-                )
+            is HeldPhase.Expired -> {
+                if (phase.maybeSent) {
+                    // A Send got no answer, then the retry got 404: it may have gone through the first time.
+                    Callout(
+                        Ic.alertSmall, C.warm, C.surface, C.line,
+                        "It may already have been sent; check crew chat.",
+                        "Your earlier Send got no answer from the PC, and now it isn't held any more.",
+                    )
+                } else {
+                    Callout(
+                        Ic.timer, C.muted, C.surface, C.line,
+                        "Expired after 15 minutes. Nothing was sent.",
+                        "It can't be sent any more. If you still want it, ask Claude again and it comes back as a new card.",
+                    )
+                }
                 HeldButton("Dismiss", null, C.surface2, C.text, C.line, Modifier.fillMaxWidth(), onClick = onDismiss)
             }
             is HeldPhase.Failed -> {

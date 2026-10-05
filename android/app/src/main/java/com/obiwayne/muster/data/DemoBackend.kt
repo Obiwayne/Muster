@@ -146,7 +146,7 @@ class DemoBackend(
                 "P8", WriteKind.REPLY, 12 * 60 + 42, "Claude wants to reply on N12", noteId = "N12",
                 text = "Go with 7 days, and show the friendly 'link expired' page with a button to ask for a new link.",
                 replyTo = RemoteReplyTo(
-                    "N12", "ada",
+                    "N12", "ada", "question",
                     "Should invite links expire after 7 days or 30? And should a revoked link show a friendly 'link expired' page or a plain 404?",
                 ),
             )
@@ -169,14 +169,17 @@ class DemoBackend(
                             "Last thing: put the file size estimate next to each preset, even if it's rough. That's what I look at first.",
                     ),
                 ),
-                replyTo = RemoteReplyTo("N15", "captain", exportAsk.joinToString("\n\n") { it.question }),
+                replyTo = RemoteReplyTo(
+                    "N15", "captain", "escalation", exportAsk.joinToString("\n\n") { it.question },
+                    exportAsk.map { q -> RemoteQuestion(q.header, q.question, q.multiSelect, q.options.map { it.label }) },
+                ),
             )
         }
         if ("expired" in held) {
             extra += heldItem(
                 "P6", WriteKind.REPLY, 15 * 60 + 40, "Claude wants to reply on N12", noteId = "N12",
                 text = "Go with 30 days, and a plain 404 is fine for revoked links.",
-                replyTo = RemoteReplyTo("N12", "ada", "Should invite links expire after 7 days or 30? And should a revoked link show a friendly 'link expired' page or a plain 404?"),
+                replyTo = RemoteReplyTo("N12", "ada", "question", "Should invite links expire after 7 days or 30? And should a revoked link show a friendly 'link expired' page or a plain 404?"),
             )
         }
         items.addAll(0, extra)

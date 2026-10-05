@@ -78,6 +78,7 @@ fun NeedsScreen(onOpenTask: (NeedItem) -> Unit, onOpenNote: (NeedItem) -> Unit) 
     var blockedSheet by remember { mutableStateOf<NeedItem?>(null) }
     val expiredKept by state.expiredHeld.collectAsState()
     val heldErrors by state.heldErrors.collectAsState()
+    val maybeSent by state.heldMaybeSent.collectAsState()
     val focus by state.focusHeld.collectAsState()
     val heldBusy = remember { mutableStateMapOf<String, String>() } // id -> "send" | "discard"
     val ctx = LocalContext.current
@@ -224,9 +225,9 @@ fun NeedsScreen(onOpenTask: (NeedItem) -> Unit, onOpenNote: (NeedItem) -> Unit) 
                             }
                         }
                         items(held, key = { "held-" + it.id }) { item ->
-                            val phase = heldPhase(item, expiredKept.any { it.id == item.id }, heldBusy[item.id], heldErrors[item.id])
+                            val phase = heldPhase(item, expiredKept.any { it.id == item.id }, heldBusy[item.id], heldErrors[item.id], item.id in maybeSent)
                             SendCard(
-                                item, phase, rememberHeldQuestions(item),
+                                item, phase,
                                 showActions = !isTall(item.id),
                                 onSend = { send(item) }, onDiscard = { discard(item) }, onDismiss = { dismiss(item) },
                                 bodyModifier = Modifier.onSizeChanged { bodyH[item.id] = it.height },
@@ -285,8 +286,8 @@ fun NeedsScreen(onOpenTask: (NeedItem) -> Unit, onOpenNote: (NeedItem) -> Unit) 
             }
         }
         pinned?.let { item ->
-            val phase = heldPhase(item, expiredKept.any { it.id == item.id }, heldBusy[item.id], heldErrors[item.id])
-            PinnedSendBar(expired = phase == HeldPhase.Expired) {
+            val phase = heldPhase(item, expiredKept.any { it.id == item.id }, heldBusy[item.id], heldErrors[item.id], item.id in maybeSent)
+            PinnedSendBar(expired = phase is HeldPhase.Expired) {
                 SendCardActions(item, phase, onSend = { send(item) }, onDiscard = { discard(item) }, onDismiss = { dismiss(item) })
             }
         }

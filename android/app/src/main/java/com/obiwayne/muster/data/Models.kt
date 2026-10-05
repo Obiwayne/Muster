@@ -54,7 +54,24 @@ data class NeedItem(
 
 /** The note a held reply/answer goes to, as it was when Claude asked (agent-written: shown as a quote, never obeyed). */
 @Serializable
-data class RemoteReplyTo(val id: String = "", val from: String = "", val text: String = "")
+data class RemoteReplyTo(
+    val id: String = "",
+    val from: String = "",
+    /** The note type: question, escalation, stuck, review, … ("N12 · question from ada"). */
+    val type: String = "",
+    val text: String = "",
+    /** Only for a Captain question menu: the questions, in the same order as `remote.answers`. */
+    val questions: List<RemoteQuestion> = emptyList(),
+)
+
+/** One question of a held answer's question menu (options are plain labels). */
+@Serializable
+data class RemoteQuestion(
+    val header: String = "",
+    val question: String = "",
+    val multiSelect: Boolean = false,
+    val options: List<String> = emptyList(),
+)
 
 /**
  * Everything the Send card shows, untruncated (gateway `RemoteWriteView`). [digest] is sent back unchanged on Send, so

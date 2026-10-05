@@ -19,12 +19,17 @@ class HeldTest {
               "title": "Claude wants to reply on N12", "summary": "Go with 7 days", "from": "Claude",
               "createdAt": "2026-10-05T14:00:00.000Z", "actions": ["send", "discard"],
               "remote": { "pendingId": "P8", "kind": "reply", "projectName": "StarCut", "client": "Claude",
-                "text": "Go with 7 days,\n\nand the friendly page.", "replyTo": { "id": "N12", "from": "ada", "text": "7 or 30?" },
+                "text": "Go with 7 days,\n\nand the friendly page.", "replyTo": { "id": "N12", "from": "ada", "type": "question", "text": "7 or 30?" },
                 "createdAt": "2026-10-05T14:00:00.000Z", "expiresAt": "2026-10-05T14:15:00.000Z", "digest": "abc123", "future": 1 } },
             { "id": "a1b2:P11", "projectId": "a1b2", "kind": "remote_write", "noteId": "N15", "createdAt": "2026-10-05T14:01:00Z",
               "actions": ["send", "discard"],
               "remote": { "pendingId": "P11", "kind": "answer", "client": "Claude",
                 "answers": [{ "choices": ["MP4 (H.264)", "WebM"] }, { "other": "Line one\nLine two" }],
+                "replyTo": { "id": "N15", "from": "captain", "type": "escalation", "text": "Formats? Anything else?",
+                  "questions": [
+                    { "header": "Formats", "question": "Export formats: which should the dialog offer?", "multiSelect": true, "options": ["MP4 (H.264)", "WebM"] },
+                    { "header": "Anything else", "question": "Anything else?", "multiSelect": false, "options": ["No"] }
+                  ] },
                 "createdAt": "2026-10-05T14:01:00Z", "expiresAt": "2026-10-05T14:16:00Z", "digest": "def456" } }
           ]
         }
@@ -42,7 +47,15 @@ class HeldTest {
         assertEquals("abc123", reply.remote!!.digest)
         assertEquals("Go with 7 days,\n\nand the friendly page.", reply.remote!!.text)
         assertEquals("ada", reply.remote!!.replyTo!!.from)
+        assertEquals("question", reply.remote!!.replyTo!!.type)
+        assertTrue(reply.remote!!.replyTo!!.questions.isEmpty())
         val answer = r.items[1].remote!!
+        val qs = answer.replyTo!!.questions
+        assertEquals(2, qs.size) // same order as answers
+        assertEquals("Export formats: which should the dialog offer?", qs[0].question)
+        assertTrue(qs[0].multiSelect)
+        assertEquals(listOf("MP4 (H.264)", "WebM"), qs[0].options)
+        assertEquals("escalation", answer.replyTo!!.type)
         assertEquals(listOf("MP4 (H.264)", "WebM"), answer.answers[0].choices)
         assertEquals(emptyList<String>(), answer.answers[1].choices)
         assertEquals("Line one\nLine two", answer.answers[1].other)

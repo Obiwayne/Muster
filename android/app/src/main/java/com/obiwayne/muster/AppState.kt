@@ -57,6 +57,12 @@ class AppState(private val app: Application) {
     /** Send failures per held item id (the gateway's reason); the card stays held and shows Try again / Discard. */
     val heldErrors = MutableStateFlow<Map<String, String>>(emptyMap())
 
+    /** Held items whose Send got no answer: if a retry then gets 404, the first Send may have gone through. */
+    private val sendUnanswered = mutableSetOf<String>()
+
+    /** Expired cards that may in fact have been sent ("check crew chat"), from [sendUnanswered] + 404. */
+    val heldMaybeSent = MutableStateFlow<Set<String>>(emptySet())
+
     /** A held item to scroll to (from a notification tap). */
     val focusHeld = MutableStateFlow<String?>(null)
     private val dismissedHeld = mutableSetOf<String>()
@@ -164,6 +170,7 @@ class AppState(private val app: Application) {
     fun dismissHeld(id: String) {
         dismissedHeld += id
         expiredHeld.update { list -> list.filter { it.id != id } }
+        heldMaybeSent.update { it - id }
         heldErrors.update { it - id }
         removeNeed(id, keep = false)
     }
@@ -186,18 +193,24 @@ class AppState(private val app: Application) {
             SendOutcome.Failed(e.message ?: "Unlinked")
         } catch (e: OfflineException) {
             offline.value = true
+            sendUnanswered += item.id
             SendOutcome.Failed("Couldn't reach ${e.pcName}. It's still held; try again when the PC answers.")
         } catch (e: ApiException) {
+            if (e.code != 404) sendUnanswered -= item.id // the gateway still had it held, so nothing went through earlier
             if (e.code == 404) SendOutcome.Gone else SendOutcome.Failed(e.message ?: "HTTP ${e.code}")
         } catch (e: Exception) {
             SendOutcome.Failed(e.message ?: "Something went wrong")
         }
         when (out) {
             is SendOutcome.Sent -> {
+                sendUnanswered -= item.id
                 heldErrors.update { it - item.id }
                 removeNeed(item.id, keep = false)
             }
-            SendOutcome.Gone -> expireHeld(item)
+            SendOutcome.Gone -> {
+                if (sendUnanswered.remove(item.id)) heldMaybeSent.update { it + item.id }
+                expireHeld(item)
+            }
             is SendOutcome.Failed -> heldErrors.update { it + (item.id to out.error) }
         }
         return out
@@ -282,6 +295,8 @@ class AppState(private val app: Application) {
     private fun clearHeld() {
         expiredHeld.value = emptyList()
         heldErrors.value = emptyMap()
+        heldMaybeSent.value = emptySet()
+        sendUnanswered.clear()
         dismissedHeld.clear()
         focusHeld.value = null
     }
