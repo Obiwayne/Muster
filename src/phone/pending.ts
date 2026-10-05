@@ -18,7 +18,7 @@ export interface PendingWrite {
   answers?: WriteInput['answers'];
   taskId?: string;
   /** The note a reply/answer goes to, as it was when the write was held (agent-written; shown as data). */
-  replyTo?: { id: string; from: string; text: string };
+  replyTo?: { id: string; from: string; type: string; text: string; questions?: { header: string; question: string; multiSelect: boolean; options: string[] }[] };
   /** approve: the task's title when held. */
   taskTitle?: string;
   /** The connector client that asked (the OAuth client's name). */

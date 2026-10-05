@@ -349,7 +349,14 @@ export async function startGateway(opts: GatewayOptions = {}): Promise<Gateway> 
       const note = s.notes.find((n) => n.id.toUpperCase() === (input.noteId ?? '').trim().toUpperCase());
       if (!note) throw new Error(`No note "${input.noteId}" in ${p.name}.`);
       input.noteId = note.id;
-      const replyTo = { id: note.id, from: note.from, text: note.text }; // shown on the card, as it was when held
+      // Shown on the card as it was when held: author, note type, text, and for a question menu its questions (answers sit under them).
+      const replyTo: NonNullable<PendingWrite['replyTo']> = {
+        id: note.id,
+        from: note.from,
+        type: note.type,
+        text: note.text,
+        ...(note.ask ? { questions: note.ask.map((q) => ({ header: q.header, question: q.question, multiSelect: q.multiSelect, options: q.options.map((o) => o.label) })) } : {}),
+      };
       if (input.kind === 'reply') {
         textOk();
         return { replyTo };

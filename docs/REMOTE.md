@@ -257,7 +257,8 @@ its own orchestrator as `/api/phone/remote/...` (handlePhone forwards `/api/phon
 
 Phone API (bearer = device key): `GET /api/needs` → `{ pcName, projects, items, hold: { on, offSince, sentWithoutTap } }`;
 held items are `kind: 'remote_write'`, `actions: ['send','discard']`, with `remote: RemoteWriteView` (full text, `digest`,
-`expiresAt`, `replyTo`, `answers`, `taskTitle`). `POST /api/projects/:pid/pending/:id/send` `{ digest }` and
+`expiresAt`, `replyTo` = { id, from, type, text, questions?: [{ header, question, multiSelect, options: string[] }] } (questions
+only for a question menu, so each answer shows under its question), `answers`, `taskTitle`). `POST /api/projects/:pid/pending/:id/send` `{ digest }` and
 `.../discard`. Push: the events socket sends `{ type: 'need', item }` for new held items (pref "question", ignores quiet
 hours) and `{ type: 'resolved', id }` when sent/discarded/expired.
 

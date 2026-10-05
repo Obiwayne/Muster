@@ -583,9 +583,42 @@ describe('phone gateway: held remote writes (docs/REMOTE.md, confirmation gate)'
     const reply = items.find((i) => i.remote.pendingId === rid);
     expect(goal.remote).toMatchObject({ kind: 'goal', projectName: 'Fake Project', client: 'dev token', text: long, expiresAt: new Date(t3 + 15 * 60_000).toISOString() });
     expect(goal.summary.length).toBeLessThanOrEqual(140); // the short line is for notifications only
-    expect(reply.remote).toMatchObject({ kind: 'reply', text: 'Teal, like the logo', replyTo: { id: 'N5', from: 'ada', text: 'Which colour?' } });
+    expect(reply.remote).toMatchObject({ kind: 'reply', text: 'Teal, like the logo', replyTo: { id: 'N5', from: 'ada', type: 'question', text: 'Which colour?' } });
+    expect(reply.remote.replyTo.questions).toBeUndefined();
     expect(goal.remote.digest).toMatch(/^[0-9a-f]{64}$/);
     for (const id of [gid, rid]) await phone3('POST', `/api/projects/${pid}/pending/${id}/discard`);
+  });
+
+  it('a held answer carries the question menu it answers, so the card can show each answer under its question', async () => {
+    projectState.notes.push(
+      fakeNote('N7', {
+        type: 'escalation',
+        from: 'captain',
+        text: 'Two quick choices',
+        ask: [
+          { header: 'Formats', question: 'Which export formats?', multiSelect: true, options: [{ label: 'MP4' }, { label: 'WebM' }] },
+          { header: 'Default', question: 'Default resolution?', multiSelect: false, options: [{ label: '1080p' }, { label: '4K' }] },
+        ],
+      }),
+    );
+    try {
+      const r = await tool('muster_answer', { noteId: 'N7', answers: [{ choices: ['MP4', 'WebM'] }, { choices: ['1080p'] }] });
+      const id = /as (P\d+)/.exec(r.text)![1];
+      const item = (await remoteItems()).find((i) => i.remote.pendingId === id);
+      expect(item.remote.replyTo).toMatchObject({
+        id: 'N7',
+        from: 'captain',
+        type: 'escalation',
+        questions: [
+          { header: 'Formats', question: 'Which export formats?', multiSelect: true, options: ['MP4', 'WebM'] },
+          { header: 'Default', question: 'Default resolution?', multiSelect: false, options: ['1080p', '4K'] },
+        ],
+      });
+      expect(item.remote.answers).toEqual([{ choices: ['MP4', 'WebM'] }, { choices: ['1080p'] }]);
+      await phone3('POST', `/api/projects/${pid}/pending/${id}/discard`);
+    } finally {
+      projectState.notes = projectState.notes.filter((n) => n.id !== 'N7');
+    }
   });
 
   it('Send sends exactly what the card showed: no digest is 400, a different one is 409, and nothing is sent', async () => {
