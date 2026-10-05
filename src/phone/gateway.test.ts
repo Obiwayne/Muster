@@ -50,6 +50,7 @@ function startFakeOrchestrator(): Promise<number> {
       if (/^\/api\/notes\/N\d+\/answer$/.test(path)) return json(200, { id: 'N4', open: false, answers: JSON.parse(text).answers });
       if (/^\/api\/notes\/N\d+\/reply$/.test(path)) return json(200, { id: 'N5', replies: [{ from: 'you', text: JSON.parse(text).text }] });
       if (path === '/api/checkout/commit' || path === '/api/checkout/stash') return json(200, { ok: true, waiting: [] });
+      if (path === '/api/remote/alert') return json(200, { ok: true, noteId: 'N99' });
       json(404, { error: `No route ${path}` });
     });
   });
@@ -389,5 +390,39 @@ describe('phone gateway: admin client', () => {
     const r = await adminRequest(gw.dir, 'GET', '/admin/status');
     expect(r.status).toBe(200);
     expect(JSON.parse(r.body).fingerprint).toBe(gw.fingerprint);
+  });
+});
+
+describe('phone gateway: remote connector lockout alert', () => {
+  it('5 wrong login codes post one alert to the running project, with the Windows toast', async () => {
+    const dir2 = join(secrets, 'phone-remote');
+    const gw2 = await startGateway({ dir: dir2, port: 0, host: '127.0.0.1', recentFile: null, pollMs: 60_000, log: () => {}, remote: { port: 0, tunnel: 'cloudflare' } });
+    try {
+      expect((await adminRequest(dir2, 'POST', '/admin/projects', JSON.stringify({ root }))).status).toBe(200);
+      const port = gw2.remote!.port;
+      const post = (path: string, body: string, type: string) =>
+        fetch(`http://127.0.0.1:${port}${path}`, { method: 'POST', body, headers: { 'content-type': type }, redirect: 'manual' });
+      const reg = await (await post('/register', JSON.stringify({ client_name: 'Claude', redirect_uris: ['https://claude.ai/api/mcp/auth_callback'] }), 'application/json')).json();
+      const form = new URLSearchParams({
+        client_id: reg.client_id,
+        redirect_uri: 'https://claude.ai/api/mcp/auth_callback',
+        response_type: 'code',
+        code_challenge: 'A'.repeat(43),
+        code_challenge_method: 'S256',
+        code: 'AAAAAA',
+        decision: 'allow',
+      }).toString();
+      const before = calls.length;
+      for (let i = 0; i < 6; i++) await post('/authorize', form, 'application/x-www-form-urlencoded');
+      for (let i = 0; i < 50 && !calls.slice(before).some((c) => c.path === '/api/remote/alert'); i++) await new Promise((r) => setTimeout(r, 20));
+      const alerts = calls.slice(before).filter((c) => c.path === '/api/remote/alert');
+      expect(alerts).toHaveLength(1); // the 6th try hits the lock and raises nothing new
+      expect(alerts[0].token).toBe(ORCH_TOKEN); // sent as you
+      expect(alerts[0].body.toast).toBe(true);
+      expect(alerts[0].body.text).toMatch(/^Remote access: 5 wrong login codes in a minute, so connector logins are locked until \d\d:\d\d\. Last try came from 127\.0\.0\.1 \(socket\) via "Claude"/);
+      expect((await adminRequest(dir2, 'GET', '/admin/remote')).body).toContain('"loginLocked":true');
+    } finally {
+      await gw2.close();
+    }
   });
 });

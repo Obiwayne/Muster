@@ -82,6 +82,10 @@ export function needFromNote(state: MusterState, n: Note, projectId: string, pro
     kind = 'usage';
     actions = ['open'];
     title = n.topic === 'weekly_usage' ? 'Weekly usage' : 'Five-hour usage';
+  } else if (n.topic === 'remote') {
+    kind = 'question';
+    actions = ['open'];
+    title = 'Remote access';
   } else if (n.type === 'stuck') {
     kind = 'stuck';
     actions = ['answer', 'open'];

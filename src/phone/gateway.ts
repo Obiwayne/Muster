@@ -18,7 +18,7 @@ import { repoKey, sameToken } from '../core/tokens.js';
 import { clonePrefs, mergePrefs, needsFromState, shouldNotify, type NeedItem, type Prefs } from './needs.js';
 import { hostsFor, lanHosts as realLanHosts, tailscaleInfo as realTailscale, type TailscaleInfo } from './net.js';
 import { displayCode, Pairing } from './pairing.js';
-import { startRemote, type Remote, type RemoteStatus } from './remote.js';
+import { startRemote, type Remote, type RemoteStatus, type Tunnel } from './remote.js';
 import { desktopSettingsFile, listProjects, orchestratorFetch, orchestratorJson, OrchestratorError, recentRoots, type Project } from './projects.js';
 import {
   DEFAULT_PHONE_PORT,
@@ -54,7 +54,7 @@ export interface GatewayOptions {
   lanHosts?: () => string[];
   tailscale?: () => Promise<TailscaleInfo>;
   /** The remote connector (docs/REMOTE.md): off unless given. port 0 picks a free port (tests). */
-  remote?: { port: number; publicHost?: string; devToken?: string; fetchMetadata?: (url: string) => Promise<unknown> };
+  remote?: { port: number; publicHost?: string; tunnel?: Tunnel; devToken?: string; fetchMetadata?: (url: string) => Promise<unknown> };
 }
 
 export interface Gateway {
@@ -597,11 +597,35 @@ export async function startGateway(opts: GatewayOptions = {}): Promise<Gateway> 
   pingTimer.unref();
 
   // ------------------------------------------------------------------ remote connector
+  /** A remote-access alert on every running project's Bulletin board ("Needs you", phone); the Windows toast once. */
+  const remoteAlert = async (text: string): Promise<number> => {
+    const running = (await projects()).filter((p) => p.running);
+    let sent = 0;
+    for (const p of running) {
+      try {
+        await orchestratorJson(p, 'POST', '/api/remote/alert', { text, toast: sent === 0 });
+        sent++;
+      } catch (e) {
+        log(`remote alert to ${p.name}: ${e instanceof Error ? e.message : e}`);
+      }
+    }
+    if (!sent) log(`remote alert (no running project to show it): ${text}`);
+    return sent;
+  };
+  const lockText = (info: { until: string; ip: string; ipFrom: string; client: string }) => {
+    const until = new Date(info.until).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
+    const from = info.ipFrom === 'socket' || info.ipFrom.startsWith('socket (') ? `${info.ip} (${info.ipFrom})` : info.ip;
+    return (
+      `Remote access: 5 wrong login codes in a minute, so connector logins are locked until ${until}. ` +
+      `Last try came from ${from} via "${info.client}". Nobody got in. If you are pairing, make a new code after ${until}; ` +
+      `if this keeps happening, someone is guessing at your tunnel's sign-in page.`
+    );
+  };
   if (opts.remote) {
     try {
       remote = await startRemote(
         { projects, state: stateOf, needs: () => collect() },
-        { ...opts.remote, pcName: state.pcName, dir, now, log },
+        { ...opts.remote, pcName: state.pcName, dir, now, log, onLock: (info) => void remoteAlert(lockText(info)) },
       );
     } catch (e) {
       log(`remote connector did not start: ${e instanceof Error ? e.message : e}`);

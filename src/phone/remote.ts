@@ -3,6 +3,7 @@
 // Auth: OAuth access tokens from ./oauth.ts (what claude.ai uses); a fixed dev token only when one is configured.
 // Contract: docs/REMOTE.md.
 import { appendFileSync } from 'node:fs';
+import { isIP } from 'node:net';
 import { createServer, type IncomingMessage, type Server, type ServerResponse } from 'node:http';
 import { join } from 'node:path';
 import { McpServer } from '@modelcontextprotocol/sdk/server/mcp.js';
@@ -40,6 +41,11 @@ export interface RemoteOptions {
   /** The tunnel's public hostname (e.g. muster.example.com). When set, other Host headers are refused, and only
    *  requests with this Host count as "through the tunnel" for the connection status. */
   publicHost?: string;
+  /** Which tunnel carries the traffic, so the audit log can trust its client-IP header (see realClientIp).
+   *  Unset = no forwarded header is trusted and tunnel requests log the tunnel's own (local) address. */
+  tunnel?: Tunnel;
+  /** Logins were just locked after wrong codes (the gateway turns this into a desktop alert). */
+  onLock?: (info: { until: string; ip: string; ipFrom: string; client: string }) => void;
   /** Folder for remote.log (the audit log). */
   dir: string;
   now?: () => Date;
@@ -62,6 +68,37 @@ export interface RemoteStatus {
   connections: GrantSummary[];
   /** True for 10 minutes after 5 wrong login codes in a minute. */
   loginLocked: boolean;
+  loginLockedUntil: string | null;
+  /** null = not set: Settings should ask, because logged IPs are then the tunnel's own address. */
+  tunnel: Tunnel | null;
+}
+
+export type Tunnel = 'cloudflare' | 'tailscale';
+
+/**
+ * The real client address of a request, for the audit log. Forwarded headers are trusted only when the request came
+ * through the tunnel (its Host is the public hostname) and only the header that tunnel guarantees:
+ * - Cloudflare sets CF-Connecting-IP (its docs recommend it over X-Forwarded-For, which it appends to, so a client
+ *   could forge the left part).
+ * - Tailscale Funnel overwrites X-Forwarded-For with the source address and sets Tailscale-Funnel-Request: ?1 after
+ *   deleting any copy the client sent (ipn/ipnlocal/serve.go). Without that marker the header isn't Funnel's.
+ * Anything else falls back to the socket address, which behind a tunnel is the tunnel daemon on 127.0.0.1.
+ */
+export function realClientIp(req: IncomingMessage, tunnel: Tunnel | null, viaTunnel: boolean): { ip: string; ipFrom: string } {
+  const socket = req.socket.remoteAddress ?? '?';
+  if (!viaTunnel) return { ip: socket, ipFrom: 'socket' };
+  const one = (name: string) => {
+    const v = req.headers[name];
+    return typeof v === 'string' ? v.trim() : undefined;
+  };
+  if (tunnel === 'cloudflare') {
+    const v = one('cf-connecting-ip');
+    if (v && isIP(v)) return { ip: v, ipFrom: 'cf-connecting-ip' };
+  } else if (tunnel === 'tailscale' && one('tailscale-funnel-request') === '?1') {
+    const v = one('x-forwarded-for');
+    if (v && isIP(v)) return { ip: v, ipFrom: 'x-forwarded-for (funnel)' };
+  }
+  return { ip: socket, ipFrom: tunnel ? `socket (no ${tunnel} header)` : 'socket (tunnel type not set)' };
 }
 
 export interface Remote {
@@ -219,7 +256,9 @@ export async function startRemote(ctx: RemoteContext, opts: RemoteOptions): Prom
   };
   const hostOf = (req: IncomingMessage) => String(req.headers.host ?? '').toLowerCase().replace(/:\d+$/, '');
   const viaTunnel = (req: IncomingMessage) => publicHost !== null && hostOf(req) === publicHost;
-  const auth = new RemoteAuth({ dir: opts.dir, pcName: opts.pcName ?? 'this PC', now, audit, fetchMetadata: opts.fetchMetadata });
+  const tunnelKind = opts.tunnel ?? null;
+  const ipOf = (req: IncomingMessage) => realClientIp(req, tunnelKind, viaTunnel(req));
+  const auth = new RemoteAuth({ dir: opts.dir, pcName: opts.pcName ?? 'this PC', now, audit, ipOf, onLock: opts.onLock, fetchMetadata: opts.fetchMetadata });
 
   const handle = async (req: IncomingMessage, res: ServerResponse): Promise<void> => {
     const path = new URL(req.url ?? '/', 'http://remote').pathname.replace(/\/+$/, '');
@@ -275,7 +314,7 @@ export async function startRemote(ctx: RemoteContext, opts: RemoteOptions): Prom
       if (status === 500) log(`remote error on ${req.method} ${req.url}: ${e instanceof Error ? e.stack : e}`);
       const reason = e instanceof Error ? e.message : String(e);
       if (viaTunnel(req)) st.lastTunnelError = { at: now().toISOString(), status, reason };
-      if (status === 401 || status === 421 || status === 429) audit({ refused: status, reason, via: viaTunnel(req) ? 'tunnel' : 'local' });
+      if (status === 401 || status === 421 || status === 429) audit({ refused: status, reason, via: viaTunnel(req) ? 'tunnel' : 'local', ...ipOf(req) });
       if (res.headersSent) return void res.end();
       res.writeHead(status, { 'content-type': 'application/json; charset=utf-8', 'cache-control': 'no-store' });
       res.end(JSON.stringify(e instanceof OAuthError ? { error: e.code, error_description: reason } : { error: reason }));
@@ -295,6 +334,8 @@ export async function startRemote(ctx: RemoteContext, opts: RemoteOptions): Prom
       lastLocalOkAt: st.lastLocalOkAt,
       connections: auth.grants(),
       loginLocked: auth.locked(),
+      loginLockedUntil: auth.lockedUntilIso(),
+      tunnel: tunnelKind,
     }),
     auth,
     close: () =>

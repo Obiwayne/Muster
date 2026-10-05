@@ -3,6 +3,7 @@
 import { parseArgs } from 'node:util';
 import { startGateway } from './gateway.js';
 import { gatewayRunning } from './link.js';
+import type { Tunnel } from './remote.js';
 import { DEFAULT_PHONE_PORT, ensureRemoteDevToken, phoneDir } from './store.js';
 
 const { values } = parseArgs({ options: { port: { type: 'string' }, 'remote-port': { type: 'string' } } });
@@ -22,7 +23,11 @@ async function main(): Promise<void> {
     // MUSTER_REMOTE_HOST = the tunnel's public hostname; MUSTER_REMOTE_DEV=1 also accepts the fixed dev token.
     const remotePort = values['remote-port'] ?? process.env.MUSTER_REMOTE_PORT;
     const devToken = process.env.MUSTER_REMOTE_DEV === '1' ? ensureRemoteDevToken(dir) : undefined;
-    const remote = remotePort ? { port: Number(remotePort), publicHost: process.env.MUSTER_REMOTE_HOST, devToken } : undefined;
+    // MUSTER_REMOTE_TUNNEL=cloudflare|tailscale says whose client-IP header the audit log may trust.
+    const t = process.env.MUSTER_REMOTE_TUNNEL;
+    const tunnel: Tunnel | undefined = t === 'cloudflare' || t === 'tailscale' ? t : undefined;
+    if (t && !tunnel) log(`MUSTER_REMOTE_TUNNEL="${t}" is not cloudflare or tailscale; client IPs will not be read from headers`);
+    const remote = remotePort ? { port: Number(remotePort), publicHost: process.env.MUSTER_REMOTE_HOST, tunnel, devToken } : undefined;
     gateway = await startGateway({ dir, port, log, remote });
   } catch (e) {
     if ((e as NodeJS.ErrnoException).code === 'EADDRINUSE') {

@@ -68,6 +68,11 @@ export interface OAuthOptions {
   pcName: string;
   now: () => Date;
   audit: (entry: Record<string, unknown>) => void;
+  /** Who made the request, for the audit log. The caller decides whether a tunnel's forwarded header can be trusted
+   *  (remote.ts: only for requests that came through the configured tunnel). Default: the socket address. */
+  ipOf?: (req: IncomingMessage) => { ip: string; ipFrom: string };
+  /** Logins just locked (5 wrong codes in a minute): tell the user on the desktop. */
+  onLock?: (info: { until: string; ip: string; ipFrom: string; client: string }) => void;
   /** CIMD: fetch a client's metadata document (test seam). */
   fetchMetadata?: (url: string) => Promise<unknown>;
 }
@@ -136,15 +141,6 @@ function readForm(req: IncomingMessage): Promise<Record<string, string>> {
 function json(res: ServerResponse, status: number, data: unknown, extra: Record<string, string> = {}): void {
   res.writeHead(status, { 'content-type': 'application/json; charset=utf-8', 'cache-control': 'no-store', ...extra });
   res.end(JSON.stringify(data));
-}
-
-/** Where a request came from, for the audit log (the tunnel passes the real address in a header). */
-export function clientIp(req: IncomingMessage): string {
-  const cf = req.headers['cf-connecting-ip'];
-  if (typeof cf === 'string' && cf) return cf;
-  const xff = req.headers['x-forwarded-for'];
-  if (typeof xff === 'string' && xff) return xff.split(',')[0].trim();
-  return req.socket.remoteAddress ?? '?';
 }
 
 interface PendingCode {
@@ -234,6 +230,15 @@ export class RemoteAuth {
 
   locked(): boolean {
     return this.t() < this.lockedUntil;
+  }
+
+  /** When the current login lock ends, or null. */
+  lockedUntilIso(): string | null {
+    return this.locked() ? this.iso(this.lockedUntil) : null;
+  }
+
+  private where(req: IncomingMessage): { ip: string; ipFrom: string } {
+    return this.opts.ipOf?.(req) ?? { ip: req.socket.remoteAddress ?? '?', ipFrom: 'socket' };
   }
 
   // ------------------------------------------------------------------ HTTP
@@ -362,7 +367,7 @@ export class RemoteAuth {
       ({ client } = await this.checkAuthorize(p, resource));
     } catch (e) {
       if (!(e instanceof OAuthError)) throw e;
-      this.opts.audit({ event: 'login_failed', reason: 'bad_request', detail: e.message, ip: clientIp(req) });
+      this.opts.audit({ event: 'login_failed', reason: 'bad_request', detail: e.message, ...this.where(req) });
       return this.page(res, 400, 'This sign-in link is not valid', `<p class="err">${esc(e.message)}</p>`);
     }
     const hidden = ['client_id', 'redirect_uri', 'response_type', 'code_challenge', 'code_challenge_method', 'state', 'scope', 'resource']
@@ -387,7 +392,7 @@ export class RemoteAuth {
       checked = await this.checkAuthorize(f, resource);
     } catch (e) {
       if (!(e instanceof OAuthError)) throw e;
-      this.opts.audit({ event: 'login_failed', reason: 'bad_request', detail: e.message, ip: clientIp(req) });
+      this.opts.audit({ event: 'login_failed', reason: 'bad_request', detail: e.message, ...this.where(req) });
       return this.page(res, 400, 'This sign-in link is not valid', `<p class="err">${esc(e.message)}</p>`);
     }
     const back = (params: Record<string, string>) => {
@@ -398,12 +403,12 @@ export class RemoteAuth {
       res.end();
     };
     if (f.decision === 'deny') {
-      this.opts.audit({ event: 'login_denied', client: checked.client.name, ip: clientIp(req) });
+      this.opts.audit({ event: 'login_denied', client: checked.client.name, ...this.where(req) });
       return back({ error: 'access_denied' });
     }
-    const ip = clientIp(req);
+    const ip = this.where(req);
     if (this.locked()) {
-      this.opts.audit({ event: 'login_failed', reason: 'locked', client: checked.client.name, ip });
+      this.opts.audit({ event: 'login_failed', reason: 'locked', client: checked.client.name, ...ip });
       return this.authorizePage(req, res, f, resource, `Too many wrong codes. Logins are locked until ${new Date(this.lockedUntil).toLocaleTimeString()}.`);
     }
     const result = this.pairing.redeem(f.code);
@@ -416,21 +421,22 @@ export class RemoteAuth {
         this.lockedUntil = t + LOCK_MS;
         this.fails = [];
       }
-      this.opts.audit({ event: 'login_failed', reason: result === 'limited' ? 'locked' : result, client: checked.client.name, ip, ...(lockNow ? { lockedUntil: this.iso(this.lockedUntil) } : {}) });
+      this.opts.audit({ event: 'login_failed', reason: result === 'limited' ? 'locked' : result, client: checked.client.name, ...ip, ...(lockNow ? { lockedUntil: this.iso(this.lockedUntil) } : {}) });
+      if (lockNow) this.opts.onLock?.({ until: this.iso(this.lockedUntil), ...ip, client: checked.client.name });
       const msg = lockNow ? 'Too many wrong codes. Logins are locked for 10 minutes.' : result === 'expired' ? 'That code has expired. Make a new one in Muster.' : 'Wrong code.';
       return this.authorizePage(req, res, f, resource, msg);
     }
     const code = b64url(randomBytes(32));
     this.codes.set(sha256hex(code), { clientId: checked.client.id, clientName: checked.client.name, redirectUri: f.redirect_uri, challenge: f.code_challenge, scope: checked.scope, resource, expiresAt: this.t() + AUTH_CODE_TTL_MS });
-    this.opts.audit({ event: 'login_ok', client: checked.client.name, ip });
+    this.opts.audit({ event: 'login_ok', client: checked.client.name, ...ip });
     back({ code });
   }
 
   private token(f: Record<string, string>, resource: string, req: IncomingMessage): Record<string, unknown> {
     const t = this.t();
-    const ip = clientIp(req);
+    const ip = this.where(req);
     const fail = (reason: string, message: string, code = 'invalid_grant'): never => {
-      this.opts.audit({ event: 'login_failed', reason, ip });
+      this.opts.audit({ event: 'login_failed', reason, ...ip });
       throw new OAuthError(400, code, message);
     };
     for (const [k, v] of this.codes) if (v.expiresAt <= t) this.codes.delete(k);

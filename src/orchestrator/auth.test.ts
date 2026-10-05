@@ -141,6 +141,18 @@ describe('identity comes from the token', () => {
     expect((await call('GET', '/api/state', agentTok('crew-2'))).status).toBe(200);
   });
 
+  it('only you (the phone gateway) can raise a remote-access alert; it lands on the board for you', async () => {
+    for (const tok of [agentTok('crew-2'), agentTok('captain')]) {
+      expect((await call('POST', '/api/remote/alert', tok, { text: 'fake: logins locked', toast: true })).status).toBe(403);
+    }
+    const r = await call('POST', '/api/remote/alert', human(), { text: 'Remote access: logins are locked until 14:32.', toast: false });
+    expect(r.status).toBe(200);
+    const notes = (await call('GET', '/api/notes', human())).data as Note[];
+    const n = notes.find((x) => x.id === (r.data as { noteId: string }).noteId)!;
+    expect(n).toMatchObject({ from: 'muster', to: 'you', type: 'system', topic: 'remote', open: true });
+    expect(notes.some((x) => x.text.startsWith('fake:'))).toBe(false);
+  });
+
   it('overwrites a claimed actor with the caller', async () => {
     const note = (await call('POST', '/api/notes', agentTok('crew-2'), { actor: 'you', type: 'progress', text: 'pretending' })).data as Note;
     expect(note.from).toBe('crew-2');

@@ -14,6 +14,7 @@ let dir: string;
 let remote: Remote;
 let clock = Date.parse('2026-10-05T12:00:00.000Z');
 let metadataFetches = 0;
+const locks: { until: string; ip: string; ipFrom: string; client: string }[] = [];
 
 const ctx: RemoteContext = {
   projects: async () => [{ id: 'p1', name: 'StarCut', root: '/x', running: true, port: 1 }],
@@ -99,6 +100,8 @@ beforeAll(async () => {
     port: 0,
     publicHost: PUBLIC,
     pcName: 'Obi',
+    tunnel: 'cloudflare',
+    onLock: (info) => locks.push(info),
     dir,
     now: () => new Date(clock),
     fetchMetadata: async (url) => {
@@ -179,7 +182,7 @@ describe('remote OAuth: the consent page and the desktop code', () => {
     expect(first.display).toMatch(/^[A-Z0-9]{3}-[A-Z0-9]{3}$/);
     expect(Date.parse(first.expiresAt) - clock).toBe(2 * 60_000);
     const second = remote.auth.issueCode();
-    const old = await http('POST', '/authorize', { form: form(first.code), ip: '160.79.104.9' });
+    const old = await http('POST', '/authorize', { form: form(first.code), ip: '6.6.6.6' }); // a forged header from this PC
     expect(old.status).toBe(401);
     expect(old.text).toContain('Wrong code');
 
@@ -193,7 +196,8 @@ describe('remote OAuth: the consent page and the desktop code', () => {
     expect(expired.text).toContain('expired');
 
     const fails = audit().filter((l) => l.event === 'login_failed');
-    expect(fails.some((l) => l.reason === 'wrong' && l.ip === '160.79.104.9' && l.client === 'Claude')).toBe(true);
+    expect(fails.some((l) => l.reason === 'wrong' && l.ip === '127.0.0.1' && l.ipFrom === 'socket' && l.client === 'Claude')).toBe(true);
+    expect(JSON.stringify(fails)).not.toContain('6.6.6.6'); // headers on a request that didn't come through the tunnel are ignored
     expect(fails.some((l) => l.reason === 'expired')).toBe(true);
     expect(audit().some((l) => l.event === 'login_ok')).toBe(true);
   });
@@ -203,15 +207,29 @@ describe('remote OAuth: the consent page and the desktop code', () => {
     const { challenge } = pkce();
     for (let i = 0; i < 5; i++) await http('POST', '/authorize', { form: { ...authParams(id, challenge), code: 'AAAAAA', decision: 'allow' } });
     expect(remote.status().loginLocked).toBe(true);
+    expect(remote.status().loginLockedUntil).toBe(new Date(clock + LOCK_MS).toISOString());
+    expect(locks.at(-1)).toMatchObject({ until: new Date(clock + LOCK_MS).toISOString(), client: 'Claude', ip: '127.0.0.1' }); // → desktop alert
+    const lockCount = locks.length;
     const good = remote.auth.issueCode();
     const r = await http('POST', '/authorize', { form: { ...authParams(id, challenge), code: good.code, decision: 'allow' } });
     expect(r.status).toBe(401);
     expect(r.text).toContain('locked');
     expect(audit().some((l) => l.event === 'login_failed' && l.lockedUntil)).toBe(true);
     expect(audit().some((l) => l.event === 'login_failed' && l.reason === 'locked')).toBe(true);
+    expect(locks).toHaveLength(lockCount); // tries during the lock don't raise more alerts
     clock += LOCK_MS + 1;
     expect(remote.status().loginLocked).toBe(false);
     await consent(id, challenge);
+  });
+
+  it('a failed login through the tunnel logs the real client IP from the tunnel header', async () => {
+    const id = await register();
+    const r = await http('POST', '/authorize', { host: PUBLIC, ip: '203.0.113.7', form: { ...authParams(id, pkce().challenge, { resource: `https://${PUBLIC}/mcp` }), code: 'AAAAAA', decision: 'allow' } });
+    expect(r.status).toBe(401);
+    expect(audit().at(-1)).toMatchObject({ event: 'login_failed', reason: 'wrong', ip: '203.0.113.7', ipFrom: 'cf-connecting-ip' });
+    const bad = await listTools('mra_nope', PUBLIC);
+    expect(bad.status).toBe(401);
+    expect(audit().at(-1)).toMatchObject({ refused: 401, via: 'tunnel', ip: '127.0.0.1', ipFrom: 'socket (no cloudflare header)' });
   });
 
   it('Cancel sends access_denied back to the client', async () => {

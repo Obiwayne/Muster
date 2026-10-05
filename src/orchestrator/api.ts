@@ -426,6 +426,22 @@ ${pushed ? `Pushed ${base} to origin.` : `Push to origin failed: ${(r.stderr || 
     const waiting = mutate(() => checkout.checkoutCleared(state(), 'stashed', stashed ? 'git stash pop brings them back' : 'already clean'));
     return { ok: true, stashed, waiting };
   });
+  // The phone gateway's remote connector (docs/REMOTE.md) raising a security alert, e.g. logins locked after wrong
+  // codes: a system note to you (Bulletin board, "Needs you", phone) and, when `toast`, a Windows notification.
+  route('POST', '/api/remote/alert', ({ body }) => {
+    if (body.actor !== board.HUMAN) throw forbidden('Only the gateway (as you) raises remote alerts');
+    const text = str(body.text, 'text').trim().slice(0, 1000);
+    const note = mutate(() => {
+      const n = board.postNote(state(), { actor: board.SYSTEM, type: 'system', text, to: board.HUMAN, topic: 'remote' });
+      n.open = true; // stays on "Needs you" until you dismiss it
+      return n;
+    });
+    if (body.toast === true) {
+      ctx.notify('Muster: remote access', text);
+      ctx.toast('warn', text);
+    }
+    return { ok: true, noteId: note.id };
+  });
   // You're happy with the Captain's review: it may merge the task (merge_task) and push.
   route('POST', '/api/tasks/:id/approve-merge', ({ params, body }) => {
     if (body.actor !== board.HUMAN) throw forbidden('Only you can approve a merge');

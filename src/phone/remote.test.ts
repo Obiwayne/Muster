@@ -1,5 +1,5 @@
 import { mkdtempSync, readFileSync, rmSync } from 'node:fs';
-import { request } from 'node:http';
+import { request, type IncomingMessage } from 'node:http';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { Client } from '@modelcontextprotocol/sdk/client/index.js';
@@ -8,7 +8,7 @@ import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 import type { MusterState } from '../types.js';
 import { needsFromState } from './needs.js';
 import type { Project } from './projects.js';
-import { CONNECTED_WINDOW_MS, startRemote, type Remote, type RemoteContext } from './remote.js';
+import { CONNECTED_WINDOW_MS, realClientIp, startRemote, type Remote, type RemoteContext } from './remote.js';
 import { at, fakeNote, fakeState, fakeTask } from './testfakes.js';
 
 const TOKEN = 'remote-test-token';
@@ -162,5 +162,33 @@ describe('remote connector', () => {
     clock += CONNECTED_WINDOW_MS + 1000;
     expect(remote.status().connected).toBe(false);
     expect(remote.status().lastTunnelOkAt).not.toBeNull();
+  });
+});
+
+describe('realClientIp: forwarded headers are trusted only from the configured tunnel', () => {
+  const req = (headers: Record<string, string>, addr = '127.0.0.1') => ({ headers, socket: { remoteAddress: addr } }) as unknown as IncomingMessage;
+
+  it('ignores every header on requests that did not come through the tunnel', () => {
+    expect(realClientIp(req({ 'cf-connecting-ip': '6.6.6.6', 'x-forwarded-for': '6.6.6.6' }), 'cloudflare', false)).toEqual({ ip: '127.0.0.1', ipFrom: 'socket' });
+  });
+
+  it('Cloudflare: CF-Connecting-IP, never X-Forwarded-For (a client can forge its left side)', () => {
+    expect(realClientIp(req({ 'cf-connecting-ip': '203.0.113.7', 'x-forwarded-for': '6.6.6.6, 203.0.113.7' }), 'cloudflare', true)).toEqual({ ip: '203.0.113.7', ipFrom: 'cf-connecting-ip' });
+    expect(realClientIp(req({ 'x-forwarded-for': '6.6.6.6' }), 'cloudflare', true)).toEqual({ ip: '127.0.0.1', ipFrom: 'socket (no cloudflare header)' });
+    expect(realClientIp(req({ 'cf-connecting-ip': 'not-an-ip' }), 'cloudflare', true).ipFrom).toBe('socket (no cloudflare header)');
+  });
+
+  it('Tailscale Funnel: X-Forwarded-For only with the Funnel marker; a Cloudflare header is ignored', () => {
+    expect(realClientIp(req({ 'tailscale-funnel-request': '?1', 'x-forwarded-for': '198.51.100.4' }), 'tailscale', true)).toEqual({ ip: '198.51.100.4', ipFrom: 'x-forwarded-for (funnel)' });
+    expect(realClientIp(req({ 'x-forwarded-for': '198.51.100.4' }), 'tailscale', true).ip).toBe('127.0.0.1');
+    expect(realClientIp(req({ 'cf-connecting-ip': '6.6.6.6' }), 'tailscale', true).ip).toBe('127.0.0.1');
+  });
+
+  it('on Cloudflare, a forged Funnel marker is ignored', () => {
+    expect(realClientIp(req({ 'tailscale-funnel-request': '?1', 'x-forwarded-for': '6.6.6.6' }), 'cloudflare', true).ip).toBe('127.0.0.1');
+  });
+
+  it('with no tunnel type set, says so instead of guessing', () => {
+    expect(realClientIp(req({ 'cf-connecting-ip': '203.0.113.7' }), null, true)).toEqual({ ip: '127.0.0.1', ipFrom: 'socket (tunnel type not set)' });
   });
 });

@@ -198,6 +198,24 @@ same card on M04 with an approve notification action.
    (a token issued for the local URL doesn't work through the tunnel), only hashes on disk (`remote.json`), consent page
    escapes the client name and can't be framed. The dev token is now off unless `MUSTER_REMOTE_DEV=1`.
    Not yet verified: claude.ai's real CIMD document (needs the tunnel, milestone 5).
+
+   Follow-ups from review (2026-10-05):
+   - **Real client IPs behind the tunnel.** Both tunnels connect to the gateway from 127.0.0.1, so the socket address
+     is useless. `realClientIp` (remote.ts) reads a forwarded header **only for requests that came through the tunnel**
+     (Host = the public hostname) and **only the header the configured tunnel guarantees**: Cloudflare →
+     `CF-Connecting-IP` (Cloudflare *appends* to `X-Forwarded-For`, so its left side can be forged); Tailscale Funnel →
+     `X-Forwarded-For`, and only when `Tailscale-Funnel-Request: ?1` is present (Funnel overwrites XFF and strips a
+     client-sent marker; Cloudflare would pass a forged marker through, which is why the type must be configured, not
+     guessed). Set with `MUSTER_REMOTE_TUNNEL=cloudflare|tailscale` (Settings later); unset → socket address with
+     `ipFrom: "socket (tunnel type not set)"`, and `GET /admin/remote` returns `tunnel: null` so the card can warn.
+     Every audit line carries `ip` and `ipFrom`.
+   - **Lockout shows up on the desktop.** 5 wrong codes lock logins (the correct code too) for 10 minutes; someone
+     spamming guesses could block pairing, so the lock is announced: the gateway posts a system note (`topic: 'remote'`,
+     to you, open) to every running project's Bulletin board via `POST /api/remote/alert` (human token only, in
+     `HUMAN_ONLY`, so agents can't fake one), with the Windows toast once. It counts in "Needs you" and reaches the
+     phone as "Remote access". Text: when it unlocks, the last IP and client, "Nobody got in". Tries during the lock
+     don't raise more alerts. `GET /admin/remote` also has `loginLockedUntil`. With no project running, it only goes to
+     gateway.log (the status still shows the lock).
 3. Write tools with the server-side hold, pending store, `remote_write` NeedItem, audit log. Tests: send_goal creates
    pending and does not call `/api/ask`; discard; expiry; approve disabled by default.
    Remote writes post to crew chat as yours (`FeedItem.via: 'remote'`, right side, "via Claude" chip); see
