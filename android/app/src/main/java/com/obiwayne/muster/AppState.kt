@@ -51,6 +51,9 @@ class AppState(private val app: Application) {
     val openTarget = MutableStateFlow<OpenTarget?>(null)
     val homeTab = MutableStateFlow("needs")
 
+    /** Tablet list + detail: the open item as "task:pid:tid" or "note:pid:nid" (see ui.openKey); null = the first one. */
+    val selectedNeed = MutableStateFlow<String?>(null)
+
     /** Held remote writes that expired while shown: kept greyed out until dismissed, so a card never vanishes mid-read. */
     val expiredHeld = MutableStateFlow<List<NeedItem>>(emptyList())
 

@@ -23,6 +23,7 @@ import androidx.compose.foundation.layout.navigationBarsPadding
 import androidx.compose.foundation.layout.offset
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
+import androidx.compose.foundation.layout.statusBarsPadding
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.layout.widthIn
 import androidx.compose.foundation.shape.CircleShape
@@ -45,6 +46,7 @@ import androidx.compose.ui.draw.alpha
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.draw.drawBehind
 import androidx.compose.ui.geometry.CornerRadius
+import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.ImageBitmap
 import androidx.compose.ui.graphics.PathEffect
@@ -53,12 +55,15 @@ import androidx.compose.ui.graphics.asImageBitmap
 import androidx.compose.ui.graphics.drawscope.Stroke
 import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.layout.ContentScale
+import androidx.compose.ui.platform.LocalConfiguration
+import androidx.compose.ui.res.painterResource
 import androidx.compose.ui.text.TextStyle
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.dp
 import com.obiwayne.muster.MusterApp
+import com.obiwayne.muster.R
 import com.obiwayne.muster.data.Kind
 import com.obiwayne.muster.data.Project
 import kotlinx.coroutines.Dispatchers
@@ -438,7 +443,25 @@ fun MockThumbLarge(variant: Int) {
     }
 }
 
-// ---------------------------------------------------------------- bottom nav
+// ---------------------------------------------------------------- window size
+
+/** Window width in dp (the window, not the screen: tablets can run Muster in a resizable window). */
+@Composable
+fun windowWidthDp(): Int = LocalConfiguration.current.screenWidthDp
+
+/** Tablet (T04–T06): side rail instead of the bottom bar, from 600dp wide. */
+@Composable
+fun useRail(): Boolean = windowWidthDp() >= 600
+
+/** Tablet landscape (T01–T03): list + detail side by side, from 840dp wide. */
+@Composable
+fun useTwoPane(): Boolean = windowWidthDp() >= 840
+
+/** "tablet" or "phone", for copy like "Unlink this tablet". */
+@Composable
+fun deviceWord(): String = if (LocalConfiguration.current.smallestScreenWidthDp >= 600) "tablet" else "phone"
+
+// ---------------------------------------------------------------- bottom nav / side rail
 
 enum class Tab(val label: String) { NEEDS("Needs you"), CREW("Crew"), SETTINGS("Settings") }
 
@@ -446,47 +469,77 @@ enum class Tab(val label: String) { NEEDS("Needs you"), CREW("Crew"), SETTINGS("
 fun BottomNav(current: Tab, badge: Int, onSelect: (Tab) -> Unit) {
     Column(
         Modifier.fillMaxWidth().background(C.surface).drawBehind {
-            drawLine(C.line, androidx.compose.ui.geometry.Offset(0f, 0f), androidx.compose.ui.geometry.Offset(size.width, 0f), 1.dp.toPx())
+            drawLine(C.line, Offset(0f, 0f), Offset(size.width, 0f), 1.dp.toPx())
         }.padding(bottom = 16.dp),
     ) {
         Row(Modifier.fillMaxWidth().height(64.dp).padding(horizontal = 12.dp), verticalAlignment = Alignment.CenterVertically) {
             Tab.entries.forEach { tab ->
-                val active = tab == current
-                Column(
-                    Modifier.weight(1f).clickable(
-                        interactionSource = remember { MutableInteractionSource() },
-                        indication = ripple(bounded = false, radius = 40.dp),
-                    ) { onSelect(tab) },
-                    horizontalAlignment = Alignment.CenterHorizontally,
-                    verticalArrangement = Arrangement.spacedBy(4.dp),
+                NavItem(tab, tab == current, badge, 60.dp, 30.dp, Modifier.weight(1f)) { onSelect(tab) }
+            }
+        }
+    }
+}
+
+/** T02's 88dp side rail: logo, the three tabs, and the linked PC at the bottom. */
+@Composable
+fun NavRail(current: Tab, badge: Int, pcName: String, online: Boolean, onSelect: (Tab) -> Unit) {
+    Column(
+        Modifier.width(88.dp).fillMaxHeight().background(C.surface)
+            .drawBehind { drawLine(C.line, Offset(size.width, 0f), Offset(size.width, size.height), 1.dp.toPx()) }
+            .statusBarsPadding().navigationBarsPadding().padding(vertical = 20.dp),
+        horizontalAlignment = Alignment.CenterHorizontally,
+    ) {
+        Box(Modifier.height(32.dp), contentAlignment = Alignment.Center) {
+            Image(painterResource(R.drawable.ic_muster_logo), "Muster", Modifier.size(40.dp, 20.dp))
+        }
+        Spacer(Modifier.height(28.dp))
+        Column(horizontalAlignment = Alignment.CenterHorizontally, verticalArrangement = Arrangement.spacedBy(18.dp)) {
+            Tab.entries.forEach { tab ->
+                NavItem(tab, tab == current, badge, 56.dp, 32.dp, Modifier.width(72.dp)) { onSelect(tab) }
+            }
+        }
+        Spacer(Modifier.weight(1f))
+        Dot(if (online) C.crew else C.stuck, 8.dp)
+        Spacer(Modifier.height(6.dp))
+        Txt(pcName, ts(10, 14, color = C.faint, mono = true), Modifier.widthIn(max = 80.dp), maxLines = 1)
+    }
+}
+
+@Composable
+private fun NavItem(tab: Tab, active: Boolean, badge: Int, pillW: Dp, pillH: Dp, modifier: Modifier, onClick: () -> Unit) {
+    Column(
+        modifier.clickable(
+            interactionSource = remember { MutableInteractionSource() },
+            indication = ripple(bounded = false, radius = 40.dp),
+            onClick = onClick,
+        ),
+        horizontalAlignment = Alignment.CenterHorizontally,
+        verticalArrangement = Arrangement.spacedBy(4.dp),
+    ) {
+        Box(Modifier.size(pillW, pillH)) {
+            Box(
+                Modifier.matchParentSize().clip(RoundedCornerShape(pillH / 2)).background(if (active) C.surface2 else Color.Transparent),
+                contentAlignment = Alignment.Center,
+            ) {
+                val icon = when (tab) {
+                    Tab.NEEDS -> Ic.inbox
+                    Tab.CREW -> Ic.crew
+                    Tab.SETTINGS -> Ic.settings
+                }
+                Icon(icon, tab.label, tint = if (active) C.text else C.muted, modifier = Modifier.size(20.dp))
+            }
+            if (tab == Tab.NEEDS && badge > 0) {
+                Box(
+                    Modifier.offset(x = pillW - 24.dp, y = (-3).dp).height(18.dp).widthIn(min = 18.dp)
+                        .clip(RoundedCornerShape(9.dp)).background(C.surface).padding(2.dp)
+                        .clip(RoundedCornerShape(7.dp)).background(C.warm).padding(horizontal = 3.dp),
+                    contentAlignment = Alignment.Center,
                 ) {
-                    Box(Modifier.size(60.dp, 30.dp)) {
-                        Box(
-                            Modifier.matchParentSize().clip(RoundedCornerShape(15.dp)).background(if (active) C.surface2 else Color.Transparent),
-                            contentAlignment = Alignment.Center,
-                        ) {
-                            val icon = when (tab) {
-                                Tab.NEEDS -> Ic.inbox
-                                Tab.CREW -> Ic.crew
-                                Tab.SETTINGS -> Ic.settings
-                            }
-                            Icon(icon, null, tint = if (active) C.text else C.muted, modifier = Modifier.size(20.dp))
-                        }
-                        if (tab == Tab.NEEDS && badge > 0) {
-                            Box(
-                                Modifier.offset(x = 36.dp, y = (-3).dp).height(18.dp).widthIn(min = 18.dp)
-                                    .clip(RoundedCornerShape(9.dp)).background(C.surface).padding(2.dp)
-                                    .clip(RoundedCornerShape(7.dp)).background(C.warm).padding(horizontal = 3.dp),
-                                contentAlignment = Alignment.Center,
-                            ) {
-                                Txt(if (badge > 99) "99+" else badge.toString(), ts(10, 12, FontWeight.Bold, C.onWarm))
-                            }
-                        }
-                    }
-                    Txt(tab.label, ts(12, 16, if (active) FontWeight.SemiBold else FontWeight.Medium, if (active) C.text else C.muted))
+                    Txt(if (badge > 99) "99+" else badge.toString(), ts(10, 12, FontWeight.Bold, C.onWarm))
                 }
             }
         }
+        Txt(tab.label, ts(12, 16, if (active) FontWeight.SemiBold else FontWeight.Medium, if (active) C.text else C.muted))
     }
 }
 

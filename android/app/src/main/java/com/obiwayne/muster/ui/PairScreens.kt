@@ -36,6 +36,8 @@ import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.statusBarsPadding
 import androidx.compose.foundation.layout.width
+import androidx.compose.foundation.layout.widthIn
+import androidx.compose.foundation.layout.wrapContentWidth
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
@@ -91,10 +93,12 @@ import kotlin.random.Random
 
 @OptIn(ExperimentalFoundationApi::class)
 @Composable
-fun WelcomeScreen(onScan: () -> Unit, onDemo: () -> Unit) {
+fun WelcomeScreen(onScan: () -> Unit, onDemo: () -> Unit, onType: () -> Unit = onScan) {
+    val twoPane = useTwoPane()
+    val glow = if (twoPane) 280.dp else 210.dp
     Box(
         Modifier.fillMaxSize().background(C.bg).drawBehind {
-            // radial glow: 420dp circle at (120, -180) on the 412×915 artboard (40dp status bar included)
+            // radial glow: 420dp circle at (120, -180) on the 412×915 artboard (40dp status bar included); T01's is 560dp
             val center = Offset(size.width - 82.dp.toPx(), 30.dp.toPx())
             drawCircle(
                 Brush.radialGradient(
@@ -102,33 +106,44 @@ fun WelcomeScreen(onScan: () -> Unit, onDemo: () -> Unit) {
                     0.45f to C.glowBlue.copy(alpha = 0.12f),
                     0.70f to Color.Transparent,
                     center = center,
-                    radius = 210.dp.toPx(),
+                    radius = glow.toPx(),
                 ),
-                radius = 210.dp.toPx(),
+                radius = glow.toPx(),
                 center = center,
             )
         },
     ) {
-        Column(Modifier.fillMaxSize().statusBarsPadding().navigationBarsPadding()) {
+        val logo: @Composable () -> Unit = {
+            Row(
+                Modifier.height(40.dp).combinedClickable(
+                    interactionSource = null,
+                    indication = null,
+                    onClick = {},
+                    onLongClick = { if (BuildConfig.DEBUG) onDemo() },
+                ),
+                verticalAlignment = Alignment.CenterVertically,
+                horizontalArrangement = Arrangement.spacedBy(if (twoPane) 12.dp else 10.dp),
+            ) {
+                Image(painterResource(R.drawable.ic_muster_logo), null, if (twoPane) Modifier.size(44.dp, 22.dp) else Modifier.size(36.dp, 18.dp))
+                Txt("Muster", if (twoPane) ts(22, 28, FontWeight.SemiBold, spacing = (-0.01).em) else ts(20, 24, FontWeight.SemiBold, spacing = (-0.01).em))
+            }
+        }
+        val tablet = deviceWord() == "tablet"
+        if (twoPane) {
+            WelcomeWide(logo, onScan, onType)
+            return@Box
+        }
+        Column(
+            Modifier.fillMaxSize().statusBarsPadding().navigationBarsPadding()
+                .wrapContentWidth(Alignment.CenterHorizontally).widthIn(max = 560.dp),
+        ) {
             Column(
                 Modifier.weight(1f).verticalScroll(rememberScrollState()).padding(start = 28.dp, end = 28.dp, top = 72.dp),
                 verticalArrangement = Arrangement.spacedBy(28.dp),
             ) {
-                Row(
-                    Modifier.height(40.dp).combinedClickable(
-                        interactionSource = null,
-                        indication = null,
-                        onClick = {},
-                        onLongClick = { if (BuildConfig.DEBUG) onDemo() },
-                    ),
-                    verticalAlignment = Alignment.CenterVertically,
-                    horizontalArrangement = Arrangement.spacedBy(10.dp),
-                ) {
-                    Image(painterResource(R.drawable.ic_muster_logo), null, Modifier.size(36.dp, 18.dp))
-                    Txt("Muster", ts(20, 24, FontWeight.SemiBold, spacing = (-0.01).em))
-                }
+                logo()
                 Column(verticalArrangement = Arrangement.spacedBy(12.dp)) {
-                    Txt("Your crew,\nin your pocket.", ts(34, 40, FontWeight.SemiBold, spacing = (-0.02).em))
+                    Txt(if (tablet) "Your crew,\non your tablet." else "Your crew,\nin your pocket.", ts(34, 40, FontWeight.SemiBold, spacing = (-0.02).em))
                     Txt(
                         "Get a buzz when the Captain needs you. Approve a merge, answer a question or send work back without walking to your PC.",
                         ts(16, 24, color = C.muted),
@@ -143,6 +158,56 @@ fun WelcomeScreen(onScan: () -> Unit, onDemo: () -> Unit) {
             Column(Modifier.padding(start = 28.dp, end = 28.dp, bottom = 40.dp), verticalArrangement = Arrangement.spacedBy(14.dp)) {
                 PrimaryButton("Scan the code on your PC", Modifier.fillMaxWidth(), icon = Ic.scan, onClick = onScan)
                 Txt("On your PC, open Muster → Settings → Phone", ts(13, 19, color = C.faint).copy(textAlign = TextAlign.Center), Modifier.fillMaxWidth())
+            }
+        }
+    }
+}
+
+/** T01: the pitch on the left, a "Link to your PC" card with the steps and both ways in on the right. */
+@Composable
+private fun WelcomeWide(logo: @Composable () -> Unit, onScan: () -> Unit, onType: () -> Unit) {
+    Row(
+        Modifier.fillMaxSize().statusBarsPadding().navigationBarsPadding().padding(horizontal = 96.dp),
+        verticalAlignment = Alignment.CenterVertically,
+        horizontalArrangement = Arrangement.spacedBy(64.dp),
+    ) {
+        Column(Modifier.weight(1f).verticalScroll(rememberScrollState()), verticalArrangement = Arrangement.spacedBy(32.dp)) {
+            logo()
+            Column(verticalArrangement = Arrangement.spacedBy(16.dp)) {
+                Txt("Your crew,\non your tablet.", ts(48, 54, FontWeight.SemiBold, spacing = (-0.025).em))
+                Txt(
+                    "Get a buzz when the Captain needs you. Approve a merge, answer a question or send work back without walking to your PC.",
+                    ts(17, 26, color = C.muted), Modifier.widthIn(max = 480.dp),
+                )
+            }
+            Column(verticalArrangement = Arrangement.spacedBy(18.dp)) {
+                Feature(Ic.check, C.crew, "Approve reviewed work", "Read the Captain's review and evidence side by side, then approve.")
+                Feature(Ic.message, C.captain, "Answer the Captain", "Product calls and escalations, answered in a line.")
+                Feature(Ic.users, C.design, "Glance at the crew", "Who's working, who's stuck, and how much usage is left.")
+            }
+        }
+        Column(
+            Modifier.width(440.dp).card(radius = 20.dp).padding(28.dp),
+            verticalArrangement = Arrangement.spacedBy(24.dp),
+        ) {
+            Column(verticalArrangement = Arrangement.spacedBy(16.dp)) {
+                SectionLabel("Link to your PC")
+                listOf(
+                    "On your PC, open Muster → Settings → Phone",
+                    "Scan the QR code with this tablet",
+                    "Or type the 6-letter code shown under it",
+                ).forEachIndexed { i, step ->
+                    Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(14.dp)) {
+                        Box(Modifier.size(28.dp).clip(CircleShape).border(1.dp, C.line, CircleShape), contentAlignment = Alignment.Center) {
+                            Txt("${i + 1}", ts(13, 16, color = C.muted, mono = true))
+                        }
+                        Txt(step, ts(15, 21), Modifier.weight(1f))
+                    }
+                }
+            }
+            Column(verticalArrangement = Arrangement.spacedBy(12.dp)) {
+                PrimaryButton("Scan the code on your PC", Modifier.fillMaxWidth(), icon = Ic.scan, onClick = onScan)
+                OutlineButton("Can't scan? Type the 6-letter code", Modifier.fillMaxWidth(), height = 48.dp, radius = 14.dp, textStyle = ts(15, 20, FontWeight.Medium), onClick = onType)
             }
         }
     }
@@ -169,12 +234,12 @@ private sealed interface ScanStep {
 }
 
 @Composable
-fun ScanScreen(onClose: () -> Unit, onLinked: () -> Unit) {
+fun ScanScreen(onClose: () -> Unit, onLinked: () -> Unit, manual: Boolean = false) {
     val ctx = LocalContext.current
     val state = MusterApp.state
     val demo by state.demo.collectAsState()
     val scope = rememberCoroutineScope()
-    var step by remember { mutableStateOf<ScanStep>(ScanStep.Scanning) }
+    var step by remember { mutableStateOf<ScanStep>(if (manual) ScanStep.Manual else ScanStep.Scanning) }
     var error by remember { mutableStateOf<String?>(null) }
     var torch by remember { mutableStateOf(false) }
     var hasCamera by remember {
