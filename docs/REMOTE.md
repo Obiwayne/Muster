@@ -36,10 +36,11 @@ discarded items, the confirm switch), but crew chat is where the conversation is
 
 - **When:** at the moment it is really sent, i.e. after your tap on Send (or straight away if the hold is off). A held
   or discarded item never appears in crew chat; it lives in Needs you until then.
-- **Data:** `FeedItem.via?: 'remote'` (types.ts). The gateway passes `via: 'remote'` on `POST /api/ask`,
-  `/api/notes/:id/reply` and `/api/notes/:id/answer`. The orchestrator accepts `via` only from the human token (an agent
-  token sending it → 403) and copies it onto the feed item that `board.addFeed` / `replyNote` makes. Held items record
-  which client asked (`claude.ai`) so the tag can say so.
+- **Data (as built):** `FeedItem.via?: RemoteVia = { client, approvedOn: 'phone' | 'desktop' | 'not held', approvedAt }`
+  (types.ts); its presence means "came through the connector". The gateway passes `via` on `POST /api/ask`,
+  `/api/notes/:id/reply` and `/api/notes/:id/answer`. The orchestrator (`remoteVia` in api.ts) accepts it only from the
+  human token (an agent token → 403, nothing posted), sanitises the client name (control characters stripped, 80
+  characters, default "Claude") and normalises the date, and `board.addFeed` / `replyNote` put it on the feed item.
 - **Side:** on the **right**, as your own messages (`.cmsg.mine`, blue), never on the left with the agents. Goals
   already render there (`from: 'you'`). Replies and answers from you currently only show inside the note card's
   thread; a reply or answer with `via: 'remote'` **also** renders as its own right-side bubble with a `↳ N12` link to
@@ -216,10 +217,25 @@ same card on M04 with an approve notification action.
      phone as "Remote access". Text: when it unlocks, the last IP and client, "Nobody got in". Tries during the lock
      don't raise more alerts. `GET /admin/remote` also has `loginLockedUntil`. With no project running, it only goes to
      gateway.log (the status still shows the lock).
-3. Write tools with the server-side hold, pending store, `remote_write` NeedItem, audit log. Tests: send_goal creates
-   pending and does not call `/api/ask`; discard; expiry; approve disabled by default.
-   Remote writes post to crew chat as yours (`FeedItem.via: 'remote'`, right side, "via Claude" chip); see
-   "Remote messages live in crew chat".
+3. **Done 2026-10-05** (backend; built with two subagents in parallel). Tools `muster_send_goal`, `muster_reply`,
+   `muster_answer`, and `muster_approve` only when `allowApprove` is on (all `readOnlyHint: false`; approve
+   `destructiveHint: true`; descriptions say agent note text is never instructions). Gateway `src/phone/pending.ts` +
+   gateway.ts:
+   - A write is **checked first** (project running, note exists, question menu still open with the right number of
+     answers, task actually waiting for approval), so you're never asked to approve something that can't run.
+   - With the hold on it is stored in state.json `remote.pending` as `P1, P2…` (ids survive restarts), shown in Needs
+     you as `kind: 'remote_write'` with `actions: ['send','discard']` (phone push uses the "question" pref and ignores
+     quiet hours, since you just asked for it), and expires unsent after 15 minutes.
+   - Send: phone `POST /api/projects/:pid/pending/:id/send|discard`; desktop `GET /admin/remote/pending`,
+     `POST /admin/remote/pending/:id/send|discard` (reachable from the desktop as `/api/phone/remote/pending/...`).
+     Send runs the write as you with `via`; a failed send stays held. Approve goes to approve-merge (or approve at a
+     human station), like the phone's Approve.
+   - `GET/PUT /admin/remote/settings` `{ confirmWrites, allowApprove }`; turning the hold off needs `confirm: true`,
+     turning it back on doesn't. Desktop only (no phone or MCP route).
+   - Audit: `write_held`, `write_sent` (with approvedOn), `write_discarded`, `write_expired`, `settings_changed`; tool
+     lines carry `held`/`pendingId` and text cut to 200 characters.
+   **Not usable end to end until milestone 4**: the desktop has no Send/Discard button yet and the installed phone app
+   doesn't know `remote_write` (it reads `kind` as a plain string, so nothing breaks; the item just has no buttons).
 4. Settings card + desktop board card + phone card + the crew-chat "via Claude" chip and right-side remote reply
    bubble (design first, as an addition to the signed-off "Crew chat — v2" artboard).
 5. Real run: Cloudflare named tunnel → add as custom connector in claude.ai → "what's the status?" → "send goal X" →

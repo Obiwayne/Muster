@@ -20,6 +20,10 @@ const ctx: RemoteContext = {
   projects: async () => [{ id: 'p1', name: 'StarCut', root: '/x', running: true, port: 1 }],
   state: async () => ({ state: fakeState([]), config: { projectName: 'StarCut' } as never, paused: false }),
   needs: async () => ({ projects: [], items: [] }),
+  write: async () => {
+    throw new Error('not used');
+  },
+  settings: () => ({ confirmWrites: true, allowApprove: false }),
 };
 
 interface Res {

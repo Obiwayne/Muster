@@ -7,6 +7,7 @@ import { join } from 'node:path';
 import * as selfsigned from 'selfsigned';
 import { secretsBase } from '../core/tokens.js';
 import { clonePrefs, DEFAULT_PREFS, type Prefs } from './needs.js';
+import type { PendingWrite } from './pending.js';
 
 export const DEFAULT_PHONE_PORT = 47910;
 
@@ -27,7 +28,18 @@ export interface PhoneState {
   projects: string[];
   /** Prefs a newly paired device starts with (the desktop's "Send to phone" toggles; GET/PUT /admin/send). */
   defaultPrefs: Prefs;
+  /** The remote connector's desktop-only switches and held writes (docs/REMOTE.md). */
+  remote: RemoteState;
 }
+
+export interface RemoteState {
+  confirmWrites: boolean; // hold every write for your tap (default on)
+  allowApprove: boolean; // expose muster_approve (default off)
+  pending: PendingWrite[];
+  nextPending: number;
+}
+
+const freshRemote = (): RemoteState => ({ confirmWrites: true, allowApprove: false, pending: [], nextPending: 1 });
 
 export interface ServerFile {
   port: number;
@@ -70,7 +82,7 @@ export function ensureDir(dir: string): void {
 }
 
 function freshState(): PhoneState {
-  return { pcName: hostname(), devices: [], network: { mode: 'lan' }, projects: [], defaultPrefs: clonePrefs(DEFAULT_PREFS) };
+  return { pcName: hostname(), devices: [], network: { mode: 'lan' }, projects: [], defaultPrefs: clonePrefs(DEFAULT_PREFS), remote: freshRemote() };
 }
 
 const withDefaults = (p: Partial<Prefs> | undefined, base: Prefs): Prefs => ({
@@ -92,6 +104,12 @@ export function loadState(dir: string): PhoneState {
       network: { mode: raw.network?.mode === 'tailscale' ? 'tailscale' : 'lan' },
       projects: Array.isArray(raw.projects) ? raw.projects.filter((p) => typeof p === 'string') : [],
       defaultPrefs,
+      remote: {
+        confirmWrites: raw.remote?.confirmWrites !== false, // anything but an explicit false keeps the hold on
+        allowApprove: raw.remote?.allowApprove === true,
+        pending: Array.isArray(raw.remote?.pending) ? raw.remote.pending : [],
+        nextPending: Number.isInteger(raw.remote?.nextPending) && raw.remote!.nextPending > 0 ? raw.remote!.nextPending : 1,
+      },
     };
   } catch {
     return freshState();

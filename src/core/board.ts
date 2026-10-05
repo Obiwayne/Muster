@@ -1,6 +1,6 @@
 // Bulletin board, crew chat feed and per-agent inbox. Pure state mutations;
 // the caller commits the store.
-import { OPEN_BY_DEFAULT, REACTION_EMOJI, type Agent, type AskAnswer, type AskOption, type AskQuestion, type FeedItem, type InboxItem, type MusterState, type Note, type NoteType, type ReactionEmoji } from '../types.js';
+import { OPEN_BY_DEFAULT, REACTION_EMOJI, type Agent, type AskAnswer, type AskOption, type AskQuestion, type FeedItem, type InboxItem, type MusterState, type Note, type NoteType, type ReactionEmoji, type RemoteVia } from '../types.js';
 import { badRequest, conflict, forbidden, notFound } from './errors.js';
 import { nextId } from './store.js';
 
@@ -109,14 +109,15 @@ export function closeNoteIfOpen(n: Note): void {
   n.closedAt = nowIso();
 }
 
-export function replyNote(state: MusterState, noteId: string, actor: string, text: string, close = false): Note {
+/** `via`: sent through the remote connector (only you; the API checks). */
+export function replyNote(state: MusterState, noteId: string, actor: string, text: string, close = false, via?: RemoteVia): Note {
   const from = requireActor(state, actor);
   const note = requireNote(state, noteId);
   if (!text?.trim()) throw badRequest('Reply text is empty');
   const body = text.trim();
   note.replies.push({ at: nowIso(), from, text: body });
   if (close) closeNoteIfOpen(note);
-  const feedId = addFeed(state, { kind: 'reply', from, noteId: note.id, taskId: note.taskId, text: body }).id;
+  const feedId = addFeed(state, { kind: 'reply', from, noteId: note.id, taskId: note.taskId, text: body, ...(via ? { via } : {}) }).id;
 
   const item = { from, kind: 'reply' as const, text: `reply from ${from} on ${note.id}: ${body}`, noteId: note.id, taskId: note.taskId, feedId };
   addInbox(state, { agentId: note.from, ...item });
@@ -320,7 +321,7 @@ export function askHuman(state: MusterState, actor: string, questions: unknown):
 }
 
 /** POST /api/notes/:id/answer: your answer to an ask note, one per question by index. Replies as you and closes it. */
-export function answerAsk(state: MusterState, noteId: string, actor: string, answers: unknown): Note {
+export function answerAsk(state: MusterState, noteId: string, actor: string, answers: unknown, via?: RemoteVia): Note {
   if (actor !== HUMAN) throw forbidden('Only you answer the Captain\'s questions');
   const note = requireNote(state, noteId);
   if (!note.ask) throw badRequest(`${note.id} is not a question menu`);
@@ -345,5 +346,5 @@ export function answerAsk(state: MusterState, noteId: string, actor: string, ans
     })
     .join('\n');
   note.answers = clean;
-  return replyNote(state, note.id, HUMAN, text, true);
+  return replyNote(state, note.id, HUMAN, text, true, via);
 }

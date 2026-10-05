@@ -8,17 +8,18 @@ import { randomBytes } from 'node:crypto';
 import { createServer, type Server } from 'node:https';
 import type { IncomingMessage, ServerResponse } from 'node:http';
 import { isAbsolute, resolve } from 'node:path';
-import { existsSync } from 'node:fs';
+import { appendFileSync, existsSync } from 'node:fs';
 import { Readable } from 'node:stream';
 import QRCode from 'qrcode';
 import { WebSocketServer, type WebSocket } from 'ws';
-import type { Agent, MusterConfig, MusterState, Note, Task } from '../types.js';
+import type { Agent, MusterConfig, MusterState, Note, RemoteVia, Task } from '../types.js';
 import { computeProgress, localDate } from '../core/roadmap.js';
 import { repoKey, sameToken } from '../core/tokens.js';
 import { clonePrefs, mergePrefs, needsFromState, shouldNotify, type NeedItem, type Prefs } from './needs.js';
 import { hostsFor, lanHosts as realLanHosts, tailscaleInfo as realTailscale, type TailscaleInfo } from './net.js';
 import { displayCode, Pairing } from './pairing.js';
-import { startRemote, type Remote, type RemoteStatus, type Tunnel } from './remote.js';
+import { PENDING_TTL_MS, pendingSummary, pendingTitle, pendingToNeed, sweepExpired, type PendingWrite } from './pending.js';
+import { startRemote, type Remote, type RemoteSettings, type RemoteStatus, type Tunnel, type WriteInput, type WriteOutcome } from './remote.js';
 import { desktopSettingsFile, listProjects, orchestratorFetch, orchestratorJson, OrchestratorError, recentRoots, type Project } from './projects.js';
 import {
   DEFAULT_PHONE_PORT,
@@ -27,6 +28,7 @@ import {
   ensureDir,
   loadState,
   phoneDir,
+  phoneFiles,
   removeServerFile,
   saveState,
   sha256hex,
@@ -206,6 +208,7 @@ export async function startGateway(opts: GatewayOptions = {}): Promise<Gateway> 
           }
         }),
     );
+    items.push(...livePending().map(pendingToNeed)); // held remote writes wait on you too
     items.sort((a, b) => b.createdAt.localeCompare(a.createdAt));
     return { projects: list, items, polled };
   };
@@ -241,6 +244,153 @@ export async function startGateway(opts: GatewayOptions = {}): Promise<Gateway> 
     const lan = getLan();
     const tailscale = await getTailscale();
     return { lan, tailscale, hosts: hostsFor(state.network.mode, lan, tailscale) };
+  };
+
+  // ------------------------------------------------------------------ remote writes (docs/REMOTE.md)
+  // Same line format as remote.ts's audit; the gateway logs what happens to held writes.
+  const auditRemote = (entry: Record<string, unknown>) => {
+    try {
+      appendFileSync(phoneFiles(dir).remoteLog, JSON.stringify({ at: now().toISOString(), ...entry }) + '\n');
+    } catch (e) {
+      log(`remote audit log: ${e instanceof Error ? e.message : e}`);
+    }
+  };
+  /** Pending writes still in time; expired ones are dropped (and logged) on the way. */
+  const livePending = (): PendingWrite[] => {
+    const { live, expired } = sweepExpired(state.remote.pending, now().getTime());
+    if (expired.length) {
+      state.remote.pending = live;
+      save();
+      for (const w of expired) auditRemote({ event: 'write_expired', id: w.id, kind: w.kind, project: w.projectName, client: w.client });
+    }
+    return live;
+  };
+  const remoteSettings = (): RemoteSettings => ({ confirmWrites: state.remote.confirmWrites, allowApprove: state.remote.allowApprove });
+
+  /** The running project a write is for: by id or name, or the only running one. */
+  const writeProject = async (want: string | undefined): Promise<Project> => {
+    const running = (await projects()).filter((p) => p.running);
+    if (want?.trim()) {
+      const w = want.trim().toLowerCase();
+      const p = (await projects()).find((x) => x.id.toLowerCase() === w || x.name.toLowerCase() === w);
+      if (!p) throw new Error(`No project "${want}". Running: ${running.map((x) => x.name).join(', ') || 'none'}.`);
+      if (!p.running) throw new Error(`${p.name} isn't running; start Muster in it on the PC.`);
+      return p;
+    }
+    if (running.length === 1) return running[0];
+    throw new Error(running.length ? `Several projects are running (${running.map((x) => x.name).join(', ')}); say which.` : 'No Muster project is running.');
+  };
+
+  /** Checks a write against the project's current state, so you're never asked to approve something that can't run. */
+  const checkWrite = async (p: Project, input: WriteInput): Promise<void> => {
+    const { state: s, config } = await stateOf(p);
+    if (config?.projectName) p.name = config.projectName; // the name you know it by, as Needs you shows it
+    const textOk = () => {
+      if (typeof input.text !== 'string' || !input.text.trim()) throw new Error('The text is empty.');
+      if (input.text.length > 4000) throw new Error('The text is longer than 4000 characters.');
+    };
+    if (input.kind === 'goal') {
+      textOk();
+      const captain = s.agents.find((a) => a.role === 'captain');
+      if (!captain || captain.status === 'stopped') throw new Error(`${p.name} has no running Captain to take a goal.`);
+      return;
+    }
+    if (input.kind === 'reply' || input.kind === 'answer') {
+      const note = s.notes.find((n) => n.id.toUpperCase() === (input.noteId ?? '').trim().toUpperCase());
+      if (!note) throw new Error(`No note "${input.noteId}" in ${p.name}.`);
+      input.noteId = note.id;
+      if (input.kind === 'reply') return textOk();
+      if (!note.ask) throw new Error(`${note.id} is not a question menu; use muster_reply.`);
+      if (!note.open) throw new Error(`${note.id} is already answered.`);
+      if (!Array.isArray(input.answers) || input.answers.length !== note.ask.length) throw new Error(`${note.id} has ${note.ask.length} question(s); give one answer for each, in order.`);
+      return;
+    }
+    // approve
+    if (!state.remote.allowApprove) throw new Error('Approving merges from the connector is switched off in Muster Settings.');
+    const task = s.tasks.find((t) => t.id.toUpperCase() === (input.taskId ?? '').trim().toUpperCase());
+    if (!task) throw new Error(`No task "${input.taskId}" in ${p.name}.`);
+    input.taskId = task.id;
+    const ready = (task.status === 'ready_for_merge' && !task.mergeApproval) || task.status === 'awaiting_approval';
+    if (!ready) throw new Error(`${task.id} is ${task.status.replace(/_/g, ' ')}; nothing to approve.`);
+  };
+
+  /** Runs a write against the orchestrator as you, marked `via` so crew chat shows it as yours, via the connector. */
+  const runWrite = async (w: PendingWrite, approvedOn: RemoteVia['approvedOn']): Promise<string> => {
+    const p = await projectById(w.projectId);
+    const via: RemoteVia = { client: w.client, approvedOn, approvedAt: now().toISOString() };
+    let summary: string;
+    if (w.kind === 'goal') {
+      await orchestratorJson(p, 'POST', '/api/ask', { text: w.text, via });
+      summary = 'goal sent to the Captain';
+    } else if (w.kind === 'reply') {
+      await orchestratorJson(p, 'POST', `/api/notes/${encodeURIComponent(w.noteId!)}/reply`, { text: w.text, via });
+      summary = `replied on ${w.noteId}`;
+    } else if (w.kind === 'answer') {
+      await orchestratorJson(p, 'POST', `/api/notes/${encodeURIComponent(w.noteId!)}/answer`, { answers: w.answers, via });
+      summary = `answered ${w.noteId}`;
+    } else {
+      if (!state.remote.allowApprove) throw new HttpError(409, 'Approving merges from the connector was switched off');
+      const t = await taskStatus(p, w.taskId!);
+      const path = t.status === 'awaiting_approval' ? `/api/tasks/${encodeURIComponent(t.id)}/approve` : `/api/tasks/${encodeURIComponent(t.id)}/approve-merge`;
+      await orchestratorJson(p, 'POST', path, {});
+      summary = `approved ${t.id}`;
+    }
+    auditRemote({ event: 'write_sent', id: w.id, kind: w.kind, project: p.name, client: w.client, approvedOn });
+    return summary;
+  };
+
+  /** RemoteContext.write: hold it for your tap (default), or run it now when the hold is off. */
+  const remoteWrite = async (input: WriteInput, client: string): Promise<WriteOutcome> => {
+    const p = await writeProject(input.project);
+    await checkWrite(p, input);
+    const t = now().getTime();
+    const w: PendingWrite = {
+      id: `P${state.remote.nextPending++}`,
+      projectId: p.id,
+      projectName: p.name,
+      kind: input.kind,
+      ...(input.text !== undefined ? { text: input.text.trim() } : {}),
+      ...(input.noteId ? { noteId: input.noteId } : {}),
+      ...(input.answers ? { answers: input.answers } : {}),
+      ...(input.taskId ? { taskId: input.taskId } : {}),
+      client,
+      createdAt: new Date(t).toISOString(),
+      expiresAt: new Date(t + PENDING_TTL_MS).toISOString(),
+    };
+    if (!state.remote.confirmWrites) {
+      save(); // the id counter
+      return { held: false, projectName: p.name, summary: await runWrite(w, 'not held') };
+    }
+    state.remote.pending.push(w);
+    save();
+    auditRemote({ event: 'write_held', id: w.id, kind: w.kind, project: p.name, client });
+    schedule(); // phones hear about it now, not at the next poll
+    return { held: true, id: w.id, projectName: p.name, expiresAt: w.expiresAt };
+  };
+
+  const pendingById = (id: string, pid?: string): PendingWrite => {
+    const w = livePending().find((x) => x.id.toUpperCase() === id.toUpperCase() && (!pid || x.projectId === pid));
+    if (!w) throw new HttpError(404, `Nothing held as ${id}: it was already sent, discarded or has expired`);
+    return w;
+  };
+  const dropPending = (w: PendingWrite) => {
+    state.remote.pending = state.remote.pending.filter((x) => x.id !== w.id);
+    save();
+  };
+  /** Your tap on Send. A failed send stays held, so you can retry or discard it. */
+  const sendPending = async (id: string, on: 'phone' | 'desktop', pid?: string) => {
+    const w = pendingById(id, pid);
+    const summary = await runWrite(w, on);
+    dropPending(w);
+    schedule();
+    return { ok: true, id: w.id, summary };
+  };
+  const discardPending = (id: string, on: 'phone' | 'desktop', pid?: string) => {
+    const w = pendingById(id, pid);
+    dropPending(w);
+    auditRemote({ event: 'write_discarded', id: w.id, kind: w.kind, project: w.projectName, client: w.client, on });
+    schedule();
+    return { ok: true, id: w.id };
   };
 
   // ------------------------------------------------------------------ routes
@@ -324,6 +474,27 @@ export async function startGateway(opts: GatewayOptions = {}): Promise<Gateway> 
     return { ok: true, revoked: 1 };
   });
   admin('DELETE', '/admin/remote/connections', () => ({ ok: true, revoked: remoteOn().auth.revoke() }));
+  /** Held writes, and your tap on Send / Discard from the desktop. */
+  admin('GET', '/admin/remote/pending', () => livePending().map((w) => ({ ...w, title: pendingTitle(w), summary: pendingSummary(w) })));
+  admin('POST', '/admin/remote/pending/:id/send', ({ params }) => sendPending(params.id, 'desktop'));
+  admin('POST', '/admin/remote/pending/:id/discard', ({ params }) => discardPending(params.id, 'desktop'));
+  /** Desktop-only switches. Turning the hold off needs `confirm: true` (the desktop's warning dialog): with it off, an
+   *  injected bulletin note could get a reply sent without your tap. */
+  admin('GET', '/admin/remote/settings', () => remoteSettings());
+  admin('PUT', '/admin/remote/settings', ({ body }) => {
+    const before = remoteSettings();
+    for (const k of Object.keys(body)) if (!['confirmWrites', 'allowApprove', 'confirm'].includes(k)) throw new HttpError(400, `Unknown setting "${k}"`);
+    for (const k of ['confirmWrites', 'allowApprove'] as const) if (body[k] !== undefined && typeof body[k] !== 'boolean') throw new HttpError(400, `${k} must be true or false`);
+    if (body.confirmWrites === false && before.confirmWrites && body.confirm !== true) {
+      throw new HttpError(400, 'Turning off the hold lets a poisoned bulletin note get a reply sent without your tap. Send confirm: true to do it anyway.');
+    }
+    if (typeof body.confirmWrites === 'boolean') state.remote.confirmWrites = body.confirmWrites;
+    if (typeof body.allowApprove === 'boolean') state.remote.allowApprove = body.allowApprove;
+    save();
+    const after = remoteSettings();
+    if (JSON.stringify(after) !== JSON.stringify(before)) auditRemote({ event: 'settings_changed', before, after });
+    return after;
+  });
   admin('POST', '/admin/projects', ({ body }) => {
     const raw = text(body.root, 'root');
     if (!isAbsolute(raw)) throw new HttpError(400, 'root must be an absolute path');
@@ -417,6 +588,9 @@ export async function startGateway(opts: GatewayOptions = {}): Promise<Gateway> 
     if (!Array.isArray(body.answers)) throw new HttpError(400, 'answers must be a list');
     return orchestratorJson<Note>(p, 'POST', `/api/notes/${encodeURIComponent(params.nid)}/answer`, { answers: body.answers });
   });
+  /** Send or Discard a held remote write (NeedItem kind 'remote_write'; :id = its "P3"). */
+  phone('POST', '/api/projects/:pid/pending/:id/send', ({ params }) => sendPending(params.id, 'phone', params.pid));
+  phone('POST', '/api/projects/:pid/pending/:id/discard', ({ params }) => discardPending(params.id, 'phone', params.pid));
   phone('POST', '/api/projects/:pid/checkout/commit', async ({ params }) => orchestratorJson(await projectById(params.pid), 'POST', '/api/checkout/commit', {}));
   phone('POST', '/api/projects/:pid/checkout/stash', async ({ params }) => orchestratorJson(await projectById(params.pid), 'POST', '/api/checkout/stash', {}));
   /** The Crew tab's "Where we are" card: overall %, the current goal and the Captain's last roadmap_status. */
@@ -624,7 +798,7 @@ export async function startGateway(opts: GatewayOptions = {}): Promise<Gateway> 
   if (opts.remote) {
     try {
       remote = await startRemote(
-        { projects, state: stateOf, needs: () => collect() },
+        { projects, state: stateOf, needs: () => collect(), write: remoteWrite, settings: remoteSettings },
         { ...opts.remote, pcName: state.pcName, dir, now, log, onLock: (info) => void remoteAlert(lockText(info)) },
       );
     } catch (e) {

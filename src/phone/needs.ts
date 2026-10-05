@@ -3,8 +3,8 @@
 import type { AskQuestion, MusterState, Note, Task } from '../types.js';
 import { HUMAN, isNeedsYou } from '../core/board.js';
 
-export type NeedKind = 'review' | 'approval' | 'question' | 'escalation' | 'blocked' | 'usage' | 'stuck';
-export type NeedAction = 'approve' | 'open' | 'answer' | 'commit' | 'stash';
+export type NeedKind = 'review' | 'approval' | 'question' | 'escalation' | 'blocked' | 'usage' | 'stuck' | 'remote_write';
+export type NeedAction = 'approve' | 'open' | 'answer' | 'commit' | 'stash' | 'send' | 'discard'; // send/discard: a held remote write
 
 export interface NeedItem {
   id: string; // `${projectId}:${noteId}`
@@ -131,6 +131,7 @@ export function prefKey(kind: NeedKind): keyof Prefs['notify'] {
       return 'review';
     case 'question':
     case 'escalation':
+    case 'remote_write':
       return 'question';
     case 'blocked':
       return 'blocked';
@@ -160,7 +161,8 @@ export function inQuietHours(quiet: Prefs['quiet'], now: Date): boolean {
 export function shouldNotify(item: NeedItem, prefs: Prefs, now: Date): boolean {
   if (prefs.projects[item.projectId] === false) return false;
   if (!prefs.notify[prefKey(item.kind)]) return false;
-  if (inQuietHours(prefs.quiet, now) && item.kind !== 'blocked') return false;
+  // A held remote write is something you just asked Claude for, so it reaches you in quiet hours too.
+  if (inQuietHours(prefs.quiet, now) && item.kind !== 'blocked' && item.kind !== 'remote_write') return false;
   return true;
 }
 

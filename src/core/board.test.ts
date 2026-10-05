@@ -28,6 +28,19 @@ describe('notes', () => {
     expect(inboxOf('crew-2')).toEqual([]);
   });
 
+  it('a reply or answer with via carries it on the feed item; without via there is none', () => {
+    const via = { client: 'Claude', approvedOn: 'phone' as const, approvedAt: '2026-10-05T09:30:00.000Z' };
+    const n = postNote(s, { actor: 'crew-2', type: 'question', text: 'remote?' });
+    replyNote(s, n.id, 'you', 'yes', false, via);
+    replyNote(s, n.id, 'you', 'plain');
+    const [withVia, plain] = s.feed.filter((f) => f.kind === 'reply' && f.noteId === n.id);
+    expect(withVia).toMatchObject({ from: 'you', text: 'yes', via });
+    expect(plain).not.toHaveProperty('via');
+    const q = askHuman(s, 'captain', [{ header: 'Go', question: 'Ship it?', options: [{ label: 'Yes' }, { label: 'No' }] }]);
+    answerAsk(s, q.id, 'you', [{ choices: ['Yes'] }], { ...via, approvedOn: 'not held' });
+    expect(s.feed.filter((f) => f.kind === 'reply' && f.noteId === q.id)).toEqual([expect.objectContaining({ text: 'Go: Yes', via: { ...via, approvedOn: 'not held' } })]);
+  });
+
   it('replies go to the author and the Captain; close ends the thread', () => {
     const n = postNote(s, { actor: 'crew-2', type: 'stuck', text: 'help' });
     replyNote(s, n.id, 'crew-3', 'try --runInBand');

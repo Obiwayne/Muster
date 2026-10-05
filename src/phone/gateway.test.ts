@@ -23,6 +23,7 @@ const ORCH_TOKEN = 'human-token-for-tests';
 let fake: Server;
 let projectState: MusterState;
 const calls: Call[] = [];
+let askFails = false; // the fake orchestrator refuses POST /api/ask (a send that fails stays held)
 
 function startFakeOrchestrator(): Promise<number> {
   fake = createServer((req, res) => {
@@ -51,6 +52,7 @@ function startFakeOrchestrator(): Promise<number> {
       if (/^\/api\/notes\/N\d+\/reply$/.test(path)) return json(200, { id: 'N5', replies: [{ from: 'you', text: JSON.parse(text).text }] });
       if (path === '/api/checkout/commit' || path === '/api/checkout/stash') return json(200, { ok: true, waiting: [] });
       if (path === '/api/remote/alert') return json(200, { ok: true, noteId: 'N99' });
+      if (path === '/api/ask') return askFails ? json(409, { error: 'captain is not running' }) : json(200, { ok: true });
       json(404, { error: `No route ${path}` });
     });
   });
@@ -424,5 +426,193 @@ describe('phone gateway: remote connector lockout alert', () => {
     } finally {
       await gw2.close();
     }
+  });
+});
+
+describe('phone gateway: held remote writes (docs/REMOTE.md, confirmation gate)', () => {
+  let dir3: string;
+  let gw3: Gateway;
+  let cert3: string;
+  let key: string;
+  let t3 = Date.parse('2026-10-05T12:00:00.000Z');
+
+  /** HTTPS to gw3 as the paired phone. */
+  const phone3 = (method: string, path: string, body?: unknown): Promise<{ status: number; data: any }> =>
+    new Promise((ok, fail) => {
+      const text = body === undefined ? undefined : JSON.stringify(body);
+      const req = request(
+        { host: '127.0.0.1', port: gw3.port, method, path, ca: cert3, checkServerIdentity: () => undefined, headers: { authorization: `Bearer ${key}`, ...(text ? { 'content-type': 'application/json' } : {}) } },
+        (res) => {
+          const chunks: Buffer[] = [];
+          res.on('data', (c) => chunks.push(c));
+          res.on('end', () => {
+            const raw = Buffer.concat(chunks).toString('utf8');
+            ok({ status: res.statusCode!, data: raw ? JSON.parse(raw) : null });
+          });
+        },
+      );
+      req.on('error', fail);
+      req.end(text);
+    });
+  const admin3 = async (method: string, path: string, body?: unknown) => {
+    const r = await adminRequest(dir3, method, path, body === undefined ? undefined : JSON.stringify(body));
+    return { status: r.status, data: r.body ? JSON.parse(r.body) : null };
+  };
+  const mcp = async (method: string, params: unknown) => {
+    const r = await fetch(`http://127.0.0.1:${gw3.remote!.port}/mcp`, {
+      method: 'POST',
+      headers: { authorization: 'Bearer dev', 'content-type': 'application/json', accept: 'application/json, text/event-stream' },
+      body: JSON.stringify({ jsonrpc: '2.0', id: 1, method, params }),
+    });
+    return (await r.json()).result;
+  };
+  /** An MCP tool call through the connector (dev token). */
+  const tool = async (name: string, args: Record<string, unknown>): Promise<{ text: string; isError: boolean }> => {
+    const res = await mcp('tools/call', { name, arguments: args });
+    return { text: res.content[0].text, isError: !!res.isError };
+  };
+  const toolNames = async () => ((await mcp('tools/list', {})).tools as { name: string }[]).map((t) => t.name);
+  const audit3 = () => readFileSync(phoneFiles(dir3).remoteLog, 'utf8').trim().split('\n').map((l) => JSON.parse(l));
+  const orchCalls = (path: string, since: number) => calls.slice(since).filter((c) => c.path === path);
+  const remoteItems = async () => ((await phone3('GET', '/api/needs')).data.items as any[]).filter((i) => i.kind === 'remote_write');
+  const start3 = async () => {
+    gw3 = await startGateway({ dir: dir3, port: 0, host: '127.0.0.1', recentFile: null, pollMs: 60_000, log: () => {}, now: () => new Date(t3), remote: { port: 0, devToken: 'dev' } });
+    cert3 = readFileSync(phoneFiles(dir3).cert, 'utf8');
+  };
+
+  beforeAll(async () => {
+    dir3 = join(secrets, 'phone-writes');
+    await start3();
+    await admin3('POST', '/admin/projects', { root });
+    const code = (await admin3('POST', '/admin/pair-code')).data.code;
+    const paired = await new Promise<any>((ok, fail) => {
+      const req = request({ host: '127.0.0.1', port: gw3.port, method: 'POST', path: '/pair', ca: cert3, checkServerIdentity: () => undefined, headers: { 'content-type': 'application/json' } }, (res) => {
+        const chunks: Buffer[] = [];
+        res.on('data', (c) => chunks.push(c));
+        res.on('end', () => ok(JSON.parse(Buffer.concat(chunks).toString('utf8'))));
+      });
+      req.on('error', fail);
+      req.end(JSON.stringify({ code, deviceName: 'A55' }));
+    });
+    key = paired.key;
+  });
+
+  afterAll(async () => {
+    await gw3?.close();
+  });
+
+  it('a goal is held, shows in Needs you with Send/Discard, and nothing reaches the Captain', async () => {
+    const before = calls.length;
+    const r = await tool('muster_send_goal', { text: 'Add an export button' });
+    expect(r.isError).toBe(false);
+    expect(r.text).toMatch(/^Held for your OK as P1 \(Fake Project\)\. Nothing has been sent/);
+    expect(orchCalls('/api/ask', before)).toHaveLength(0);
+    const [item] = await remoteItems();
+    expect(item).toMatchObject({ id: `${pid}:P1`, kind: 'remote_write', title: 'dev token wants to set a goal', summary: 'Add an export button', from: 'dev token', actions: ['send', 'discard'] });
+    expect(audit3().some((l) => l.event === 'write_held' && l.id === 'P1')).toBe(true);
+  });
+
+  it('your tap on Send (phone) runs it as you, marked via the connector, and clears it', async () => {
+    const before = calls.length;
+    const r = await phone3('POST', `/api/projects/${pid}/pending/P1/send`);
+    expect(r.status).toBe(200);
+    expect(r.data).toMatchObject({ ok: true, id: 'P1', summary: 'goal sent to the Captain' });
+    const [ask] = orchCalls('/api/ask', before);
+    expect(ask.token).toBe(ORCH_TOKEN);
+    expect(ask.body).toMatchObject({ text: 'Add an export button', via: { client: 'dev token', approvedOn: 'phone', approvedAt: new Date(t3).toISOString() } });
+    expect(await remoteItems()).toHaveLength(0);
+    expect((await phone3('POST', `/api/projects/${pid}/pending/P1/send`)).status).toBe(404); // only once
+    expect(audit3().some((l) => l.event === 'write_sent' && l.id === 'P1' && l.approvedOn === 'phone')).toBe(true);
+  });
+
+  it('a reply is held and sent from the desktop; Discard drops one without sending', async () => {
+    expect((await tool('muster_reply', { noteId: 'n5', text: 'Blue' })).text).toContain('as P2');
+    expect((await tool('muster_reply', { noteId: 'N5', text: 'Red' })).text).toContain('as P3');
+    const listed = (await admin3('GET', '/admin/remote/pending')).data;
+    expect(listed.map((w: any) => [w.id, w.noteId, w.title])).toEqual([
+      ['P2', 'N5', 'dev token wants to reply on N5'],
+      ['P3', 'N5', 'dev token wants to reply on N5'],
+    ]);
+    const before = calls.length;
+    expect((await admin3('POST', '/admin/remote/pending/P3/discard')).status).toBe(200);
+    expect((await admin3('POST', '/admin/remote/pending/P2/send')).status).toBe(200);
+    const sent = orchCalls('/api/notes/N5/reply', before);
+    expect(sent).toHaveLength(1);
+    expect(sent[0].body).toMatchObject({ text: 'Blue', via: { approvedOn: 'desktop' } });
+    expect(audit3().some((l) => l.event === 'write_discarded' && l.id === 'P3' && l.on === 'desktop')).toBe(true);
+  });
+
+  it('refuses writes that could not run, before holding anything', async () => {
+    const unknown = await tool('muster_reply', { noteId: 'N404', text: 'hi' });
+    expect(unknown.isError).toBe(true);
+    expect(unknown.text).toContain('No note "N404"');
+    expect((await tool('muster_answer', { noteId: 'N5', answers: [{ choices: ['x'] }] })).text).toContain('not a question menu');
+    expect((await tool('muster_send_goal', { project: 'Nope', text: 'x' })).text).toContain('No project "Nope"');
+    expect(await remoteItems()).toHaveLength(0);
+  });
+
+  it('a send that fails stays held, so you can retry or discard', async () => {
+    await tool('muster_send_goal', { text: 'Retry me' });
+    askFails = true;
+    try {
+      const r = await phone3('POST', `/api/projects/${pid}/pending/P4/send`);
+      expect(r.status).toBe(409);
+      expect((await remoteItems()).map((i) => i.id)).toEqual([`${pid}:P4`]);
+    } finally {
+      askFails = false;
+    }
+    expect((await phone3('POST', `/api/projects/${pid}/pending/P4/send`)).status).toBe(200);
+  });
+
+  it('held writes expire after 15 minutes unsent', async () => {
+    await tool('muster_send_goal', { text: 'Too late' });
+    expect(await remoteItems()).toHaveLength(1);
+    t3 += 15 * 60_000 + 1;
+    expect(await remoteItems()).toHaveLength(0);
+    expect((await phone3('POST', `/api/projects/${pid}/pending/P5/send`)).status).toBe(404);
+    expect(audit3().some((l) => l.event === 'write_expired' && l.id === 'P5')).toBe(true);
+  });
+
+  it('turning the hold off needs confirm: true from the desktop; then writes run at once as "not held"', async () => {
+    expect((await admin3('GET', '/admin/remote/settings')).data).toEqual({ confirmWrites: true, allowApprove: false });
+    const refused = await admin3('PUT', '/admin/remote/settings', { confirmWrites: false });
+    expect(refused.status).toBe(400);
+    expect(refused.data.error).toContain('poisoned bulletin note');
+    expect((await admin3('PUT', '/admin/remote/settings', { confirmWrites: false, confirm: true })).data.confirmWrites).toBe(false);
+    try {
+      const before = calls.length;
+      const r = await tool('muster_send_goal', { text: 'Straight through' });
+      expect(r.text).toBe('Sent to Fake Project: goal sent to the Captain');
+      expect(orchCalls('/api/ask', before)[0].body.via.approvedOn).toBe('not held');
+      expect(audit3().some((l) => l.event === 'settings_changed' && l.after.confirmWrites === false)).toBe(true);
+    } finally {
+      await admin3('PUT', '/admin/remote/settings', { confirmWrites: true });
+    }
+    expect((await admin3('GET', '/admin/remote/settings')).data.confirmWrites).toBe(true); // turning it back on needs no confirm
+    expect((await admin3('PUT', '/admin/remote/settings', { allowApprove: 'yes' })).status).toBe(400);
+  });
+
+  it('muster_approve exists only when allowed; it is held too, and Send approves for merge', async () => {
+    expect(await toolNames()).not.toContain('muster_approve');
+    await admin3('PUT', '/admin/remote/settings', { allowApprove: true });
+    try {
+      expect(await toolNames()).toContain('muster_approve');
+      const r = await tool('muster_approve', { taskId: 't1' });
+      expect(r.text).toMatch(/^Held for your OK as P\d+/);
+      const id = /as (P\d+)/.exec(r.text)![1];
+      const before = calls.length;
+      expect((await phone3('POST', `/api/projects/${pid}/pending/${id}/send`)).status).toBe(200);
+      expect(orchCalls('/api/tasks/T1/approve-merge', before)).toHaveLength(1);
+    } finally {
+      await admin3('PUT', '/admin/remote/settings', { allowApprove: false });
+    }
+  });
+
+  it('settings and held writes survive a gateway restart', async () => {
+    await tool('muster_send_goal', { text: 'Still here after restart' });
+    await gw3.close();
+    await start3();
+    expect((await remoteItems()).map((i) => i.summary)).toEqual(['Still here after restart']);
+    expect((await tool('muster_send_goal', { text: 'next id' })).text).not.toMatch(/as P1 /); // ids keep counting
   });
 });

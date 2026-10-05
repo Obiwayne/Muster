@@ -166,6 +166,14 @@ export interface FeedItem {
   text: string;
   reactions?: FeedReaction[]; // emoji reactions from agents and you (POST /api/feed/:id/react toggles one)
   readBy?: string[]; // agents that read the inbox item(s) this message produced (read_inbox / mark read), in order
+  via?: RemoteVia; // sent through the remote connector (docs/REMOTE.md): crew chat shows it as yours with a "via Claude" chip
+}
+
+/** A message you sent from the Claude app through the remote connector. Only your own token may set it. */
+export interface RemoteVia {
+  client: string; // the connector client's name, e.g. "Claude"
+  approvedOn: 'phone' | 'desktop' | 'not held'; // where you tapped Send ('not held' = the hold was switched off)
+  approvedAt: string;
 }
 
 /** The emoji agents and you can react with; each means something on the crew chat. */

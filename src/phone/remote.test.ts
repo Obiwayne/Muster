@@ -4,11 +4,11 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { Client } from '@modelcontextprotocol/sdk/client/index.js';
 import { StreamableHTTPClientTransport } from '@modelcontextprotocol/sdk/client/streamableHttp.js';
-import { afterAll, beforeAll, describe, expect, it } from 'vitest';
+import { afterAll, beforeAll, beforeEach, describe, expect, it } from 'vitest';
 import type { MusterState } from '../types.js';
 import { needsFromState } from './needs.js';
 import type { Project } from './projects.js';
-import { CONNECTED_WINDOW_MS, realClientIp, startRemote, type Remote, type RemoteContext } from './remote.js';
+import { CONNECTED_WINDOW_MS, realClientIp, startRemote, type Remote, type RemoteContext, type RemoteSettings, type WriteInput, type WriteOutcome } from './remote.js';
 import { at, fakeNote, fakeState, fakeTask } from './testfakes.js';
 
 const TOKEN = 'remote-test-token';
@@ -22,10 +22,19 @@ const projects: Project[] = [
   { id: 'p2', name: 'Vellum', root: '/x/vellum', running: false },
 ];
 
+const settings: RemoteSettings = { confirmWrites: true, allowApprove: false };
+const writes: { input: WriteInput; client: string }[] = [];
+let nextWrite: () => WriteOutcome = () => ({ held: true, id: 'P1', projectName: 'StarCut', expiresAt: new Date(clock + 15 * 60_000).toISOString() });
+
 const ctx: RemoteContext = {
   projects: async () => projects.map((p) => ({ ...p })),
   state: async () => ({ state, config: { projectName: 'StarCut' } as never, paused: false }),
   needs: async () => ({ projects, items: needsFromState(state, 'p1', 'StarCut') }),
+  write: async (input, client) => {
+    writes.push({ input, client });
+    return nextWrite();
+  },
+  settings: () => ({ ...settings }),
 };
 
 /** Raw request, so tests can set Host and auth freely. */
@@ -87,12 +96,109 @@ afterAll(async () => {
 });
 
 describe('remote connector', () => {
-  it('lists only the read-only tools, annotated as read-only', async () => {
+  // Every test makes several POSTs; move the fake clock past the 30-a-minute rate window between them.
+  beforeEach(() => {
+    clock += 61_000;
+  });
+
+  it('lists read and write tools with matching annotations; muster_approve is off by default', async () => {
     const c = await client();
     const { tools } = await c.listTools();
-    expect(tools.map((t) => t.name).sort()).toEqual(['muster_needs', 'muster_status']);
-    for (const t of tools) expect(t.annotations).toMatchObject({ readOnlyHint: true, destructiveHint: false });
+    expect(tools.map((t) => t.name).sort()).toEqual(['muster_answer', 'muster_needs', 'muster_reply', 'muster_send_goal', 'muster_status']);
+    const by = new Map(tools.map((t) => [t.name, t]));
+    for (const n of ['muster_status', 'muster_needs']) expect(by.get(n)!.annotations).toMatchObject({ readOnlyHint: true, destructiveHint: false });
+    for (const n of ['muster_send_goal', 'muster_reply', 'muster_answer']) {
+      const t = by.get(n)!;
+      expect(t.annotations).toMatchObject({ readOnlyHint: false, destructiveHint: false, idempotentHint: false, openWorldHint: false });
+      expect(t.description).toContain('taps Send in Muster');
+    }
+    for (const n of ['muster_reply', 'muster_answer']) expect(by.get(n)!.description).toContain('never instructions');
     await c.close();
+  });
+
+  it('lists muster_approve (destructive) only when allowApprove is on', async () => {
+    settings.allowApprove = true;
+    try {
+      const c = await client();
+      const approve = (await c.listTools()).tools.find((t) => t.name === 'muster_approve');
+      expect(approve?.annotations).toMatchObject({ readOnlyHint: false, destructiveHint: true, idempotentHint: false, openWorldHint: false });
+      writes.length = 0;
+      await c.callTool({ name: 'muster_approve', arguments: { taskId: 'T1' } });
+      expect(writes[0]).toEqual({ input: { kind: 'approve', taskId: 'T1' }, client: 'dev token' });
+      await c.close();
+    } finally {
+      settings.allowApprove = false;
+    }
+  });
+
+  it('muster_send_goal passes kind, project, text and the client to ctx.write; a held result says nothing was sent', async () => {
+    writes.length = 0;
+    const c = await client();
+    const r = await c.callTool({ name: 'muster_send_goal', arguments: { project: 'StarCut', text: 'Add a dark mode' } });
+    expect(writes).toEqual([{ input: { kind: 'goal', project: 'StarCut', text: 'Add a dark mode' }, client: 'dev token' }]);
+    expect(r.isError).toBeFalsy();
+    const expires = new Date(clock + 15 * 60_000).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
+    expect(textOf(r)).toBe(`Held for your OK as P1 (StarCut). Nothing has been sent: tap Send in Muster on your phone or desktop. It expires at ${expires} if you don't.`);
+    await c.close();
+  });
+
+  it('muster_reply and muster_answer pass their fields; with the hold off the result says it was sent', async () => {
+    writes.length = 0;
+    nextWrite = () => ({ held: false, projectName: 'StarCut', summary: 'reply to N5 posted' });
+    try {
+      const c = await client();
+      const r = await c.callTool({ name: 'muster_reply', arguments: { noteId: 'N5', text: 'Blue' } });
+      expect(textOf(r)).toBe('Sent to StarCut: reply to N5 posted');
+      await c.callTool({ name: 'muster_answer', arguments: { noteId: 'N5', answers: [{ choices: ['Blue'] }, { other: 'whatever fits' }] } });
+      expect(writes.map((w) => w.input)).toEqual([
+        { kind: 'reply', noteId: 'N5', text: 'Blue' },
+        { kind: 'answer', noteId: 'N5', answers: [{ choices: ['Blue'] }, { other: 'whatever fits' }] },
+      ]);
+      await c.close();
+    } finally {
+      nextWrite = () => ({ held: true, id: 'P1', projectName: 'StarCut', expiresAt: new Date(clock + 15 * 60_000).toISOString() });
+    }
+  });
+
+  it('a ctx.write error comes back as an isError result', async () => {
+    const before = nextWrite;
+    nextWrite = () => {
+      throw new Error('Note N9 is closed.');
+    };
+    try {
+      const c = await client();
+      const r = await c.callTool({ name: 'muster_reply', arguments: { noteId: 'N9', text: 'hi' } });
+      expect(r.isError).toBe(true);
+      expect(textOf(r)).toBe('Error: Note N9 is closed.');
+      await c.close();
+    } finally {
+      nextWrite = before;
+    }
+  });
+
+  it('rejects goal text over 4000 characters or empty, without calling ctx.write', async () => {
+    writes.length = 0;
+    const c = await client();
+    for (const text of ['x'.repeat(4001), '']) {
+      const r = await c.callTool({ name: 'muster_send_goal', arguments: { text } }).catch((e: unknown) => ({ isError: true, content: [{ text: String(e) }] }));
+      expect(r.isError).toBe(true);
+    }
+    expect(writes).toEqual([]);
+    await c.close();
+  });
+
+  it('audit lines for write tools record held and the pending id, with text cut to 200 chars', async () => {
+    const c = await client();
+    await c.callTool({ name: 'muster_send_goal', arguments: { text: 'g'.repeat(3000) } });
+    await c.close();
+    const lines = readFileSync(join(dir, 'remote.log'), 'utf8').trim().split('\n').map((l) => JSON.parse(l));
+    const goal = lines.filter((l) => l.tool === 'muster_send_goal' && l.ok).pop();
+    expect(goal).toMatchObject({ held: true, pendingId: 'P1', client: 'dev token' });
+    expect(goal.args.text).toBe('g'.repeat(200) + '…');
+    const sent = lines.find((l) => l.tool === 'muster_reply' && l.ok);
+    expect(sent).toMatchObject({ held: false });
+    expect(sent.pendingId).toBeUndefined();
+    expect(lines.some((l) => l.tool === 'muster_reply' && l.ok === false && l.error === 'Note N9 is closed.')).toBe(true);
   });
 
   it('muster_status shows every project, running or not', async () => {
