@@ -80,7 +80,10 @@ class MainActivity : ComponentActivity() {
         intent ?: return
         val state = MusterApp.state
         // Debug builds: `adb shell am start -n com.obiwayne.muster/.MainActivity --ez demo true --es screen review`
-        // (screens: needs, crew, settings, review, answer, ask; `--ez notify true [--es screen ask]` posts demo notifications)
+        // (screens: needs, crew, settings, review, answer, ask, held; `--ez notify true [--es screen ask|held]` posts demo
+        // notifications). Held writes from Claude (M10–M12): `--es screen held` adds goal, reply and answer cards, or pick
+        // with `--es held goal,reply,answer,expired`; `--ez sendfail true` makes Send fail (409); `--ez holdoff true`
+        // shows the "hold is off" banner (M13/M14) on Needs you and Crew.
         if (BuildConfig.DEBUG && intent.hasExtra("notify") && !intent.getBooleanExtra("notify", false)) {
             Notifier.cancelAll(this)
             return
@@ -97,6 +100,10 @@ class MainActivity : ComponentActivity() {
                     Notifier.postNeed(this@MainActivity, ask.copy(createdAt = now), "WAYNE-PC")
                     Notifier.postNeed(this@MainActivity, ask.copy(id = ask.id + ":1", ask = ask.ask.take(1), createdAt = now), "WAYNE-PC")
                 }
+                if (intent.getStringExtra("screen") == "held") {
+                    com.obiwayne.muster.data.DemoBackend(setOf("goal")).needs().items.filter { it.isHeld }
+                        .forEach { Notifier.postNeed(this@MainActivity, it, "WAYNE-PC") }
+                }
             }
             return
         }
@@ -108,8 +115,14 @@ class MainActivity : ComponentActivity() {
             return
         }
         if (BuildConfig.DEBUG && intent.hasExtra("demo")) {
-            if (intent.getBooleanExtra("demo", false)) state.enterDemo() else state.exitDemo()
             startScreen = intent.getStringExtra("screen") ?: "needs"
+            if (intent.getBooleanExtra("demo", false)) {
+                val held = intent.getStringExtra("held")?.split(',')?.map { it.trim() }?.filter { it.isNotEmpty() }?.toSet()
+                    ?: if (startScreen == "held") setOf("goal", "reply", "answer") else emptySet()
+                state.enterDemo(held, intent.getBooleanExtra("holdoff", false), intent.getBooleanExtra("sendfail", false))
+            } else {
+                state.exitDemo()
+            }
             state.openTarget.value = OpenTarget("screen:$startScreen", "", null, null)
             return
         }
@@ -119,6 +132,7 @@ class MainActivity : ComponentActivity() {
             pid,
             intent.getStringExtra(Notifier.EXTRA_TASK),
             intent.getStringExtra(Notifier.EXTRA_NOTE),
+            intent.getStringExtra(Notifier.EXTRA_ITEM),
         )
     }
 }
@@ -159,6 +173,13 @@ private fun Root(@Suppress("UNUSED_PARAMETER") initial: String?) {
         if (!linked) return@LaunchedEffect
         state.openTarget.value = null
         when {
+            // A held write from Claude: open Needs you on its Send card (the full text is only shown there).
+            t.kind == Kind.REMOTE_WRITE -> {
+                if (state.needs.value?.projects?.any { it.id == t.projectId } != false) state.selectedProject.value = t.projectId
+                state.focusHeld.value = t.itemId
+                state.homeTab.value = "needs"
+                nav.navigate(R2.HOME) { popUpTo(0) }
+            }
             (t.kind == Kind.REVIEW || t.kind == Kind.APPROVAL) && t.taskId != null -> nav.navigate("review/${t.projectId}/${t.taskId}")
             t.noteId != null && t.kind != Kind.BLOCKED -> nav.navigate("note/${t.projectId}/${t.noteId}")
             else -> {

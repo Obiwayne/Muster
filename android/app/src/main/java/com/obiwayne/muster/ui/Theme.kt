@@ -38,6 +38,9 @@ object C {
     val success = Color(0xFF34C77B)
     val glowBlue = Color(0xFF4F7BFF)
     val glowViolet = Color(0xFF8B5CF6)
+
+    /** Text on the blue "held" tints (M10–M12). */
+    val heldInk = Color(0xFF8FA9FF)
     val primaryBtn = Color(0xFFF4F4F5)
     val onPrimary = Color(0xFF111113)
     val onCaptain = Color(0xFF2A1A02)

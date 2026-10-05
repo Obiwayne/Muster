@@ -18,6 +18,15 @@ interface Backend {
     suspend fun answer(pid: String, nid: String, answers: List<AnswerChoice>): Note
     suspend fun commit(pid: String)
     suspend fun stash(pid: String)
+
+    /**
+     * Sends a held remote write (`POST /api/projects/:pid/pending/:id/send` with the card's digest, unchanged). Returns
+     * the gateway's summary. 409 = not what the card showed, or the send failed (still held); 404 = gone (expired).
+     */
+    suspend fun sendPending(pid: String, pendingId: String, digest: String): String
+
+    /** Drops a held remote write. 404 = already gone. */
+    suspend fun discardPending(pid: String, pendingId: String)
     suspend fun crew(pid: String): CrewResponse
     suspend fun setPaused(pid: String, paused: Boolean)
     suspend fun prefs(): Prefs
@@ -63,6 +72,15 @@ class RemoteBackend(val api: Api) : Backend {
 
     override suspend fun stash(pid: String) {
         api.post("api", "projects", pid, "checkout", "stash")
+    }
+
+    override suspend fun sendPending(pid: String, pendingId: String, digest: String): String {
+        val out = api.post("api", "projects", pid, "pending", pendingId, "send", json = Parse.digestBody(digest))
+        return runCatching { Parse.sendResult(String(out)).summary }.getOrDefault("")
+    }
+
+    override suspend fun discardPending(pid: String, pendingId: String) {
+        api.post("api", "projects", pid, "pending", pendingId, "discard")
     }
 
     override suspend fun crew(pid: String) = Parse.crew(String(api.get("api", "projects", pid, "crew")))

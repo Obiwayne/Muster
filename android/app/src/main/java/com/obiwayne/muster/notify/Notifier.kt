@@ -14,7 +14,9 @@ import androidx.core.app.RemoteInput
 import androidx.core.content.ContextCompat
 import com.obiwayne.muster.MainActivity
 import com.obiwayne.muster.R
+import com.obiwayne.muster.data.Ago
 import com.obiwayne.muster.data.AskText
+import com.obiwayne.muster.data.Held
 import com.obiwayne.muster.data.Kind
 import com.obiwayne.muster.data.NeedItem
 
@@ -32,6 +34,7 @@ object Notifier {
     const val EXTRA_ITEM = "muster.item"
     const val EXTRA_TITLE = "muster.title"
     const val EXTRA_CHOICE = "muster.choice"
+    const val EXTRA_PENDING = "muster.pending"
     const val KEY_REPLY = "muster.reply"
 
     const val SERVICE_ID = 1
@@ -104,6 +107,7 @@ object Notifier {
             putExtra(EXTRA_PROJECT, item.projectId)
             putExtra(EXTRA_TASK, item.taskId)
             putExtra(EXTRA_NOTE, item.noteId)
+            putExtra(EXTRA_ITEM, item.id)
         }
         return PendingIntent.getActivity(ctx, notifId(item.id), i, PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE)
     }
@@ -118,6 +122,7 @@ object Notifier {
             putExtra(EXTRA_TASK, item.taskId)
             putExtra(EXTRA_NOTE, item.noteId)
             putExtra(EXTRA_TITLE, item.taskId ?: item.noteId ?: "")
+            item.remote?.let { putExtra(EXTRA_PENDING, it.pendingId) }
             choice?.let { putExtra(EXTRA_CHOICE, item.ask[0].options[it].label) }
         }
         val flags = PendingIntent.FLAG_UPDATE_CURRENT or if (mutable) PendingIntent.FLAG_MUTABLE else PendingIntent.FLAG_IMMUTABLE
@@ -126,7 +131,7 @@ object Notifier {
 
     fun channelFor(kind: String) = when (kind) {
         Kind.REVIEW, Kind.APPROVAL -> channelId(CH_REVIEWS)
-        Kind.QUESTION, Kind.ESCALATION -> channelId(CH_QUESTIONS)
+        Kind.QUESTION, Kind.ESCALATION, Kind.REMOTE_WRITE -> channelId(CH_QUESTIONS)
         Kind.BLOCKED -> channelId(CH_BLOCKED)
         else -> channelId(CH_OTHER)
     }
@@ -146,6 +151,9 @@ object Notifier {
         Kind.BLOCKED -> "Merge blocked" to item.summary.ifBlank { "Uncommitted files on $pcName" }
         Kind.USAGE -> "Usage alert" to item.summary.ifBlank { item.title }
         Kind.STUCK -> "${item.from.ifBlank { "An agent" }} is stuck" to item.summary.ifBlank { item.title }
+        // Only a one-line preview: the full text, and Send, are on the card in the app.
+        Kind.REMOTE_WRITE -> (item.remote?.let { Held.title(item, it) } ?: item.title) to
+            listOf(item.summary, "Nothing is sent until you open Muster, read it and tap Send.").filter { it.isNotBlank() }.joinToString("\n\n")
         else -> item.title to item.summary
     }
 
@@ -156,18 +164,32 @@ object Notifier {
             .setSmallIcon(R.drawable.ic_stat_muster)
             .setColor(CREW)
             .setContentTitle(title)
-            .setContentText(if (item.ask.isNotEmpty()) item.ask[0].question else text)
+            .setContentText(if (item.ask.isNotEmpty()) item.ask[0].question else if (item.isHeld) item.summary.ifBlank { text } else text)
             .setStyle(NotificationCompat.BigTextStyle().bigText(text))
             .setSubText(item.projectName.ifBlank { null })
             .setContentIntent(openIntent(ctx, item))
             .setAutoCancel(true)
             .setOnlyAlertOnce(true)
-            .setCategory(if (item.isQuestion) NotificationCompat.CATEGORY_MESSAGE else NotificationCompat.CATEGORY_STATUS)
+            .setCategory(if (item.isQuestion || item.isHeld) NotificationCompat.CATEGORY_MESSAGE else NotificationCompat.CATEGORY_STATUS)
             .setPriority(NotificationCompat.PRIORITY_HIGH)
             .setWhen(com.obiwayne.muster.data.Ago.parse(item.createdAt)?.toEpochMilli() ?: System.currentTimeMillis())
             .setShowWhen(true)
 
         when {
+            item.isHeld -> {
+                // No Send here on purpose: sending must happen with the full text on screen. Discard is safe from the shade.
+                b.addAction(NotificationCompat.Action.Builder(0, "Open", openIntent(ctx, item)).build())
+                if ("discard" in item.actions) {
+                    b.addAction(
+                        NotificationCompat.Action.Builder(0, "Discard", actionIntent(ctx, ActionReceiver.ACTION_DISCARD, item, false))
+                            .setAuthenticationRequired(true)
+                            .setSemanticAction(NotificationCompat.Action.SEMANTIC_ACTION_DELETE)
+                            .setShowsUserInterface(false)
+                            .build(),
+                    )
+                }
+                Ago.parse(item.remote!!.expiresAt)?.let { b.setTimeoutAfter((it.toEpochMilli() - System.currentTimeMillis()).coerceAtLeast(1000L)) }
+            }
             item.isReview && item.canApprove -> {
                 val approve = NotificationCompat.Action.Builder(0, "Approve", actionIntent(ctx, ActionReceiver.ACTION_APPROVE, item, false))
                     .setAuthenticationRequired(true) // unlock first (M08)
