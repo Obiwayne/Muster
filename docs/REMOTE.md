@@ -40,8 +40,8 @@ Each tool wraps an existing gateway/orchestrator call; no new orchestrator route
 | `muster_bulletin` | Last N bulletin notes / crew chat lines, `limit` ≤ 30 | `GET /api/notes`, feed from `/api/state` | true |
 | `muster_task` | One task: status, stations, review text, diff stat | gateway task detail | true |
 | `muster_send_goal` | Set a goal for the Captain (`text`) | `POST /api/ask` | **false** |
-| `muster_reply` | Reply to a note (`noteId`, `text`) | gateway notes reply | false |
-| `muster_answer` | Answer a Captain question menu (`noteId`, `answers`) | gateway notes answer | false |
+| `muster_reply` | Reply to a note (`noteId`, `text`); **held** like send_goal | gateway notes reply | false |
+| `muster_answer` | Answer a Captain question menu (`noteId`, `answers`); **held** like send_goal | gateway notes answer | false |
 | `muster_approve` | Approve a reviewed task for merge | gateway approve | false, **off by default** |
 
 Deliberately **not exposed**: shell, file access, merge/push directly, config, tokens, pause/resume, stopping agents,
@@ -51,21 +51,25 @@ to origin.
 Tool results are plain short text (like `src/mcp/format.ts`), not raw JSON dumps. Text that came from agents (notes,
 review text) is returned inside a clearly labelled block, since a crew message is untrusted input to the model reading it.
 
-## Confirmation gate (send_goal and the other write tools)
+## Confirmation gate (every write tool)
 
 Two layers, both on:
+
+Notes and review text are written by agents, so a note can carry injected instructions that trick the calling model
+into replying or answering. `muster_reply` and `muster_answer` therefore sit behind the same hold as `muster_send_goal`
+until the owner trusts the connector.
 
 1. **claude.ai's own tool approval.** Write tools carry `readOnlyHint: false` and `destructiveHint: false` (approve:
    `true`), so the client asks before running them. Don't rely on this alone; it is the client's setting, and the user
    can set a connector to "always allow".
-2. **Server-side hold** (default on, setting `remote.confirmGoals`): `muster_send_goal` does **not** call `/api/ask`.
-   It creates a pending item and returns "Waiting for your OK on your phone/desktop (id P3)". The pending goal shows as
+2. **Server-side hold** (default on, setting `remote.confirmWrites`, replaces `confirmGoals`): `muster_send_goal`,
+   `muster_reply` and `muster_answer` do **not** call the orchestrator. Each creates a pending item and returns "Waiting for your OK on your phone/desktop (id P3)". The pending goal shows as
    an approval in Needs you (phone M04, desktop board) with the goal text and "Send to Captain / Discard". Only that tap
-   calls `POST /api/ask`. It expires after 15 min. This is what actually stops a prompt-injected or mistaken call.
+   makes the real call (`POST /api/ask`, reply or answer). It expires after 15 min. This is what actually stops a prompt-injected or mistaken call.
    Pending items live in gateway `state.json` (`pending: [{ id, project, kind, text, createdAt }]`). Add a new `NeedItem`
-   kind `'remote_goal'` with actions `['send','discard']`.
+   kind `'remote_write'` (goal, reply or answer, shown with its target note) with actions `['send','discard']`.
 
-If layer 2 is off, `muster_send_goal` runs immediately and the audit log still records it.
+If layer 2 is off, the write runs immediately and the audit log still records it.
 
 ## Auth
 
@@ -111,8 +115,8 @@ Plan assuming OAuth is required (the safe default):
 ## UI (needs a Vellum design before building, user signs off)
 
 Settings → Phone gets a **Remote access** card: on/off, public URL field + Test, pairing code for the connector,
-connected clients with Disconnect, toggles (Hold goals for my OK: on, Allow approving merges: off, Allow replies: on),
-last 50 audit lines. Needs you gets the `remote_goal` card (goal text, Send to Captain / Discard). Phone app gets the
+connected clients with Disconnect, toggles (Hold goals for my OK: on, Allow approving merges: off, Hold replies and answers: on),
+last 50 audit lines. Needs you gets the `remote_write` card (goal text, Send to Captain / Discard). Phone app gets the
 same card on M04 with an approve notification action.
 
 ## Milestones
@@ -120,7 +124,7 @@ same card on M04 with an approve notification action.
 1. Spike: `/mcp` listener + `muster_status` + `muster_needs` read-only, bearer from a dev token, test with the MCP
    inspector. Confirm the claude.ai auth mode from the docs before step 2.
 2. OAuth + pairing-code consent page + token store + revoke. Tests: PKCE, wrong code, lockout, expired/revoked token.
-3. Write tools with the server-side hold, pending store, `remote_goal` NeedItem, audit log. Tests: send_goal creates
+3. Write tools with the server-side hold, pending store, `remote_write` NeedItem, audit log. Tests: send_goal creates
    pending and does not call `/api/ask`; discard; expiry; approve disabled by default.
 4. Settings card + desktop board card + phone card (design first).
 5. Real run: Cloudflare named tunnel → add as custom connector in claude.ai → "what's the status?" → "send goal X" →
