@@ -16,7 +16,7 @@ import { computeProgress, localDate } from '../core/roadmap.js';
 import { sameToken } from '../core/tokens.js';
 import { clip, relTime } from '../mcp/format.js';
 import type { NeedItem } from './needs.js';
-import { OAuthError, RemoteAuth, type GrantSummary } from './oauth.js';
+import { OAuthError, RemoteAuth, type AppSummary, type GrantSummary } from './oauth.js';
 import type { Project } from './projects.js';
 
 export const DEFAULT_REMOTE_PORT = 47911;
@@ -77,6 +77,8 @@ export interface RemoteOptions {
   tunnel?: Tunnel;
   /** Logins were just locked after wrong codes (the gateway turns this into a desktop alert). */
   onLock?: (info: { until: string; ip: string; ipFrom: string; client: string }) => void;
+  /** An app not on the allow-list is waiting for your Approve (the gateway turns this into a desktop alert). */
+  onAppWaiting?: (info: { app: string; ip: string; ipFrom: string }) => void;
   /** Folder for remote.log (the audit log). */
   dir: string;
   now?: () => Date;
@@ -102,6 +104,9 @@ export interface RemoteStatus {
   loginLockedUntil: string | null;
   /** A login code is live until then (the code itself is only in the New code response). */
   codeActiveUntil: string | null;
+  /** The app allow-list: waiting apps first, then approved ones (docs/REMOTE.md "App allow-list"). */
+  apps: AppSummary[];
+  appsWaiting: number;
   /** The hold switch, for the banner while it's off (filled in by the gateway). */
   hold?: { on: boolean; offSince: string | null; sentWithoutTap: number };
   /** null = not set: Settings should ask, because logged IPs are then the tunnel's own address. */
@@ -392,7 +397,7 @@ export async function startRemote(ctx: RemoteContext, opts: RemoteOptions): Prom
   const viaTunnel = (req: IncomingMessage) => publicHost !== null && hostOf(req) === publicHost;
   const tunnelKind = opts.tunnel ?? null;
   const ipOf = (req: IncomingMessage) => realClientIp(req, tunnelKind, viaTunnel(req));
-  const auth = new RemoteAuth({ dir: opts.dir, pcName: opts.pcName ?? 'this PC', now, audit, ipOf, onLock: opts.onLock, fetchMetadata: opts.fetchMetadata });
+  const auth = new RemoteAuth({ dir: opts.dir, pcName: opts.pcName ?? 'this PC', now, audit, ipOf, onLock: opts.onLock, onAppWaiting: opts.onAppWaiting, fetchMetadata: opts.fetchMetadata });
 
   const handle = async (req: IncomingMessage, res: ServerResponse): Promise<void> => {
     const path = new URL(req.url ?? '/', 'http://remote').pathname.replace(/\/+$/, '');
@@ -476,6 +481,8 @@ export async function startRemote(ctx: RemoteContext, opts: RemoteOptions): Prom
       loginLocked: auth.locked(),
       loginLockedUntil: auth.lockedUntilIso(),
       codeActiveUntil: auth.codeActiveUntil(),
+      apps: auth.apps(),
+      appsWaiting: auth.apps().filter((a) => a.status === 'waiting').length,
       tunnel: tunnelKind,
     }),
     auth,

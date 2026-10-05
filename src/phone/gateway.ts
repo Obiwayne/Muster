@@ -19,6 +19,7 @@ import { clonePrefs, mergePrefs, needsFromState, shouldNotify, type NeedItem, ty
 import { hostsFor, lanHosts as realLanHosts, tailscaleInfo as realTailscale, type TailscaleInfo } from './net.js';
 import { displayCode, Pairing } from './pairing.js';
 import { digestOf, PENDING_TTL_MS, pendingSummary, pendingTitle, pendingToNeed, pendingView, sweepExpired, type PendingWrite } from './pending.js';
+import { RemoteAuth } from './oauth.js';
 import { DEFAULT_REMOTE_PORT, startRemote, type Remote, type RemoteSettings, type Tunnel, type WriteInput, type WriteOutcome } from './remote.js';
 import { desktopSettingsFile, listProjects, orchestratorFetch, orchestratorJson, OrchestratorError, recentRoots, type Project } from './projects.js';
 import {
@@ -307,6 +308,11 @@ export async function startGateway(opts: GatewayOptions = {}): Promise<Gateway> 
             now,
             log,
             onLock: (info) => void remoteAlert(lockText(info)),
+            onAppWaiting: (info) =>
+              void remoteAlert(
+                `Remote access: "${info.app}" signed in with a correct code and is asking to connect (from ${info.ip}). ` +
+                  `It can't do anything until you press Approve in Settings › Remote access. If you didn't just sign in from Claude, press Deny.`,
+              ),
           },
         );
       } catch (e) {
@@ -536,7 +542,9 @@ export async function startGateway(opts: GatewayOptions = {}): Promise<Gateway> 
   });
   admin('GET', '/admin/remote', () => {
     const extra = { hold: holdInfo(), settings: remoteSettings(), config: remoteConfig(), lastTest, ...(remoteError ? { error: remoteError } : {}) };
-    return remote ? { ...remote.status(), ...extra } : { enabled: false as const, ...extra };
+    if (remote) return { ...remote.status(), ...extra };
+    const apps = appsAuth().apps();
+    return { enabled: false as const, ...extra, apps, appsWaiting: apps.filter((a) => a.status === 'waiting').length };
   });
   admin('GET', '/admin/remote/config', () => remoteConfig());
   admin('PUT', '/admin/remote/config', async ({ body }) => {
@@ -614,6 +622,20 @@ export async function startGateway(opts: GatewayOptions = {}): Promise<Gateway> 
     return { ok: true, revoked: 1 };
   });
   admin('DELETE', '/admin/remote/connections', () => ({ ok: true, revoked: remoteOn().auth.revoke() }));
+  /** The app allow-list. Works with remote access off too (the list lives in remote.json), so you can still remove apps. */
+  const appsAuth = (): RemoteAuth => remote?.auth ?? new RemoteAuth({ dir, pcName: state.pcName, now, audit: auditRemote });
+  admin('GET', '/admin/remote/apps', () => appsAuth().apps());
+  admin('POST', '/admin/remote/apps/:id/approve', ({ params }) => {
+    const app = appsAuth().approveApp(params.id);
+    if (!app) throw new HttpError(404, `No app "${params.id}"`);
+    return { ok: true, app };
+  });
+  admin('DELETE', '/admin/remote/apps/:id', ({ params }) => {
+    const r = appsAuth().removeApp(params.id);
+    if (!r.removed) throw new HttpError(404, `No app "${params.id}"`);
+    return { ok: true, ...r };
+  });
+  admin('DELETE', '/admin/remote/apps', () => ({ ok: true, ...appsAuth().removeApp() }));
   /** Held writes, and your tap on Send / Discard from the desktop. */
   admin('GET', '/admin/remote/pending', () => livePending().map((w) => ({ id: w.id, projectId: w.projectId, noteId: w.noteId, ...pendingView(w), title: pendingTitle(w), summary: pendingSummary(w) })));
   admin('POST', '/admin/remote/pending/:id/send', ({ params, body }) => sendPending(params.id, 'desktop', body.digest));
