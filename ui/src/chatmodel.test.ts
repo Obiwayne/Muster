@@ -202,6 +202,7 @@ describe('sent via the remote connector', () => {
     });
     expect(viaView(via('desktop', 66)).detail).toBe('approved on your desktop at 22:06');
     expect(viaView(via('not held')).text).toBe('Sent from the Claude app · the hold was off');
+    expect(viaView({ ...via('phone', 66), pendingId: 'P8' }).detail).toBe('held as P8 · approved on your phone at 22:06');
     expect(viaView({ client: '', approvedOn: 'phone', approvedAt: at(0) }).chip).toBe('via Claude');
   });
 

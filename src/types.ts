@@ -174,6 +174,7 @@ export interface RemoteVia {
   client: string; // the connector client's name, e.g. "Claude"
   approvedOn: 'phone' | 'desktop' | 'not held'; // where you tapped Send ('not held' = the hold was switched off)
   approvedAt: string;
+  pendingId?: string; // the held write it was ("P8"), for the chip's tooltip
 }
 
 /** The emoji agents and you can react with; each means something on the crew chat. */

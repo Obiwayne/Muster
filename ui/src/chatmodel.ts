@@ -246,7 +246,8 @@ export interface ViaView { chip: string; title: string; detail: string; text: st
 export function viaView(via: RemoteVia): ViaView {
   const client = via.client?.trim() || 'Claude';
   const title = `Sent from the ${client} app`;
-  const detail = via.approvedOn === 'not held' ? 'the hold was off' : `approved on your ${via.approvedOn} at ${clock(via.approvedAt)}`;
+  const how = via.approvedOn === 'not held' ? 'the hold was off' : `approved on your ${via.approvedOn} at ${clock(via.approvedAt)}`;
+  const detail = via.pendingId ? `held as ${via.pendingId} · ${how}` : how;
   return { chip: `via ${client}`, title, detail, text: `${title} · ${detail}` };
 }
 

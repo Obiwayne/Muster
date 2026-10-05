@@ -17,8 +17,14 @@ const BACKOFF_MS = 60_000; // gateway down or remote off: try again now and then
 
 export interface HeldEntry { p: PendingRemote; status: HeldStatus; error?: string }
 
-/** sha256(projectKeyInput(root)).slice(0, 16), like the gateway's repoKey; null without WebCrypto. */
-async function projectId(root: string): Promise<string | null> {
+/** This project's id as the gateway knows it: asked from the orchestrator, else sha256(projectKeyInput(root)).slice(0, 16)
+ *  like repoKey (an older server); null when neither works. */
+export async function projectId(root: string): Promise<string | null> {
+  try {
+    return (await api.projectId()).id;
+  } catch {
+    /* an orchestrator without /api/project/id: hash it here */
+  }
   try {
     const subtle = globalThis.crypto?.subtle;
     if (!subtle) return null;

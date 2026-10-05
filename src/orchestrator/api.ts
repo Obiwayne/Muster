@@ -7,6 +7,7 @@ import * as checkout from '../core/checkout.js';
 import type { ConfigPatch } from '../core/config.js';
 import * as evidence from '../core/evidence.js';
 import { badRequest, conflict, forbidden, HttpError, notFound } from '../core/errors.js';
+import { repoKey } from '../core/tokens.js';
 import * as gitOps from '../core/git.js';
 import type { MusterPaths } from '../core/paths.js';
 import type { Store } from '../core/store.js';
@@ -144,7 +145,8 @@ function remoteVia(body: Record<string, unknown>): RemoteVia | undefined {
   // Strip control characters first, then fall back, and cut by characters (not UTF-16 units) so an emoji stays whole.
   const name = typeof o.client === 'string' ? Array.from(o.client.replace(/[\u0000-\u001f\u007f]/g, '').trim()).slice(0, 80).join('').trim() : '';
   const t = typeof o.approvedAt === 'string' ? Date.parse(o.approvedAt) : NaN;
-  return { client: name || 'Claude', approvedOn, approvedAt: new Date(Number.isNaN(t) ? Date.now() : t).toISOString() };
+  const pendingId = typeof o.pendingId === 'string' && /^P\d{1,9}$/.test(o.pendingId) ? o.pendingId : undefined;
+  return { client: name || 'Claude', approvedOn, approvedAt: new Date(Number.isNaN(t) ? Date.now() : t).toISOString(), ...(pendingId ? { pendingId } : {}) };
 }
 
 export function createApi(ctx: ApiContext) {
@@ -480,6 +482,8 @@ ${pushed ? `Pushed ${base} to origin.` : `Push to origin failed: ${(r.stderr || 
   // ------------------------------------------------------------------ project / GitHub
   const gh = ctx.ghRunner ?? realGh;
   const originUrl = async (): Promise<string | undefined> => (await gitOps.git(ctx.paths.root, ['remote', 'get-url', 'origin'], true)).stdout.trim() || undefined;
+  /** This project's id as the phone gateway knows it (repoKey of the root): the board matches held writes by it. */
+  route('GET', '/api/project/id', () => ({ id: repoKey(ctx.paths.root) }));
   route('GET', '/api/project', async () => {
     const remoteUrl = await originUrl();
     return { name: ctx.config().projectName ?? '', root: ctx.paths.root, ...(remoteUrl ? { remoteUrl } : {}), gh: await ghStatus(gh, ctx.paths.root) };

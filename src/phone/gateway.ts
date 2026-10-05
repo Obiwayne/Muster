@@ -379,7 +379,7 @@ export async function startGateway(opts: GatewayOptions = {}): Promise<Gateway> 
   /** Runs a write against the orchestrator as you, marked `via` so crew chat shows it as yours, via the connector. */
   const runWrite = async (w: PendingWrite, approvedOn: RemoteVia['approvedOn']): Promise<string> => {
     const p = await projectById(w.projectId);
-    const via: RemoteVia = { client: w.client, approvedOn, approvedAt: now().toISOString() };
+    const via: RemoteVia = { client: w.client, approvedOn, approvedAt: now().toISOString(), pendingId: w.id };
     let summary: string;
     if (w.kind === 'goal') {
       await orchestratorJson(p, 'POST', '/api/ask', { text: w.text, via });

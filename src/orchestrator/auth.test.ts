@@ -346,6 +346,21 @@ describe('remote messages carry a via record (docs/REMOTE.md)', () => {
     }
   });
 
+  it('keeps a well-formed held-write id on via and drops anything else', async () => {
+    const n = await newNote('pending-id');
+    await call('POST', `/api/notes/${n.id}/reply`, human(), { text: 'a', via: { approvedOn: 'phone', pendingId: 'P8' } });
+    await call('POST', `/api/notes/${n.id}/reply`, human(), { text: 'b', via: { approvedOn: 'phone', pendingId: '<img src=x>' } });
+    const [a, b] = (await repliesOn(n.id)).map((f) => f.via!);
+    expect(a.pendingId).toBe('P8');
+    expect(b).not.toHaveProperty('pendingId');
+  });
+
+  it('tells the board its project id, the same one the phone gateway uses', async () => {
+    const r = await call('GET', '/api/project/id', human());
+    expect(r.status).toBe(200);
+    expect((r.data as { id: string }).id).toMatch(/^[0-9a-f]{16}$/);
+  });
+
   it('a name of only control characters falls back to Claude; an emoji at the cut stays whole; dates are normalised', async () => {
     const n = await newNote('sanitise-2');
     await call('POST', `/api/notes/${n.id}/reply`, human(), { text: 'a', via: { client: '\u0001\u0002\u007f', approvedOn: 'phone' } });

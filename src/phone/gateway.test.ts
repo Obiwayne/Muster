@@ -527,7 +527,7 @@ describe('phone gateway: held remote writes (docs/REMOTE.md, confirmation gate)'
     expect(r.data).toMatchObject({ ok: true, id: 'P1', summary: 'goal sent to the Captain' });
     const [ask] = orchCalls('/api/ask', before);
     expect(ask.token).toBe(ORCH_TOKEN);
-    expect(ask.body).toMatchObject({ text: 'Add an export button', via: { client: 'dev token', approvedOn: 'phone', approvedAt: new Date(t3).toISOString() } });
+    expect(ask.body).toMatchObject({ text: 'Add an export button', via: { client: 'dev token', approvedOn: 'phone', approvedAt: new Date(t3).toISOString(), pendingId: 'P1' } });
     expect(await remoteItems()).toHaveLength(0);
     expect((await phone3('POST', `/api/projects/${pid}/pending/P1/send`, { digest: 'x' })).status).toBe(404); // only once
     expect(audit3().some((l) => l.event === 'write_sent' && l.id === 'P1' && l.approvedOn === 'phone')).toBe(true);

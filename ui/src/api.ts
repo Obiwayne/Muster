@@ -191,6 +191,7 @@ export const api = {
     req<StationDef>('PUT', `/api/stations/${enc(name)}`, body),
   deleteStation: (name: string) => req<StationDef[]>('DELETE', `/api/stations/${enc(name)}`),
   project: () => req<ProjectInfo>('GET', '/api/project'),
+  projectId: () => req<{ id: string }>('GET', '/api/project/id'),
   createGithub: (body: { name: string; private?: boolean; description?: string }) => req<{ url: string }>('POST', '/api/project/github', body),
   usage: () => req<UsageState & { paused: boolean }>('GET', '/api/usage'),
 
