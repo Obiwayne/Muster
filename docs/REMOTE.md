@@ -69,6 +69,11 @@ until the owner trusts the connector.
    Pending items live in gateway `state.json` (`pending: [{ id, project, kind, text, createdAt }]`). Add a new `NeedItem`
    kind `'remote_write'` (goal, reply or answer, shown with its target note) with actions `['send','discard']`.
 
+`remote.confirmWrites` is on by default and is not a convenience toggle. With it off, an injected bulletin note can get a
+reply sent with no tap. Turning it off needs a confirm dialog that says exactly that; it can only be changed from the
+desktop (never through `/mcp` or the phone), it is written to the audit log, and Settings shows a warning banner while
+it is off.
+
 If layer 2 is off, the write runs immediately and the audit log still records it.
 
 ## Auth
