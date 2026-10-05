@@ -19,6 +19,7 @@ import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
+import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.Icon
 import androidx.compose.material3.ModalBottomSheet
@@ -36,8 +37,10 @@ import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
+import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextAlign
+import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.em
 import com.obiwayne.muster.MusterApp
@@ -52,9 +55,40 @@ val LocalSnack = compositionLocalOf<(String) -> Unit> { {} }
 /** Items in the selected project (or all). */
 fun filtered(items: List<NeedItem>, project: String?) = items.filter { project == null || it.projectId == project }
 
+/** What tapping [item] opens: "task:pid:tid" (M05) or "note:pid:nid" (M06); null for blocked merges, which use a sheet. */
+fun openKey(item: NeedItem): String? = when {
+    item.kind == Kind.BLOCKED -> null
+    item.isReview && item.taskId != null -> "task:${item.projectId}:${item.taskId}"
+    item.noteId != null && (item.isReview || item.isQuestion || "answer" in item.actions || item.taskId == null) -> "note:${item.projectId}:${item.noteId}"
+    item.taskId != null -> "task:${item.projectId}:${item.taskId}"
+    else -> null
+}
+
+/** The list order: reviews, then questions, then everything else. */
+fun needsOrder(items: List<NeedItem>): List<NeedItem> {
+    val sorted = items.sortedByDescending { it.createdAt }
+    val reviews = sorted.filter { it.isReview }
+    val questions = sorted.filter { it.isQuestion || it.kind == Kind.STUCK && "answer" in it.actions }
+    return reviews + questions + (sorted - reviews.toSet() - questions.toSet())
+}
+
+/** A card, tinted in [color] when it's the one open in the tablet's detail pane. */
+private fun Modifier.pickCard(selected: Boolean, color: Color): Modifier =
+    if (selected) card(bg = C.mix(color, 7, C.surface), border = C.tint(color, 45)) else card()
+
+/**
+ * M04 / T02. [compact] is the tablet list (T02's left pane, T06): smaller rows with a quick-approve button,
+ * no PC pill (the rail shows it) and [selectedKey] (an [openKey]) highlighted.
+ */
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
-fun NeedsScreen(onOpenTask: (NeedItem) -> Unit, onOpenNote: (NeedItem) -> Unit) {
+fun NeedsScreen(
+    onOpenTask: (NeedItem) -> Unit,
+    onOpenNote: (NeedItem) -> Unit,
+    compact: Boolean = false,
+    selectedKey: String? = null,
+    sidePadding: Dp = 16.dp,
+) {
     val state = MusterApp.state
     val needs by state.needs.collectAsState()
     val offline by state.offline.collectAsState()
@@ -90,34 +124,56 @@ fun NeedsScreen(onOpenTask: (NeedItem) -> Unit, onOpenNote: (NeedItem) -> Unit) 
         }
     }
 
+    val approvable = reviews.filter { it.canApprove }
+
+    @Composable
+    fun ApproveAll() {
+        Row(
+            Modifier.height(30.dp).clip(RoundedCornerShape(15.dp)).background(C.tint(C.crew, 14))
+                .border(1.dp, C.tint(C.crew, 35), RoundedCornerShape(15.dp))
+                .clickable { approvable.forEach { approve(it) } }
+                .padding(horizontal = 12.dp),
+            verticalAlignment = Alignment.CenterVertically,
+            horizontalArrangement = Arrangement.spacedBy(6.dp),
+        ) {
+            Icon(Ic.checkAll, null, tint = C.crew, modifier = Modifier.size(14.dp))
+            Txt("Approve all ${approvable.size}", ts(13, 18, FontWeight.SemiBold, C.crew))
+        }
+    }
+
     PullToRefreshBox(isRefreshing = refreshing, onRefresh = { scope.launch { state.refreshNeeds() } }, modifier = Modifier.fillMaxSize()) {
         LazyColumn(
             Modifier.fillMaxSize(),
-            contentPadding = PaddingValues(start = 16.dp, end = 16.dp, top = 4.dp, bottom = 16.dp),
-            verticalArrangement = Arrangement.spacedBy(8.dp),
+            contentPadding = PaddingValues(start = sidePadding, end = sidePadding, top = if (compact) 16.dp else 4.dp, bottom = 16.dp),
+            verticalArrangement = Arrangement.spacedBy(if (compact) 10.dp else 8.dp),
         ) {
             item("header") {
                 Row(Modifier.fillMaxWidth().height(40.dp), verticalAlignment = Alignment.CenterVertically) {
                     Box(Modifier.weight(1f)) {
                         ProjectChip(needs?.projects.orEmpty(), selected, { state.projectChosen = true; state.selectedProject.value = it })
                     }
-                    Txt("Muster", ts(13, 18, FontWeight.SemiBold, C.faint, spacing = 0.02.em))
-                    Box(Modifier.weight(1f), contentAlignment = Alignment.CenterEnd) {
-                        PcPill(pcName, online = !offline && (ws || demo || needs != null))
+                    if (!compact) {
+                        Txt("Muster", ts(13, 18, FontWeight.SemiBold, C.faint, spacing = 0.02.em))
+                        Box(Modifier.weight(1f), contentAlignment = Alignment.CenterEnd) {
+                            PcPill(pcName, online = !offline && (ws || demo || needs != null))
+                        }
                     }
                 }
             }
             item("title") {
-                Column(Modifier.padding(start = 4.dp, end = 4.dp, top = 8.dp, bottom = 4.dp), verticalArrangement = Arrangement.spacedBy(4.dp)) {
-                    Txt("Needs you", ts(30, 36, FontWeight.SemiBold, spacing = (-0.02).em))
-                    val running = project?.running ?: needs?.projects?.any { it.running } ?: false
-                    val sub = when {
-                        needs == null && offline -> "Offline"
-                        needs == null -> "Loading…"
-                        items.isEmpty() -> if (running) "All clear · crew working" else "All clear"
-                        else -> "${items.size} waiting" + if (running) " · crew working" else " · crew stopped"
+                Row(Modifier.padding(start = 4.dp, end = 4.dp, top = if (compact) 6.dp else 8.dp, bottom = 4.dp), verticalAlignment = Alignment.Bottom) {
+                    Column(Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(4.dp)) {
+                        Txt("Needs you", if (compact) ts(28, 34, FontWeight.SemiBold, spacing = (-0.02).em) else ts(30, 36, FontWeight.SemiBold, spacing = (-0.02).em))
+                        val running = project?.running ?: needs?.projects?.any { it.running } ?: false
+                        val sub = when {
+                            needs == null && offline -> "Offline"
+                            needs == null -> "Loading…"
+                            items.isEmpty() -> if (running) "All clear · crew working" else "All clear"
+                            else -> "${items.size} waiting" + if (running) " · crew working" else " · crew stopped"
+                        }
+                        Txt(sub, ts(14, 20, color = C.muted))
                     }
-                    Txt(sub, ts(14, 20, color = C.muted))
+                    if (compact && approvable.size >= 2) ApproveAll()
                 }
             }
             if (offline) {
@@ -128,38 +184,35 @@ fun NeedsScreen(onOpenTask: (NeedItem) -> Unit, onOpenNote: (NeedItem) -> Unit) 
             }
             if (reviews.isNotEmpty()) {
                 item("h-review") {
-                    Row(Modifier.fillMaxWidth().height(32.dp).padding(horizontal = 4.dp), verticalAlignment = Alignment.CenterVertically) {
-                        SectionLabel("Ready for review", Modifier.weight(1f))
-                        val approvable = reviews.filter { it.canApprove }
-                        if (approvable.size >= 2) {
-                            Row(
-                                Modifier.height(30.dp).clip(RoundedCornerShape(15.dp)).background(C.tint(C.crew, 14))
-                                    .border(1.dp, C.tint(C.crew, 35), RoundedCornerShape(15.dp))
-                                    .clickable { approvable.forEach { approve(it) } }
-                                    .padding(horizontal = 12.dp),
-                                verticalAlignment = Alignment.CenterVertically,
-                                horizontalArrangement = Arrangement.spacedBy(6.dp),
-                            ) {
-                                Icon(Ic.checkAll, null, tint = C.crew, modifier = Modifier.size(14.dp))
-                                Txt("Approve all ${approvable.size}", ts(13, 18, FontWeight.SemiBold, C.crew))
-                            }
+                    if (compact) {
+                        SubHeader("Ready for review")
+                    } else {
+                        Row(Modifier.fillMaxWidth().height(32.dp).padding(horizontal = 4.dp), verticalAlignment = Alignment.CenterVertically) {
+                            SectionLabel("Ready for review", Modifier.weight(1f))
+                            if (approvable.size >= 2) ApproveAll()
                         }
                     }
                 }
                 items(reviews, key = { it.id }) { item ->
-                    ReviewCard(item, busy = item.id in busy, onApprove = { approve(item) }, onOpen = { onOpenTask(item) })
+                    if (compact) {
+                        ReviewRow(item, openKey(item) == selectedKey, busy = item.id in busy, onApprove = { approve(item) }, onOpen = { onOpenTask(item) })
+                    } else {
+                        ReviewCard(item, busy = item.id in busy, onApprove = { approve(item) }, onOpen = { onOpenTask(item) })
+                    }
                 }
             }
             if (questions.isNotEmpty()) {
                 item("h-q") { SubHeader("Questions") }
-                items(questions, key = { it.id }) { item -> QuestionCard(item) { onOpenNote(item) } }
+                items(questions, key = { it.id }) { item ->
+                    if (compact) QuestionRow(item, openKey(item) == selectedKey) { onOpenNote(item) } else QuestionCard(item) { onOpenNote(item) }
+                }
             }
             if (other.isNotEmpty()) {
                 item("h-o") { SubHeader("Other") }
                 items(other, key = { it.id }) { item ->
                     when (item.kind) {
                         Kind.BLOCKED -> BlockedCard(item, pcName) { blockedSheet = item }
-                        else -> InfoCard(item) {
+                        else -> InfoCard(item, compact && openKey(item) == selectedKey) {
                             when {
                                 item.noteId != null && ("answer" in item.actions) -> onOpenNote(item)
                                 item.taskId != null -> onOpenTask(item)
@@ -256,6 +309,45 @@ fun ReviewCard(item: NeedItem, busy: Boolean, onApprove: () -> Unit, onOpen: () 
     }
 }
 
+/** T02's list row: no thumbnails, a 44dp quick-approve button instead of Approve/Open (the row itself opens it). */
+@Composable
+private fun ReviewRow(item: NeedItem, selected: Boolean, busy: Boolean, onApprove: () -> Unit, onOpen: () -> Unit) {
+    Row(
+        Modifier.fillMaxWidth().pickCard(selected, C.crew).clickable(onClick = onOpen).padding(start = 14.dp, end = 12.dp, top = 12.dp, bottom = 12.dp),
+        verticalAlignment = Alignment.CenterVertically,
+        horizontalArrangement = Arrangement.spacedBy(12.dp),
+    ) {
+        Column(Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(6.dp)) {
+            CardHeader(item, item.taskId ?: "")
+            Txt(item.title, ts(15, 21, FontWeight.SemiBold), maxLines = 2)
+            if (item.summary.isNotBlank()) Txt(item.summary, ts(13, 18, color = C.muted), maxLines = 1)
+        }
+        if (item.canApprove && !selected) {
+            Box(
+                Modifier.size(44.dp).clip(RoundedCornerShape(12.dp)).background(C.crew).clickable(enabled = !busy, onClick = onApprove),
+                contentAlignment = Alignment.Center,
+            ) {
+                if (busy) {
+                    CircularProgressIndicator(Modifier.size(18.dp), color = C.onCrew, strokeWidth = 2.dp)
+                } else {
+                    Icon(Ic.checkBold, "Approve", tint = C.onCrew, modifier = Modifier.size(20.dp))
+                }
+            }
+        }
+    }
+}
+
+@Composable
+private fun QuestionRow(item: NeedItem, selected: Boolean, onOpen: () -> Unit) {
+    Column(
+        Modifier.fillMaxWidth().pickCard(selected, C.captain).clickable(onClick = onOpen).padding(horizontal = 14.dp, vertical = 12.dp),
+        verticalArrangement = Arrangement.spacedBy(6.dp),
+    ) {
+        CardHeader(item, item.from)
+        Txt(item.summary.ifBlank { item.title }, ts(14, 20, FontWeight.Medium), maxLines = 3)
+    }
+}
+
 @Composable
 fun QuestionCard(item: NeedItem, onAnswer: () -> Unit) {
     Column(
@@ -294,9 +386,9 @@ fun BlockedCard(item: NeedItem, pcName: String, onAct: () -> Unit) {
 }
 
 @Composable
-private fun InfoCard(item: NeedItem, onOpen: () -> Unit) {
+private fun InfoCard(item: NeedItem, selected: Boolean, onOpen: () -> Unit) {
     Column(
-        Modifier.fillMaxWidth().card().clickable(onClick = onOpen).padding(horizontal = 14.dp, vertical = 12.dp),
+        Modifier.fillMaxWidth().pickCard(selected, C.crew).clickable(onClick = onOpen).padding(horizontal = 14.dp, vertical = 12.dp),
         verticalArrangement = Arrangement.spacedBy(8.dp),
     ) {
         CardHeader(item, item.from)

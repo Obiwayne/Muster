@@ -38,6 +38,9 @@ class AppState(private val app: Application) {
     val openTarget = MutableStateFlow<OpenTarget?>(null)
     val homeTab = MutableStateFlow("needs")
 
+    /** Tablet list + detail: the open item as "task:pid:tid" or "note:pid:nid" (see ui.openKey); null = the first one. */
+    val selectedNeed = MutableStateFlow<String?>(null)
+
     /** Debug builds: a pairing URI handed in by adb, consumed by the scan screen as if it had been scanned. */
     val debugPairUri = MutableStateFlow<String?>(null)
 

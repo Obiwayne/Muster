@@ -51,6 +51,7 @@ import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.input.ImeAction
 import androidx.compose.ui.text.input.KeyboardCapitalization
 import androidx.compose.ui.text.style.TextAlign
+import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.em
 import androidx.compose.ui.window.Dialog
@@ -88,9 +89,10 @@ private fun Loading(error: String?, onRetry: () -> Unit) {
 
 // ---------------------------------------------------------------- M05 review
 
+/** M05, or T02's detail pane when [embedded]: no back bar, review and evidence side by side, a wide action bar. */
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
-fun ReviewScreen(pid: String, tid: String, onBack: () -> Unit) {
+fun ReviewScreen(pid: String, tid: String, embedded: Boolean = false, onBack: () -> Unit) {
     val state = MusterApp.state
     val needs by state.needs.collectAsState()
     val item = needs?.items?.firstOrNull { it.projectId == pid && it.taskId == tid && it.isReview }
@@ -111,18 +113,39 @@ fun ReviewScreen(pid: String, tid: String, onBack: () -> Unit) {
     LaunchedEffect(pid, tid) { load() }
     LaunchedEffect(Unit) { if (state.needs.value == null) state.refreshNeeds() }
 
-    Column(Modifier.fillMaxSize().background(C.bg).statusBarsPadding()) {
-        Row(Modifier.fillMaxWidth().height(52.dp).padding(horizontal = 8.dp), verticalAlignment = Alignment.CenterVertically) {
-            RoundIcon(Ic.arrowLeft, size = 44.dp, iconSize = 22.dp, onClick = onBack)
-            Box(Modifier.weight(1f), contentAlignment = Alignment.Center) { Txt(tid, ts(15, 20, FontWeight.Medium, mono = true)) }
-            Box {
-                RoundIcon(Ic.more, size = 44.dp, iconSize = 20.dp) { menu = true }
-                DropdownMenu(menu, { menu = false }, containerColor = C.surface2) {
-                    DropdownMenuItem(text = { Txt("Refresh", ts(14, 20)) }, onClick = { menu = false; scope.launch { load() } })
-                    if (detail?.evidence?.isNotEmpty() == true) {
-                        DropdownMenuItem(text = { Txt("All evidence", ts(14, 20)) }, onClick = { menu = false; evidenceSheet = true })
-                    }
+    @Composable
+    fun MoreMenu() {
+        Box {
+            RoundIcon(Ic.more, size = 44.dp, iconSize = 20.dp) { menu = true }
+            DropdownMenu(menu, { menu = false }, containerColor = C.surface2) {
+                DropdownMenuItem(text = { Txt("Refresh", ts(14, 20)) }, onClick = { menu = false; scope.launch { load() } })
+                if (detail?.evidence?.isNotEmpty() == true) {
+                    DropdownMenuItem(text = { Txt("All evidence", ts(14, 20)) }, onClick = { menu = false; evidenceSheet = true })
                 }
+            }
+        }
+    }
+
+    fun approveNow() {
+        approving = true
+        scope.launch {
+            val ok = state.call({ snack(it) }) { approve(pid, tid) } != null
+            approving = false
+            if (ok) {
+                item?.let { state.removeNeed(it.id) }
+                snack("Approved $tid · the Captain merges it")
+                onBack()
+            }
+        }
+    }
+
+    val side = if (embedded) 32.dp else 20.dp
+    Column(Modifier.fillMaxSize().background(C.bg).then(if (embedded) Modifier else Modifier.statusBarsPadding())) {
+        if (!embedded) {
+            Row(Modifier.fillMaxWidth().height(52.dp).padding(horizontal = 8.dp), verticalAlignment = Alignment.CenterVertically) {
+                RoundIcon(Ic.arrowLeft, size = 44.dp, iconSize = 22.dp, onClick = onBack)
+                Box(Modifier.weight(1f), contentAlignment = Alignment.Center) { Txt(tid, ts(15, 20, FontWeight.Medium, mono = true)) }
+                MoreMenu()
             }
         }
         val d = detail
@@ -130,12 +153,13 @@ fun ReviewScreen(pid: String, tid: String, onBack: () -> Unit) {
             Box(Modifier.weight(1f)) { Loading(error) { scope.launch { load() } } }
         } else {
             Column(
-                Modifier.weight(1f).verticalScroll(rememberScrollState()).padding(start = 20.dp, end = 20.dp, top = 4.dp, bottom = 16.dp),
+                Modifier.weight(1f).verticalScroll(rememberScrollState()).padding(start = side, end = side, top = if (embedded) 16.dp else 4.dp, bottom = 16.dp),
                 verticalArrangement = Arrangement.spacedBy(20.dp),
             ) {
                 Column(verticalArrangement = Arrangement.spacedBy(12.dp)) {
                     Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(8.dp)) {
                         KindBadge(item?.kind ?: Kind.REVIEW)
+                        if (embedded) Txt(tid, ts(13, 18, mono = true))
                         val at = d.review?.at?.ifBlank { null } ?: item?.createdAt.orEmpty()
                         val status = when (d.task.status) {
                             "ready_for_merge" -> "Ready for review"
@@ -145,8 +169,12 @@ fun ReviewScreen(pid: String, tid: String, onBack: () -> Unit) {
                             else -> d.task.status.replace('_', ' ').replaceFirstChar { it.uppercase() }
                         }
                         Txt(listOf(status, Ago.long(at).takeIf { at.isNotBlank() }).filterNotNull().joinToString(" · "), ts(13, 18, color = C.faint))
+                        if (embedded) {
+                            Spacer(Modifier.weight(1f))
+                            MoreMenu()
+                        }
                     }
-                    Txt(d.task.title, ts(24, 30, FontWeight.SemiBold, spacing = (-0.02).em))
+                    Txt(d.task.title, if (embedded) ts(26, 32, FontWeight.SemiBold, spacing = (-0.015).em) else ts(24, 30, FontWeight.SemiBold, spacing = (-0.02).em))
                     Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
                         d.task.branch?.let { br ->
                             Row(
@@ -177,54 +205,77 @@ fun ReviewScreen(pid: String, tid: String, onBack: () -> Unit) {
                         }
                     }
                 }
-                d.review?.let { r -> CaptainReview(r.text, passed = d.task.status == "ready_for_merge" || d.task.status == "merged") }
-                val ev = d.evidence.lastOrNull()
-                if (ev != null) EvidenceBlock(pid, tid, ev, onAll = { evidenceSheet = true }, onOpen = { viewer = ev.id to it })
-                d.diffStat?.let { ds ->
-                    Row(
-                        Modifier.fillMaxWidth().clip(RoundedCornerShape(12.dp)).border(1.dp, C.line, RoundedCornerShape(12.dp)).padding(horizontal = 14.dp, vertical = 12.dp),
-                        verticalAlignment = Alignment.CenterVertically,
-                        horizontalArrangement = Arrangement.spacedBy(10.dp),
-                    ) {
-                        Txt("+${ds.added}", ts(13, 18, color = C.success, mono = true))
-                        Txt("−${ds.removed}", ts(13, 18, color = C.stuck, mono = true))
-                        Txt("· ${ds.files} files", ts(13, 18, color = C.muted, mono = true))
-                        Spacer(Modifier.weight(1f))
-                        Txt("View diff on PC", ts(12, 16, color = C.faint))
-                    }
+                val review: @Composable () -> Unit = {
+                    d.review?.let { r -> CaptainReview(r.text, passed = d.task.status == "ready_for_merge" || d.task.status == "merged") }
                 }
-            }
-            val canApprove = item?.canApprove ?: false
-            Column(
-                Modifier.fillMaxWidth().background(C.surface).topLine().navigationBarsPadding().padding(start = 20.dp, end = 20.dp, top = 12.dp, bottom = 24.dp),
-                verticalArrangement = Arrangement.spacedBy(10.dp),
-            ) {
-                Row(horizontalArrangement = Arrangement.spacedBy(10.dp)) {
-                    OutlineButton("Send back", Modifier.weight(1f), height = 52.dp, radius = 14.dp, textStyle = ts(15, 20, FontWeight.Medium)) { sendBack = true }
-                    PrimaryButton(
-                        if (item?.kind == Kind.APPROVAL) "Approve" else "Approve & merge", Modifier.weight(2f), bg = C.crew, fg = C.onCrew, height = 52.dp,
-                        icon = Ic.merge, iconSize = 18.dp, gap = 8.dp, busy = approving, enabled = canApprove,
-                    ) {
-                        approving = true
-                        scope.launch {
-                            val ok = state.call({ snack(it) }) { approve(pid, tid) } != null
-                            approving = false
-                            if (ok) {
-                                item?.let { state.removeNeed(it.id) }
-                                snack("Approved $tid · the Captain merges it")
-                                onBack()
-                            }
+                val diff: @Composable () -> Unit = {
+                    d.diffStat?.let { ds ->
+                        Row(
+                            Modifier.fillMaxWidth().clip(RoundedCornerShape(12.dp)).border(1.dp, C.line, RoundedCornerShape(12.dp)).padding(horizontal = 14.dp, vertical = 12.dp),
+                            verticalAlignment = Alignment.CenterVertically,
+                            horizontalArrangement = Arrangement.spacedBy(10.dp),
+                        ) {
+                            Txt("+${ds.added}", ts(13, 18, color = C.success, mono = true))
+                            Txt("−${ds.removed}", ts(13, 18, color = C.stuck, mono = true))
+                            Txt("· ${ds.files} files", ts(13, 18, color = C.muted, mono = true))
+                            Spacer(Modifier.weight(1f))
+                            Txt("View diff on PC", ts(12, 16, color = C.faint))
                         }
                     }
                 }
-                Txt(
-                    when {
-                        item?.kind == Kind.APPROVAL -> "The task moves on to its next station."
-                        canApprove -> "The Captain merges the reviewed commit and pushes to GitHub."
-                        else -> "Nothing to approve right now."
-                    },
-                    ts(12, 16, color = C.faint).copy(textAlign = TextAlign.Center), Modifier.fillMaxWidth(),
-                )
+                val ev = d.evidence.lastOrNull()
+                if (embedded) {
+                    Row(horizontalArrangement = Arrangement.spacedBy(20.dp), verticalAlignment = Alignment.Top) {
+                        Column(Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(16.dp)) {
+                            review()
+                            diff()
+                        }
+                        if (ev != null) {
+                            Box(Modifier.width(320.dp)) {
+                                EvidenceBlock(pid, tid, ev, onAll = { evidenceSheet = true }, onOpen = { viewer = ev.id to it }, stacked = true)
+                            }
+                        }
+                    }
+                } else {
+                    review()
+                    if (ev != null) EvidenceBlock(pid, tid, ev, onAll = { evidenceSheet = true }, onOpen = { viewer = ev.id to it })
+                    diff()
+                }
+            }
+            val canApprove = item?.canApprove ?: false
+            val approveLabel = if (item?.kind == Kind.APPROVAL) "Approve" else "Approve & merge"
+            val footnote = when {
+                item?.kind == Kind.APPROVAL -> "The task moves on to its next station."
+                canApprove -> if (embedded) "The Captain merges the reviewed commit and pushes." else "The Captain merges the reviewed commit and pushes to GitHub."
+                else -> "Nothing to approve right now."
+            }
+            if (embedded) {
+                Row(
+                    Modifier.fillMaxWidth().background(C.surface).topLine().navigationBarsPadding().padding(start = side, end = side, top = 14.dp, bottom = 18.dp),
+                    verticalAlignment = Alignment.CenterVertically,
+                    horizontalArrangement = Arrangement.spacedBy(12.dp),
+                ) {
+                    Txt(footnote, ts(13, 18, color = C.faint), Modifier.weight(1f))
+                    OutlineButton("Send back", Modifier.width(150.dp), height = 48.dp, radius = 14.dp, textStyle = ts(15, 20, FontWeight.SemiBold)) { sendBack = true }
+                    PrimaryButton(
+                        approveLabel, Modifier.width(220.dp), bg = C.crew, fg = C.onCrew, height = 48.dp, textStyle = ts(15, 20, FontWeight.SemiBold),
+                        icon = Ic.merge, iconSize = 18.dp, gap = 8.dp, busy = approving, enabled = canApprove, onClick = ::approveNow,
+                    )
+                }
+            } else {
+                Column(
+                    Modifier.fillMaxWidth().background(C.surface).topLine().navigationBarsPadding().padding(start = 20.dp, end = 20.dp, top = 12.dp, bottom = 24.dp),
+                    verticalArrangement = Arrangement.spacedBy(10.dp),
+                ) {
+                    Row(horizontalArrangement = Arrangement.spacedBy(10.dp)) {
+                        OutlineButton("Send back", Modifier.weight(1f), height = 52.dp, radius = 14.dp, textStyle = ts(15, 20, FontWeight.Medium)) { sendBack = true }
+                        PrimaryButton(
+                            approveLabel, Modifier.weight(2f), bg = C.crew, fg = C.onCrew, height = 52.dp,
+                            icon = Ic.merge, iconSize = 18.dp, gap = 8.dp, busy = approving, enabled = canApprove, onClick = ::approveNow,
+                        )
+                    }
+                    Txt(footnote, ts(12, 16, color = C.faint).copy(textAlign = TextAlign.Center), Modifier.fillMaxWidth())
+                }
             }
         }
     }
@@ -338,7 +389,7 @@ private fun CaptainReview(text: String, passed: Boolean) {
 }
 
 @Composable
-private fun EvidenceBlock(pid: String, tid: String, ev: EvidenceSet, onAll: () -> Unit, onOpen: (String) -> Unit) {
+private fun EvidenceBlock(pid: String, tid: String, ev: EvidenceSet, onAll: () -> Unit, onOpen: (String) -> Unit, stacked: Boolean = false) {
     val images = ev.files.filter { isImage(it.name) }
     Column(verticalArrangement = Arrangement.spacedBy(10.dp)) {
         Row(verticalAlignment = Alignment.CenterVertically) {
@@ -348,7 +399,15 @@ private fun EvidenceBlock(pid: String, tid: String, ev: EvidenceSet, onAll: () -
                 Icon(Ic.chevronRight, null, tint = C.crew, modifier = Modifier.size(14.dp))
             }
         }
-        if (images.isNotEmpty()) {
+        if (images.isNotEmpty() && stacked) {
+            // T02: the evidence column, one shot under the other.
+            images.take(2).forEachIndexed { i, f ->
+                Column(Modifier.fillMaxWidth().clickable { onOpen(f.name) }, verticalArrangement = Arrangement.spacedBy(6.dp)) {
+                    EvidenceThumb(pid, tid, ev.id, f.name, i, small = false, modifier = Modifier.fillMaxWidth().height(150.dp))
+                    Txt(f.name, ts(12, 16, color = C.muted, mono = true), maxLines = 1)
+                }
+            }
+        } else if (images.isNotEmpty()) {
             Row(horizontalArrangement = Arrangement.spacedBy(10.dp)) {
                 images.take(2).forEachIndexed { i, f ->
                     Column(Modifier.weight(1f).clickable { onOpen(f.name) }, verticalArrangement = Arrangement.spacedBy(6.dp)) {
@@ -366,9 +425,10 @@ private fun EvidenceBlock(pid: String, tid: String, ev: EvidenceSet, onAll: () -
 
 // ---------------------------------------------------------------- M06 answer
 
+/** M06, or T03's detail pane when [embedded] (no back arrow, wider margins, bigger question). */
 @OptIn(ExperimentalLayoutApi::class)
 @Composable
-fun AnswerScreen(pid: String, nid: String, onBack: () -> Unit) {
+fun AnswerScreen(pid: String, nid: String, embedded: Boolean = false, onBack: () -> Unit) {
     val state = MusterApp.state
     val needs by state.needs.collectAsState()
     val item = needs?.items?.firstOrNull { it.projectId == pid && it.noteId == nid }
@@ -420,16 +480,22 @@ fun AnswerScreen(pid: String, nid: String, onBack: () -> Unit) {
         }
     }
 
-    Column(Modifier.fillMaxSize().background(C.bg).statusBarsPadding()) {
+    val side = if (embedded) 32.dp else 20.dp
+    Column(Modifier.fillMaxSize().background(C.bg).then(if (embedded) Modifier else Modifier.statusBarsPadding())) {
         val kind = note?.type ?: item?.kind ?: Kind.QUESTION
         Row(
-            Modifier.fillMaxWidth().height(56.dp).bottomLine().padding(start = 8.dp, end = 16.dp),
+            Modifier.fillMaxWidth().height(if (embedded) 64.dp else 56.dp).bottomLine().padding(start = if (embedded) side else 8.dp, end = if (embedded) side else 16.dp),
             verticalAlignment = Alignment.CenterVertically,
-            horizontalArrangement = Arrangement.spacedBy(12.dp),
+            horizontalArrangement = Arrangement.spacedBy(if (embedded) 10.dp else 12.dp),
         ) {
-            RoundIcon(Ic.chevronLeft, iconSize = 22.dp, onClick = onBack)
-            Txt(nid, ts(15, 20, FontWeight.Medium, mono = true))
-            KindBadge(kind)
+            if (embedded) {
+                KindBadge(kind)
+                Txt(nid, ts(13, 18, mono = true))
+            } else {
+                RoundIcon(Ic.chevronLeft, iconSize = 22.dp, onClick = onBack)
+                Txt(nid, ts(15, 20, FontWeight.Medium, mono = true))
+                KindBadge(kind)
+            }
             Spacer(Modifier.weight(1f))
             Txt(projectName, ts(13, 18, color = C.muted), maxLines = 1)
         }
@@ -442,12 +508,12 @@ fun AnswerScreen(pid: String, nid: String, onBack: () -> Unit) {
             AskContent(
                 n, taskTitle, Modifier.weight(1f),
                 submitting = sending == ASK_SUBMIT, replying = sending != null && sending != ASK_SUBMIT,
-                reply = text, onReply = { text = it }, onSendReply = { send(text) }, onSubmit = ::submit,
+                reply = text, onReply = { text = it }, onSendReply = { send(text) }, onSubmit = ::submit, side = side,
             )
             return@Column
         }
         Column(
-            Modifier.weight(1f).verticalScroll(rememberScrollState()).padding(horizontal = 20.dp, vertical = 24.dp),
+            Modifier.weight(1f).verticalScroll(rememberScrollState()).padding(horizontal = side, vertical = 24.dp),
             verticalArrangement = Arrangement.spacedBy(20.dp),
         ) {
             val fromColor = agentColor(n.from)
@@ -460,7 +526,7 @@ fun AnswerScreen(pid: String, nid: String, onBack: () -> Unit) {
                     Txt(n.from, ts(14, 20, FontWeight.SemiBold, fromColor))
                     Txt("· " + Ago.short(n.createdAt), ts(12, 16, color = C.faint, mono = true))
                 }
-                Txt(n.text, ts(18, 27, FontWeight.Medium, spacing = (-0.01).em))
+                Txt(n.text, if (embedded) ts(22, 30, FontWeight.SemiBold, spacing = (-0.01).em) else ts(18, 27, FontWeight.Medium, spacing = (-0.01).em))
                 n.taskId?.let { t ->
                     Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(8.dp)) {
                         Txt("Context", ts(12, 16, color = C.faint))
@@ -493,7 +559,7 @@ fun AnswerScreen(pid: String, nid: String, onBack: () -> Unit) {
         val options = (n.options.ifEmpty { QuickAnswers.from(n.text) } + "Ask me on the PC").distinct()
         Column(
             Modifier.fillMaxWidth().background(C.surface).topLine().navigationBarsPadding().imePadding()
-                .padding(start = 20.dp, end = 20.dp, top = 16.dp, bottom = 28.dp),
+                .padding(start = side, end = side, top = 16.dp, bottom = if (embedded) 18.dp else 28.dp),
             verticalArrangement = Arrangement.spacedBy(14.dp),
         ) {
             SectionLabel("Tap to answer")
@@ -556,6 +622,7 @@ private fun AskContent(
     onReply: (String) -> Unit,
     onSendReply: () -> Unit,
     onSubmit: (List<AnswerChoice>) -> Unit,
+    side: Dp = 20.dp,
 ) {
     val picks = remember(n.id) { mutableStateListOf<Set<String>>().apply { repeat(n.ask.size) { add(emptySet()) } } }
     val others = remember(n.id) { mutableStateListOf<String>().apply { repeat(n.ask.size) { add("") } } }
@@ -566,7 +633,7 @@ private fun AskContent(
 
     Column(
         modifier.navigationBarsPadding().imePadding().verticalScroll(rememberScrollState())
-            .padding(start = 20.dp, end = 20.dp, top = 20.dp, bottom = 28.dp),
+            .padding(start = side, end = side, top = 20.dp, bottom = 28.dp),
         verticalArrangement = Arrangement.spacedBy(16.dp),
     ) {
         val fromColor = agentColor(n.from)

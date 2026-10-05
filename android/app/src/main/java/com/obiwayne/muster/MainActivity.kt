@@ -10,10 +10,13 @@ import androidx.activity.enableEdgeToEdge
 import androidx.compose.foundation.background
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
+import androidx.compose.foundation.layout.Row
+import androidx.compose.foundation.layout.fillMaxHeight
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.navigationBarsPadding
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.statusBarsPadding
+import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material3.Snackbar
 import androidx.compose.material3.SnackbarHost
@@ -23,10 +26,13 @@ import androidx.compose.runtime.CompositionLocalProvider
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.key
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.draw.drawBehind
+import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.unit.dp
 import androidx.lifecycle.lifecycleScope
 import androidx.navigation.NavHostController
@@ -34,6 +40,7 @@ import androidx.navigation.compose.NavHost
 import androidx.navigation.compose.composable
 import androidx.navigation.compose.rememberNavController
 import com.obiwayne.muster.data.Kind
+import com.obiwayne.muster.data.NeedItem
 import com.obiwayne.muster.notify.Notifier
 import com.obiwayne.muster.ui.AnswerScreen
 import com.obiwayne.muster.ui.BottomNav
@@ -42,8 +49,13 @@ import com.obiwayne.muster.ui.CrewScreen
 import com.obiwayne.muster.ui.LinkedScreen
 import com.obiwayne.muster.ui.LocalSnack
 import com.obiwayne.muster.ui.MusterTheme
+import com.obiwayne.muster.ui.NavRail
 import com.obiwayne.muster.ui.NeedsScreen
 import com.obiwayne.muster.ui.ReviewScreen
+import com.obiwayne.muster.ui.needsOrder
+import com.obiwayne.muster.ui.openKey
+import com.obiwayne.muster.ui.useRail
+import com.obiwayne.muster.ui.useTwoPane
 import com.obiwayne.muster.ui.ScanScreen
 import com.obiwayne.muster.ui.SettingsScreen
 import com.obiwayne.muster.ui.Tab
@@ -126,6 +138,7 @@ class MainActivity : ComponentActivity() {
 private object R2 {
     const val WELCOME = "welcome"
     const val SCAN = "scan"
+    const val SCAN_MANUAL = "scan/manual"
     const val LINKED = "linked"
     const val HOME = "home"
 }
@@ -149,16 +162,19 @@ private fun Root(@Suppress("UNUSED_PARAMETER") initial: String?) {
         }
     }
 
+    val twoPane = useTwoPane()
     LaunchedEffect(target, linked) {
         val t = target ?: return@LaunchedEffect
         if (t.kind.startsWith("screen:")) {
             state.openTarget.value = null
-            openDebugScreen(nav, t.kind.removePrefix("screen:"))
+            openDebugScreen(nav, t.kind.removePrefix("screen:"), twoPane)
             return@LaunchedEffect
         }
         if (!linked) return@LaunchedEffect
         state.openTarget.value = null
         when {
+            twoPane && (t.kind == Kind.REVIEW || t.kind == Kind.APPROVAL) && t.taskId != null -> openInPane(nav, "task:${t.projectId}:${t.taskId}")
+            twoPane && t.noteId != null && t.kind != Kind.BLOCKED -> openInPane(nav, "note:${t.projectId}:${t.noteId}")
             (t.kind == Kind.REVIEW || t.kind == Kind.APPROVAL) && t.taskId != null -> nav.navigate("review/${t.projectId}/${t.taskId}")
             t.noteId != null && t.kind != Kind.BLOCKED -> nav.navigate("note/${t.projectId}/${t.noteId}")
             else -> {
@@ -180,12 +196,20 @@ private fun Root(@Suppress("UNUSED_PARAMETER") initial: String?) {
                             state.enterDemo()
                             nav.navigate(R2.HOME) { popUpTo(0) }
                         },
+                        onType = { nav.navigate(R2.SCAN_MANUAL) },
                     )
                 }
                 composable(R2.SCAN) {
                     ScanScreen(
                         onClose = { nav.popBackStack() },
                         onLinked = { nav.navigate(R2.LINKED) { popUpTo(0) } },
+                    )
+                }
+                composable(R2.SCAN_MANUAL) {
+                    ScanScreen(
+                        onClose = { nav.popBackStack() },
+                        onLinked = { nav.navigate(R2.LINKED) { popUpTo(0) } },
+                        manual = true,
                     )
                 }
                 composable(R2.LINKED) {
@@ -214,8 +238,26 @@ private fun Root(@Suppress("UNUSED_PARAMETER") initial: String?) {
     }
 }
 
-private fun openDebugScreen(nav: NavHostController, screen: String) {
+/** Tablet landscape: show [key] (an ui.openKey) in Needs you's detail pane instead of a full-screen route. */
+private fun openInPane(nav: NavHostController, key: String) {
     val state = MusterApp.state
+    state.selectedNeed.value = key
+    state.homeTab.value = "needs"
+    if (nav.currentDestination?.route != R2.HOME) nav.navigate(R2.HOME) { popUpTo(0) }
+}
+
+private fun openDebugScreen(nav: NavHostController, screen: String, twoPane: Boolean) {
+    val state = MusterApp.state
+    val paneKey = when (screen) {
+        "review" -> "task:starcut:T58"
+        "answer" -> "note:starcut:N142"
+        "ask" -> "note:starcut:N144"
+        else -> null
+    }
+    if (twoPane && paneKey != null) {
+        openInPane(nav, paneKey)
+        return
+    }
     when (screen) {
         "welcome" -> nav.navigate(R2.WELCOME) { popUpTo(0) }
         "scan" -> nav.navigate(R2.SCAN) { popUpTo(0) }
@@ -251,25 +293,90 @@ private fun Home(onOpenTask: (String, String) -> Unit, onOpenNote: (String, Stri
         else -> Tab.NEEDS
     }
     val count = filtered(needs?.items.orEmpty(), selected).size
+    // An approval with no task (e.g. the roadmap) opens as a note instead.
+    val openTaskItem: (NeedItem) -> Unit = { item ->
+        when {
+            item.taskId != null -> onOpenTask(item.projectId, item.taskId)
+            item.noteId != null -> onOpenNote(item.projectId, item.noteId)
+        }
+    }
+    val openNoteItem: (NeedItem) -> Unit = { item -> if (item.noteId != null) onOpenNote(item.projectId, item.noteId) }
+    val selectTab: (Tab) -> Unit = { state.homeTab.value = it.name.lowercase() }
+
+    if (useRail()) {
+        // Tablet: side rail; landscape also puts the open item next to the list (T02/T03), portrait opens it full screen (T06).
+        val offline by state.offline.collectAsState()
+        val ws by state.wsConnected.collectAsState()
+        val demo by state.demo.collectAsState()
+        val twoPane = useTwoPane()
+        Row(Modifier.fillMaxSize().background(C.bg)) {
+            NavRail(tab, count, state.pcName, online = !offline && (ws || demo || needs != null), onSelect = selectTab)
+            Box(Modifier.weight(1f).fillMaxHeight().statusBarsPadding()) {
+                when (tab) {
+                    Tab.NEEDS -> if (twoPane) {
+                        NeedsTwoPane()
+                    } else {
+                        NeedsScreen(openTaskItem, openNoteItem, compact = true, sidePadding = 32.dp)
+                    }
+                    Tab.CREW -> CrewScreen()
+                    Tab.SETTINGS -> SettingsScreen(onUnlinked)
+                }
+            }
+        }
+        return
+    }
+
     Column(Modifier.fillMaxSize().background(C.bg)) {
         Box(Modifier.weight(1f).statusBarsPadding()) {
             when (tab) {
-                Tab.NEEDS -> NeedsScreen(
-                    // An approval with no task (e.g. the roadmap) opens as a note instead.
-                    onOpenTask = { item ->
-                        when {
-                            item.taskId != null -> onOpenTask(item.projectId, item.taskId)
-                            item.noteId != null -> onOpenNote(item.projectId, item.noteId)
-                        }
-                    },
-                    onOpenNote = { item -> if (item.noteId != null) onOpenNote(item.projectId, item.noteId) },
-                )
+                Tab.NEEDS -> NeedsScreen(openTaskItem, openNoteItem)
                 Tab.CREW -> CrewScreen()
                 Tab.SETTINGS -> SettingsScreen(onUnlinked)
             }
         }
         Box(Modifier.background(C.surface).navigationBarsPadding()) {
-            BottomNav(tab, count) { state.homeTab.value = it.name.lowercase() }
+            BottomNav(tab, count, selectTab)
         }
+    }
+}
+
+/** T02/T03: the Needs you list (400dp) and the open item beside it; the first item opens until one is picked. */
+@Composable
+private fun NeedsTwoPane() {
+    val state = MusterApp.state
+    val needs by state.needs.collectAsState()
+    val project by state.selectedProject.collectAsState()
+    val pick by state.selectedNeed.collectAsState()
+    val keys = needsOrder(filtered(needs?.items.orEmpty(), project)).mapNotNull { openKey(it) }
+    val current = pick?.takeIf { it in keys } ?: keys.firstOrNull()
+    val choose: (NeedItem) -> Unit = { item -> openKey(item)?.let { state.selectedNeed.value = it } }
+
+    Row(Modifier.fillMaxSize()) {
+        Box(
+            Modifier.width(400.dp).fillMaxHeight()
+                .drawBehind { drawLine(C.line, Offset(size.width, 0f), Offset(size.width, size.height), 1.dp.toPx()) },
+        ) {
+            NeedsScreen(choose, choose, compact = true, selectedKey = current)
+        }
+        Box(Modifier.weight(1f).fillMaxHeight()) {
+            val parts = current?.split(':', limit = 3)
+            // After an approve/answer the item leaves the list, so the next one opens.
+            val done = { state.selectedNeed.value = null }
+            when {
+                parts == null || parts.size < 3 -> PanePlaceholder(needs != null && keys.isEmpty())
+                parts[0] == "task" -> key(current) { ReviewScreen(parts[1], parts[2], embedded = true, onBack = done) }
+                else -> key(current) { AnswerScreen(parts[1], parts[2], embedded = true, onBack = done) }
+            }
+        }
+    }
+}
+
+@Composable
+private fun PanePlaceholder(allClear: Boolean) {
+    Box(Modifier.fillMaxSize().navigationBarsPadding(), contentAlignment = Alignment.Center) {
+        Txt(
+            if (allClear) "Nothing to open. The crew is handling it." else "Pick something on the left to open it here.",
+            ts(15, 22, color = C.faint),
+        )
     }
 }

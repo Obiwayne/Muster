@@ -15,8 +15,10 @@ import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
+import androidx.compose.foundation.layout.IntrinsicSize
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
+import androidx.compose.foundation.layout.fillMaxHeight
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
@@ -90,16 +92,18 @@ fun CrewScreen() {
     }
     LaunchedEffect(Unit) { if (needs == null) state.refreshNeeds() }
     LaunchedEffect(pid) { load() }
+    val wide = useRail()
 
     PullToRefreshBox(isRefreshing = loading, onRefresh = { scope.launch { load() } }, modifier = Modifier.fillMaxSize()) {
         Column(
-            Modifier.fillMaxSize().verticalScroll(rememberScrollState()).padding(start = 16.dp, end = 16.dp, top = 8.dp, bottom = 16.dp),
+            Modifier.fillMaxSize().verticalScroll(rememberScrollState())
+                .padding(start = if (wide) 32.dp else 16.dp, end = if (wide) 32.dp else 16.dp, top = if (wide) 12.dp else 8.dp, bottom = 16.dp),
             verticalArrangement = Arrangement.spacedBy(20.dp),
         ) {
             Column(Modifier.padding(top = 8.dp), verticalArrangement = Arrangement.spacedBy(14.dp)) {
                 ProjectChip(projects, pid, { state.projectChosen = true; state.selectedProject.value = it }, bordered = true, dotColor = C.crew, glow = false)
                 Column(Modifier.padding(horizontal = 4.dp), verticalArrangement = Arrangement.spacedBy(4.dp)) {
-                    Txt("Crew", ts(32, 38, FontWeight.SemiBold, spacing = (-0.02).em))
+                    Txt("Crew", if (wide) ts(28, 34, FontWeight.SemiBold, spacing = (-0.02).em) else ts(32, 38, FontWeight.SemiBold, spacing = (-0.02).em))
                     val c = crew
                     val sub = when {
                         pid == null -> "No projects yet"
@@ -116,6 +120,26 @@ fun CrewScreen() {
             }
             crew?.let { c ->
                 c.roadmap?.let { WhereWeAre(it) }
+                if (wide) {
+                    // T04: the two usage bars side by side, agents as a two-column grid of cards.
+                    Row(
+                        Modifier.fillMaxWidth().card(radius = 16.dp).height(IntrinsicSize.Min).padding(horizontal = 20.dp, vertical = 16.dp),
+                        horizontalArrangement = Arrangement.spacedBy(32.dp),
+                    ) {
+                        Box(Modifier.weight(1f)) { UsageRow("5-hour", c.usage?.fiveHour?.pct, Ago.resets(c.usage?.fiveHour?.resetsAt)) }
+                        Box(Modifier.width(1.dp).fillMaxHeight().background(C.line))
+                        Box(Modifier.weight(1f)) { UsageRow("Weekly", c.usage?.weekly?.pct, Ago.resets(c.usage?.weekly?.resetsAt)) }
+                    }
+                    Column(verticalArrangement = Arrangement.spacedBy(12.dp)) {
+                        c.agents.chunked(2).forEach { pair ->
+                            Row(horizontalArrangement = Arrangement.spacedBy(12.dp)) {
+                                pair.forEach { a -> AgentRow(a, last = true, modifier = Modifier.weight(1f), asCard = true) }
+                                if (pair.size == 1) Spacer(Modifier.weight(1f))
+                            }
+                        }
+                    }
+                    return@let
+                }
                 Column(Modifier.fillMaxWidth().card().padding(16.dp), verticalArrangement = Arrangement.spacedBy(14.dp)) {
                     UsageRow("5-hour", c.usage?.fiveHour?.pct, Ago.resets(c.usage?.fiveHour?.resetsAt))
                     UsageRow("Weekly", c.usage?.weekly?.pct, Ago.resets(c.usage?.weekly?.resetsAt))
@@ -189,13 +213,18 @@ fun agentLabel(a: CrewAgent): String = when (a.status) {
     else -> a.status
 }
 
+/** One agent: a row inside M07's list, or a card of its own in T04's grid ([asCard]). */
 @Composable
-private fun AgentRow(a: CrewAgent, last: Boolean) {
+private fun AgentRow(a: CrewAgent, last: Boolean, modifier: Modifier = Modifier, asCard: Boolean = false) {
     val stuck = a.status == "stuck"
     val quiet = a.status in setOf("idle", "done", "stopped")
+    val base = if (asCard) {
+        modifier.card(bg = if (stuck) C.mix(C.stuck, 8, C.surface) else C.surface, border = if (stuck) C.tint(C.stuck, 40) else C.line)
+    } else {
+        modifier.fillMaxWidth().background(if (stuck) C.tint(C.stuck, 7) else androidx.compose.ui.graphics.Color.Transparent)
+    }
     Row(
-        Modifier.fillMaxWidth().background(if (stuck) C.tint(C.stuck, 7) else androidx.compose.ui.graphics.Color.Transparent)
-            .padding(horizontal = 16.dp, vertical = 12.dp),
+        base.padding(horizontal = if (asCard) 18.dp else 16.dp, vertical = if (asCard) 16.dp else 12.dp),
         verticalAlignment = Alignment.CenterVertically,
         horizontalArrangement = Arrangement.spacedBy(12.dp),
     ) {
@@ -218,7 +247,7 @@ private fun AgentRow(a: CrewAgent, last: Boolean) {
             Modifier.widthIn(max = 150.dp), maxLines = 1,
         )
     }
-    if (!last) Box(Modifier.fillMaxWidth().height(1.dp).background(C.line))
+    if (!asCard && !last) Box(Modifier.fillMaxWidth().height(1.dp).background(C.line))
 }
 
 // ---------------------------------------------------------------- M09 settings
@@ -245,12 +274,10 @@ fun SettingsScreen(onUnlinked: () -> Unit) {
     val link = state.currentLink()
     val host = state.store.workingHost?.takeIf { !demo } ?: link?.hosts?.lastOrNull()
 
-    Column(
-        Modifier.fillMaxSize().verticalScroll(rememberScrollState()).padding(start = 16.dp, end = 16.dp, top = 8.dp, bottom = 12.dp),
-        verticalArrangement = Arrangement.spacedBy(16.dp),
-    ) {
-        Txt("Settings", ts(32, 38, FontWeight.SemiBold, spacing = (-0.02).em), Modifier.padding(horizontal = 4.dp))
+    val wide = useRail()
+    val device = deviceWord()
 
+    val linkedGroup: @Composable () -> Unit = {
         Group("Linked PC") {
             Row(Modifier.fillMaxWidth().padding(horizontal = 16.dp, vertical = 14.dp), verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(12.dp)) {
                 IconBox(Ic.monitor, C.crew, 36.dp, 18.dp, 9.dp)
@@ -271,11 +298,13 @@ fun SettingsScreen(onUnlinked: () -> Unit) {
             }
             Divider()
             Txt(
-                "Unlink this phone", ts(14, 20, FontWeight.Medium, C.stuck),
+                "Unlink this $device", ts(14, 20, FontWeight.Medium, C.stuck),
                 Modifier.fillMaxWidth().clickable { confirmUnlink = true }.padding(horizontal = 16.dp, vertical = 13.dp),
             )
         }
+    }
 
+    val notifyGroup: @Composable () -> Unit = {
         Group("Notify me about") {
             val n = p.notify
             ToggleRow("Approvals and reviews", n.review) { save(p.copy(notify = n.copy(review = it))) }
@@ -288,9 +317,9 @@ fun SettingsScreen(onUnlinked: () -> Unit) {
             Divider()
             ToggleRow("Agent stuck", n.stuck) { save(p.copy(notify = n.copy(stuck = it))) }
         }
+    }
 
-        AlertSoundGroup()
-
+    val quietGroup: @Composable () -> Unit = {
         Group("Quiet hours") {
             Row(Modifier.fillMaxWidth().height(52.dp).padding(horizontal = 16.dp), verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(12.dp)) {
                 Column(Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(1.dp)) {
@@ -304,7 +333,9 @@ fun SettingsScreen(onUnlinked: () -> Unit) {
                 Toggle(p.quiet.on, { save(p.copy(quiet = p.quiet.copy(on = it))) })
             }
         }
+    }
 
+    val projectsGroup: @Composable () -> Unit = {
         val projects = needs?.projects.orEmpty()
         if (projects.isNotEmpty()) {
             Group("Projects") {
@@ -319,7 +350,9 @@ fun SettingsScreen(onUnlinked: () -> Unit) {
                 }
             }
         }
+    }
 
+    val footer: @Composable () -> Unit = {
         Row(Modifier.fillMaxWidth().padding(horizontal = 4.dp, vertical = 2.dp), verticalAlignment = Alignment.CenterVertically) {
             Txt(if (demo) "Muster for Android · demo" else "Muster for Android", ts(13, 18, color = C.faint), Modifier.weight(1f))
             Txt(BuildConfig.VERSION_NAME, ts(12, 16, color = C.faint, mono = true))
@@ -329,14 +362,47 @@ fun SettingsScreen(onUnlinked: () -> Unit) {
         }
     }
 
+    Column(
+        Modifier.fillMaxSize().verticalScroll(rememberScrollState())
+            .padding(start = if (wide) 32.dp else 16.dp, end = if (wide) 32.dp else 16.dp, top = if (wide) 28.dp else 8.dp, bottom = 12.dp),
+        verticalArrangement = Arrangement.spacedBy(if (wide) 20.dp else 16.dp),
+    ) {
+        Txt(
+            "Settings", if (wide) ts(28, 34, FontWeight.SemiBold, spacing = (-0.02).em) else ts(32, 38, FontWeight.SemiBold, spacing = (-0.02).em),
+            Modifier.padding(horizontal = 4.dp),
+        )
+        if (wide) {
+            // T05: the PC, quiet hours and projects on the left; what to be told about on the right.
+            Row(horizontalArrangement = Arrangement.spacedBy(24.dp), verticalAlignment = Alignment.Top) {
+                Column(Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(16.dp)) {
+                    linkedGroup()
+                    quietGroup()
+                    projectsGroup()
+                }
+                Column(Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(16.dp)) {
+                    notifyGroup()
+                    AlertSoundGroup()
+                    footer()
+                }
+            }
+        } else {
+            linkedGroup()
+            notifyGroup()
+            AlertSoundGroup()
+            quietGroup()
+            projectsGroup()
+            footer()
+        }
+    }
+
     if (confirmUnlink) {
         AlertDialog(
             onDismissRequest = { confirmUnlink = false },
             containerColor = C.surface,
-            title = { Txt(if (demo) "Leave demo mode?" else "Unlink this phone?", ts(18, 24, FontWeight.SemiBold)) },
+            title = { Txt(if (demo) "Leave demo mode?" else "Unlink this $device?", ts(18, 24, FontWeight.SemiBold)) },
             text = {
                 Txt(
-                    if (demo) "You'll go back to the welcome screen." else "${state.pcName} stops sending to this phone. To link again, scan a new code on the PC.",
+                    if (demo) "You'll go back to the welcome screen." else "${state.pcName} stops sending to this $device. To link again, scan a new code on the PC.",
                     ts(14, 21, color = C.muted),
                 )
             },
