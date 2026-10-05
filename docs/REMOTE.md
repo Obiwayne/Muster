@@ -178,6 +178,23 @@ The Send button is the only thing between a held item and the Captain, so the ca
 4. **Discard is one tap and as easy to hit as Send**: same size, side by side, no confirm dialog on either. (Send is
    the primary colour, Discard the neutral one; neither is hidden in a menu.)
 5. Says who asked (`remote.client`) and when.
+6. **Send, Discard and the "Nothing has been sent yet" callout are pinned** (desktop: the detail panel's footer; phone:
+   a bar above the tab bar whenever the card is taller than the screen). Long text scrolls *behind* them with a fade
+   and a "scroll to read the rest" hint; they never scroll out of reach. The callout is the card's most prominent
+   sentence after the title, not a footnote: "Nothing has been sent yet. … only when you press Send."
+7. **Other states**: *send failed* keeps the card held and unchanged, shows a red "Send failed. Nothing was sent."
+   callout with the orchestrator's reason, and offers Try again / Discard at equal size; *expired* greys the card, says
+   "Expired after 15 minutes. Nothing was sent.", labels the text "Was not sent", and offers only Dismiss (the gateway
+   already dropped it; the card stays until dismissed so it doesn't vanish mid-read).
+
+Crew chat: a message sent via the connector is identical to one you typed except for the "via Claude" chip (and the
+`↳ N12` link for replies); hovering the chip says "Sent from the Claude app · held as P8 · you approved it on your
+phone at 22:06".
+
+Designs (Vellum file "Muster"): Dashboard page y 3980: "Bulletin board — held reply from Claude", "Crew chat — via
+Claude", "Bulletin board — held answer, long", "Send card — failed and expired states". Mobile page y 2080: M10, M11,
+M12 (long, pinned Send bar), "PC — Settings › Remote access", "PC — Remote access — warnings", "Dialog — turn off the
+hold".
 
 ### Settings → Remote access card, requirements
 
