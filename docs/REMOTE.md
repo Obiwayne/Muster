@@ -238,6 +238,32 @@ connected clients with Disconnect, toggles (Hold goals for my OK: on, Allow appr
 last 50 audit lines. Needs you gets the `remote_write` card (goal text, Send to Captain / Discard). Phone app gets the
 same card on M04 with an approve notification action.
 
+## Milestone 4 API contract (as built; UI and app code against exactly this)
+
+All admin routes are on the gateway (`/admin/remote/...`, loopback + admin token). The desktop UI reaches them through
+its own orchestrator as `/api/phone/remote/...` (handlePhone forwards `/api/phone/<rest>` → `/admin/<rest>` as-is).
+
+| Route | Body / reply |
+|---|---|
+| `GET /admin/remote` | Remote off: `{ enabled: false, config, hold, settings }`. On: `RemoteStatus` (`enabled, port, publicHost, connected, lastTunnelOkAt, lastTunnelError, lastLocalOkAt, connections[], loginLocked, loginLockedUntil, codeActiveUntil, tunnel`) plus `hold, settings, config, lastTest`. |
+| `GET /admin/remote/config` / `PUT` | `{ enabled: boolean, port: number, publicHost: string \| null, tunnel: 'cloudflare' \| 'tailscale' \| null }`. PUT merges, saves to state.json `remote.config`, restarts (or stops) the `/mcp` listener, logs `config_changed`. Env vars only seed it when nothing is saved. |
+| `POST /admin/remote/test` | Fetches `https://<publicHost>/.well-known/oauth-protected-resource/mcp` from this PC through the public internet. `{ ok, status?, error?, at }` (`ok` = 200 and `resource` = `https://<publicHost>/mcp`). Stored as `lastTest`. Doesn't count as "connected" (that needs an authenticated call). |
+| `GET /admin/remote/log?limit=50` | Newest-first remote.log entries (each the stored JSON line), limit ≤ 200. |
+| `POST /admin/remote/code` | `{ code, display, expiresAt }` (the only place the code appears). `DELETE` cancels: `{ ok, cancelled }`. |
+| `DELETE /admin/remote/connections[/:id]` | `{ ok, revoked }` |
+| `GET /admin/remote/pending` | `[{ id, projectId, noteId?, ...RemoteWriteView, title, summary }]` |
+| `POST /admin/remote/pending/:id/send` | body `{ digest }` → `{ ok, id, summary }`; 400 no digest, 409 mismatch / failed send (`{ error }`), 404 gone. `.../discard` → `{ ok, id }`. |
+| `GET/PUT /admin/remote/settings` | `{ confirmWrites, allowApprove }`; PUT `{ confirmWrites: false }` needs `confirm: true` (400 otherwise). |
+
+Phone API (bearer = device key): `GET /api/needs` → `{ pcName, projects, items, hold: { on, offSince, sentWithoutTap } }`;
+held items are `kind: 'remote_write'`, `actions: ['send','discard']`, with `remote: RemoteWriteView` (full text, `digest`,
+`expiresAt`, `replyTo`, `answers`, `taskTitle`). `POST /api/projects/:pid/pending/:id/send` `{ digest }` and
+`.../discard`. Push: the events socket sends `{ type: 'need', item }` for new held items (pref "question", ignores quiet
+hours) and `{ type: 'resolved', id }` when sent/discarded/expired.
+
+Crew chat: `FeedItem.via = { client, approvedOn, approvedAt }` on goal messages (`kind: 'message'`, from you) and on
+replies/answers (`kind: 'reply'`, from you, `noteId`).
+
 ## Milestones
 
 1. **Done 2026-10-05** (`src/phone/remote.ts`): `/mcp` listener + `muster_status` + `muster_needs` read-only, dev
