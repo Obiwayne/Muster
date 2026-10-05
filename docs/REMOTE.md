@@ -206,7 +206,15 @@ hold".
   as 127.0.0.1".
 - **Standing banner while the hold is off** (`confirmWrites: false`), on this card and at the top of Settings, until
   it's back on; turning it off goes through the warning dialog (`confirm: true`).
-- Login code (New code, 2-minute countdown), public URL + Test, the approve-merges switch, last 50 audit lines.
+- Login code: **no code is shown until you press New code** (the tab opens on "No code is active"). The code appears
+  only in the `POST /admin/remote/code` reply, with a 2-minute bar and Cancel code (`DELETE /admin/remote/code`), and
+  disappears when used, cancelled or expired. `GET /admin/remote` only says `codeActiveUntil`, never the code, so a
+  reload or a screen share of the tab can't reveal a working code next to the public address.
+- **The phone shows the hold-off banner too** (M13 Needs you, M14 Crew): with the hold off nothing lands in Needs you,
+  so the phone would otherwise look normal. No toggle on the phone; it says only the desktop can turn the hold back
+  on, with "off since 14:40 · 3 sent without your tap". Data: `GET /api/needs` → `hold: { on, offSince,
+  sentWithoutTap }` (same object in `GET /admin/remote`); the count resets when the hold goes back on.
+- Public URL + Test, the approve-merges switch, last 50 audit lines.
 
 Settings → Phone gets a **Remote access** card. Its header carries a **connection indicator**, so you can see at a
 glance whether the link actually works, not just that it's configured:

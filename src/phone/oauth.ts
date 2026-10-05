@@ -200,6 +200,19 @@ export class RemoteAuth {
     return { code, display: displayCode(code), expiresAt: this.iso(expiresAt) };
   }
 
+  /** "Cancel code": the live login code stops working now. */
+  cancelCode(): boolean {
+    const had = this.pairing.cancel();
+    if (had) this.opts.audit({ event: 'code_cancelled' });
+    return had;
+  }
+
+  /** When the live login code expires, or null. Never the code itself: it is shown once, right after New code. */
+  codeActiveUntil(): string | null {
+    const t = this.pairing.activeUntil();
+    return t === null ? null : this.iso(t);
+  }
+
   grants(): GrantSummary[] {
     const t = this.t();
     return this.data.grants.filter((g) => Date.parse(g.refreshExpiresAt) > t).map((g) => ({ id: g.id, clientName: g.clientName, createdAt: g.createdAt, lastUsedAt: g.lastUsedAt }));

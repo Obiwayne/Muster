@@ -37,6 +37,9 @@ export interface RemoteState {
   allowApprove: boolean; // expose muster_approve (default off)
   pending: PendingWrite[];
   nextPending: number;
+  /** Set while the hold is off: when it was turned off, and how many writes went out without your tap since. */
+  offSince?: string;
+  sentWithoutTap?: number;
 }
 
 const freshRemote = (): RemoteState => ({ confirmWrites: true, allowApprove: false, pending: [], nextPending: 1 });
@@ -109,6 +112,8 @@ export function loadState(dir: string): PhoneState {
         allowApprove: raw.remote?.allowApprove === true,
         pending: Array.isArray(raw.remote?.pending) ? raw.remote.pending : [],
         nextPending: Number.isInteger(raw.remote?.nextPending) && raw.remote!.nextPending > 0 ? raw.remote!.nextPending : 1,
+        ...(raw.remote?.confirmWrites === false && typeof raw.remote.offSince === 'string' ? { offSince: raw.remote.offSince } : {}),
+        ...(raw.remote?.confirmWrites === false && Number.isInteger(raw.remote.sentWithoutTap) ? { sentWithoutTap: raw.remote.sentWithoutTap } : {}),
       },
     };
   } catch {

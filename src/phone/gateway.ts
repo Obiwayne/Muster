@@ -266,6 +266,8 @@ export async function startGateway(opts: GatewayOptions = {}): Promise<Gateway> 
     return live;
   };
   const remoteSettings = (): RemoteSettings => ({ confirmWrites: state.remote.confirmWrites, allowApprove: state.remote.allowApprove });
+  /** For the "hold is off" banner on the desktop and the phone (which can't turn it back on). */
+  const holdInfo = () => ({ on: state.remote.confirmWrites, offSince: state.remote.confirmWrites ? null : (state.remote.offSince ?? null), sentWithoutTap: state.remote.confirmWrites ? 0 : (state.remote.sentWithoutTap ?? 0) });
 
   /** The running project a write is for: by id or name, or the only running one. */
   const writeProject = async (want: string | undefined): Promise<Project> => {
@@ -366,7 +368,10 @@ export async function startGateway(opts: GatewayOptions = {}): Promise<Gateway> 
     const w: PendingWrite = { ...base, digest: digestOf(base) };
     if (!state.remote.confirmWrites) {
       save(); // the id counter
-      return { held: false, projectName: p.name, summary: await runWrite(w, 'not held') };
+      const summary = await runWrite(w, 'not held');
+      state.remote.sentWithoutTap = (state.remote.sentWithoutTap ?? 0) + 1;
+      save();
+      return { held: false, projectName: p.name, summary };
     }
     state.remote.pending.push(w);
     save();
@@ -474,13 +479,14 @@ export async function startGateway(opts: GatewayOptions = {}): Promise<Gateway> 
     save();
     return state.defaultPrefs;
   });
-  admin('GET', '/admin/remote', (): RemoteStatus | { enabled: false } => remote?.status() ?? { enabled: false });
+  admin('GET', '/admin/remote', (): RemoteStatus | { enabled: false } => (remote ? { ...remote.status(), hold: holdInfo() } : { enabled: false }));
   const remoteOn = (): Remote => {
     if (!remote) throw new HttpError(409, 'Remote access is off');
     return remote;
   };
   /** The code the consent page asks for: single use, 2 minutes; a new one kills the old one. */
   admin('POST', '/admin/remote/code', () => remoteOn().auth.issueCode());
+  admin('DELETE', '/admin/remote/code', () => ({ ok: true, cancelled: remoteOn().auth.cancelCode() }));
   /** Disconnect: one connection, or every one. */
   admin('DELETE', '/admin/remote/connections/:id', ({ params }) => {
     if (!remoteOn().auth.revoke(params.id)) throw new HttpError(404, `No connection "${params.id}"`);
@@ -502,6 +508,13 @@ export async function startGateway(opts: GatewayOptions = {}): Promise<Gateway> 
       throw new HttpError(400, 'Turning off the hold lets a poisoned bulletin note get a reply sent without your tap. Send confirm: true to do it anyway.');
     }
     if (typeof body.confirmWrites === 'boolean') state.remote.confirmWrites = body.confirmWrites;
+    if (!state.remote.confirmWrites && before.confirmWrites) {
+      state.remote.offSince = now().toISOString();
+      state.remote.sentWithoutTap = 0;
+    } else if (state.remote.confirmWrites) {
+      delete state.remote.offSince;
+      delete state.remote.sentWithoutTap;
+    }
     if (typeof body.allowApprove === 'boolean') state.remote.allowApprove = body.allowApprove;
     save();
     const after = remoteSettings();
@@ -524,7 +537,7 @@ export async function startGateway(opts: GatewayOptions = {}): Promise<Gateway> 
   // ---- phone
   phone('GET', '/api/needs', async () => {
     const { projects: list, items } = await collect();
-    return { pcName: state.pcName, projects: list.map((p) => ({ id: p.id, name: p.name, running: p.running })), items };
+    return { pcName: state.pcName, projects: list.map((p) => ({ id: p.id, name: p.name, running: p.running })), items, hold: holdInfo() };
   });
   phone('GET', '/api/projects/:pid/tasks/:tid', async ({ params }) => {
     const p = await projectById(params.pid);

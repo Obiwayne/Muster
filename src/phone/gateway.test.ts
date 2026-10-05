@@ -643,6 +643,35 @@ describe('phone gateway: held remote writes (docs/REMOTE.md, confirmation gate)'
     expect((await admin3('PUT', '/admin/remote/settings', { allowApprove: 'yes' })).status).toBe(400);
   });
 
+  it('the phone learns when the hold is off (for its banner), with when and how many went out untapped', async () => {
+    expect((await phone3('GET', '/api/needs')).data.hold).toEqual({ on: true, offSince: null, sentWithoutTap: 0 });
+    await admin3('PUT', '/admin/remote/settings', { confirmWrites: false, confirm: true });
+    try {
+      await tool('muster_send_goal', { text: 'one' });
+      await tool('muster_send_goal', { text: 'two' });
+      const hold = (await phone3('GET', '/api/needs')).data.hold;
+      expect(hold).toEqual({ on: false, offSince: new Date(t3).toISOString(), sentWithoutTap: 2 });
+      expect((await admin3('GET', '/admin/remote')).data.hold).toEqual(hold);
+    } finally {
+      await admin3('PUT', '/admin/remote/settings', { confirmWrites: true });
+    }
+    expect((await phone3('GET', '/api/needs')).data.hold).toEqual({ on: true, offSince: null, sentWithoutTap: 0 });
+  });
+
+  it('a login code shows only in the New code reply: status says one is live, never which; Cancel ends it', async () => {
+    const before = (await admin3('GET', '/admin/remote')).data;
+    expect(before.codeActiveUntil).toBeNull();
+    const made = (await admin3('POST', '/admin/remote/code')).data;
+    const status = await admin3('GET', '/admin/remote');
+    expect(status.data.codeActiveUntil).toBe(made.expiresAt);
+    expect(JSON.stringify(status.data)).not.toContain(made.code);
+    expect(JSON.stringify(status.data)).not.toContain(made.display);
+    expect((await admin3('DELETE', '/admin/remote/code')).data).toEqual({ ok: true, cancelled: true });
+    expect((await admin3('GET', '/admin/remote')).data.codeActiveUntil).toBeNull();
+    expect((await admin3('DELETE', '/admin/remote/code')).data.cancelled).toBe(false);
+    expect(audit3().some((l) => l.event === 'code_cancelled')).toBe(true);
+  });
+
   it('muster_approve exists only when allowed; it is held too, and Send approves for merge', async () => {
     expect(await toolNames()).not.toContain('muster_approve');
     await admin3('PUT', '/admin/remote/settings', { allowApprove: true });

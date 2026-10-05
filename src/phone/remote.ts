@@ -100,6 +100,10 @@ export interface RemoteStatus {
   /** True for 10 minutes after 5 wrong login codes in a minute. */
   loginLocked: boolean;
   loginLockedUntil: string | null;
+  /** A login code is live until then (the code itself is only in the New code response). */
+  codeActiveUntil: string | null;
+  /** The hold switch, for the banner while it's off (filled in by the gateway). */
+  hold?: { on: boolean; offSince: string | null; sentWithoutTap: number };
   /** null = not set: Settings should ask, because logged IPs are then the tunnel's own address. */
   tunnel: Tunnel | null;
 }
@@ -471,6 +475,7 @@ export async function startRemote(ctx: RemoteContext, opts: RemoteOptions): Prom
       connections: auth.grants(),
       loginLocked: auth.locked(),
       loginLockedUntil: auth.lockedUntilIso(),
+      codeActiveUntil: auth.codeActiveUntil(),
       tunnel: tunnelKind,
     }),
     auth,

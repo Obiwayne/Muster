@@ -236,6 +236,15 @@ describe('remote OAuth: the consent page and the desktop code', () => {
     expect(audit().at(-1)).toMatchObject({ refused: 401, via: 'tunnel', ip: '127.0.0.1', ipFrom: 'socket (no cloudflare header)' });
   });
 
+  it('a cancelled code no longer signs anyone in', async () => {
+    const id = await register();
+    const { code } = remote.auth.issueCode();
+    expect(remote.auth.cancelCode()).toBe(true);
+    const r = await http('POST', '/authorize', { form: { ...authParams(id, pkce().challenge), code, decision: 'allow' } });
+    expect(r.status).toBe(401);
+    expect(r.text).toContain('Wrong code');
+  });
+
   it('Cancel sends access_denied back to the client', async () => {
     const id = await register();
     const r = await http('POST', '/authorize', { form: { ...authParams(id, pkce().challenge), decision: 'deny' } });
