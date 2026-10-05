@@ -5,6 +5,7 @@ import type {
 } from '../../src/types';
 // Phone gateway admin API types (forwarded by the orchestrator's /api/phone/*, docs/PHONE.md).
 import type { PhoneNetworkMode, PhonePairCode, PhoneSendPrefs, PhoneStatus } from './phonemodel';
+import type { RemoteCode, RemoteConfig, RemoteLogEntry, RemoteSettings, RemoteStatus, RemoteTestResult } from './remotemodel';
 
 // TODO: import StationDef from src/types.ts once T9 (crew-6) merges.
 // Contract with T12/T14 (crew-8): GET /api/lines.
@@ -201,6 +202,19 @@ export const api = {
   phoneTest: () => req<unknown>('POST', '/api/phone/test'),
   phoneSendPrefs: () => req<PhoneSendPrefs>('GET', '/api/phone/send'),
   phoneSetSendPrefs: (prefs: PhoneSendPrefs) => req<PhoneSendPrefs>('PUT', '/api/phone/send', prefs),
+
+  // remote access (Settings → Remote access): the gateway's /admin/remote/*, docs/REMOTE.md "Milestone 4 API contract"
+  remoteStatus: () => req<RemoteStatus>('GET', '/api/phone/remote'),
+  remoteSetConfig: (patch: Partial<RemoteConfig>) => req<RemoteConfig>('PUT', '/api/phone/remote/config', patch),
+  remoteTest: () => req<RemoteTestResult>('POST', '/api/phone/remote/test'),
+  remoteLog: (limit = 50) => req<RemoteLogEntry[]>('GET', `/api/phone/remote/log?limit=${limit}`),
+  /** The only place a login code appears. Never store it. */
+  remoteNewCode: () => req<RemoteCode>('POST', '/api/phone/remote/code'),
+  remoteCancelCode: () => req<{ ok: boolean; cancelled: boolean }>('DELETE', '/api/phone/remote/code'),
+  remoteDisconnect: (id?: string) => req<{ ok: boolean; revoked: number }>('DELETE', `/api/phone/remote/connections${id ? `/${enc(id)}` : ''}`),
+  remoteSettings: () => req<RemoteSettings>('GET', '/api/phone/remote/settings'),
+  /** Turning the hold off needs confirm: true (the warning dialog); turning it back on doesn't. */
+  remoteSetSettings: (patch: Partial<RemoteSettings> & { confirm?: boolean }) => req<RemoteSettings>('PUT', '/api/phone/remote/settings', patch),
 
   // roadmap (the Captain owns the plan; you approve it, send it back, tick criteria)
   roadmap: () => req<RoadmapResponse>('GET', '/api/roadmap'),

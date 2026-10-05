@@ -157,6 +157,7 @@ export const SETTINGS_TABS = [
   { id: 'usage', label: 'Usage guard' },
   { id: 'line', label: 'Factory line' },
   { id: 'phone', label: 'Phone' },
+  { id: 'remote', label: 'Remote access' },
 ] as const;
 export type SettingsTab = (typeof SETTINGS_TABS)[number]['id'];
 export function parseSettingsTab(v: string | null | undefined): SettingsTab {

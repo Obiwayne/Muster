@@ -12,6 +12,7 @@
 //   MOCK_BROWSER=off …                           → GET /api/browser: playwright-core missing
 //   MOCK_SANDBOX=<dir> …                       → research, roadmap, intel store and intel config read from <dir>/.muster (a live run's data; read only)
 //   MOCK_PHONE=down|empty …                      → /api/phone/*: gateway won't start / no linked phones, no Tailscale
+//   MOCK_REMOTE=warn|off|empty …                 → /api/phone/remote/*: hold off + locked + tunnel not set / remote off / nothing signed in
 //   MOCK_WEEKLY=84 …                             → weekly usage % (default 38; at 75+ an open weekly usage alert note)
 //
 // With `npx vite ui` (dev), set VITE_MUSTER_TOKEN=dev-token; vite proxies /api and /ws here.
@@ -600,7 +601,141 @@ async function phoneApi(req, m, p) {
   if (m === 'POST' && p === '/api/phone/test') return { ok: true, sent: phone.devices.filter((d) => d.online).length };
   if (m === 'GET' && p === '/api/phone/send') return phoneSend;
   if (m === 'PUT' && p === '/api/phone/send') { phoneSend = { ...phoneSend, ...(await body(req)) }; return phoneSend; }
+  if (p === '/api/phone/remote' || p.startsWith('/api/phone/remote/')) return remoteApi(req, m, p);
   throw new HttpError(404, `No phone route ${m} ${p}`);
+}
+
+// /api/phone/remote/* (docs/REMOTE.md "Milestone 4 API contract"; the gateway's /admin/remote/*).
+// MOCK_REMOTE=warn: hold off, sign-ins locked, tunnel type not set, not connected, last refusal a 421 (the warnings
+// artboard). MOCK_REMOTE=off: remote access disabled. MOCK_REMOTE=empty: on, but nothing signed in and no log.
+const REMOTE = process.env.MOCK_REMOTE ?? '';
+const today = (h, mi) => new Date(new Date(now).setHours(h, mi, 0, 0)).toISOString();
+const remote = {
+  config: { enabled: REMOTE !== 'off', port: 47911, publicHost: REMOTE === 'empty' ? null : 'muster.wayne.dev', tunnel: REMOTE === 'warn' || REMOTE === 'empty' ? null : 'cloudflare' },
+  settings: { confirmWrites: REMOTE !== 'warn', allowApprove: false },
+  offSince: REMOTE === 'warn' ? iso(5) : null,
+  sentWithoutTap: REMOTE === 'warn' ? 1 : 0,
+  lastTunnelOkAt: REMOTE === 'warn' ? iso(150) : REMOTE === 'empty' ? null : iso(3),
+  lastTunnelError: REMOTE === 'warn' ? { at: iso(4), status: 421, reason: 'unknown host muster.wayne.dev' }
+    : REMOTE === 'empty' ? null : { at: iso(41), status: 401, reason: 'expired token' },
+  lastLocalOkAt: null,
+  lockedUntil: REMOTE === 'warn' ? new Date(now + 7 * 60_000).toISOString() : null,
+  codeActiveUntil: null,
+  code: null,
+  lastTest: null,
+  connections: REMOTE === 'empty' ? [] : [
+    { id: 'g1', clientName: 'Claude', createdAt: iso(43), lastUsedAt: iso(3) },
+    { id: 'g2', clientName: 'Claude Code', createdAt: iso(60 * 50), lastUsedAt: iso(60 * 16) },
+  ],
+  log: REMOTE === 'empty' ? [] : REMOTE === 'warn' ? [
+    { at: iso(1), tool: 'muster_reply', ok: true, client: 'Claude', via: 'tunnel' },
+    { at: iso(1), event: 'write_sent', id: 'P9', kind: 'reply', project: 'wall-education', client: 'Claude', approvedOn: 'not held' },
+    { at: iso(3), event: 'login_failed', reason: 'wrong', client: 'Claude', ip: '203.0.113.9', ipFrom: 'cf-connecting-ip', lockedUntil: new Date(now + 7 * 60_000).toISOString() },
+    ...[1, 2, 3, 4].map((i) => ({ at: new Date(now - 3 * 60_000 - i * 8_000).toISOString(), event: 'login_failed', reason: 'wrong', client: 'Claude', ip: '203.0.113.9', ipFrom: 'cf-connecting-ip' })),
+    { at: iso(5), event: 'settings_changed', before: { confirmWrites: true, allowApprove: false }, after: { confirmWrites: false, allowApprove: false } },
+    { at: iso(4), refused: 421, reason: 'unknown host muster.wayne.dev', via: 'tunnel', ip: '127.0.0.1', ipFrom: 'socket (tunnel type not set)' },
+    { at: iso(55), event: 'write_discarded', id: 'P5', kind: 'reply', project: 'wall-education', client: 'Claude', on: 'desktop' },
+  ].sort((a, b) => b.at.localeCompare(a.at)) : [
+    { at: iso(3), tool: 'muster_status', ok: true, client: 'Claude', via: 'tunnel' },
+    { at: iso(14), event: 'write_sent', id: 'P6', kind: 'goal', project: 'wall-education', client: 'Claude', approvedOn: 'phone' },
+    { at: iso(16), tool: 'muster_send_goal', ok: true, client: 'Claude', held: true, pendingId: 'P6', via: 'tunnel' },
+    { at: iso(16), event: 'write_held', id: 'P6', kind: 'goal', project: 'wall-education', client: 'Claude' },
+    { at: iso(17), tool: 'muster_needs', ok: true, client: 'Claude', via: 'tunnel' },
+    { at: iso(40), event: 'login_ok', client: 'Claude', ip: '86.12.44.170', ipFrom: 'cf-connecting-ip' },
+    { at: iso(41), refused: 401, reason: 'expired token', via: 'tunnel', ip: '160.79.104.17', ipFrom: 'cf-connecting-ip' },
+    { at: iso(42), event: 'login_failed', reason: 'wrong', client: 'Claude', ip: '86.12.44.170', ipFrom: 'cf-connecting-ip' },
+    { at: iso(55), event: 'write_discarded', id: 'P5', kind: 'reply', project: 'wall-education', client: 'Claude', on: 'desktop' },
+  ],
+};
+const remoteLog = (e) => { remote.log.unshift({ at: new Date().toISOString(), ...e }); };
+const remoteHold = () => ({ on: remote.settings.confirmWrites, offSince: remote.settings.confirmWrites ? null : remote.offSince, sentWithoutTap: remote.settings.confirmWrites ? 0 : remote.sentWithoutTap });
+function remoteStatus() {
+  const base = { config: { ...remote.config }, hold: remoteHold(), settings: { ...remote.settings } };
+  if (!remote.config.enabled) return { enabled: false, ...base };
+  const t = Date.now();
+  if (remote.code && Date.parse(remote.code.expiresAt) <= t) remote.code = null;
+  const locked = !!remote.lockedUntil && Date.parse(remote.lockedUntil) > t;
+  const ok = remote.lastTunnelOkAt;
+  return {
+    enabled: true, port: remote.config.port, publicHost: remote.config.publicHost,
+    connected: !!ok && t - Date.parse(ok) < 15 * 60_000,
+    lastTunnelOkAt: ok, lastTunnelError: remote.lastTunnelError, lastLocalOkAt: remote.lastLocalOkAt,
+    connections: remote.connections, loginLocked: locked, loginLockedUntil: locked ? remote.lockedUntil : null,
+    codeActiveUntil: remote.code?.expiresAt ?? null, tunnel: remote.config.tunnel, lastTest: remote.lastTest, ...base,
+  };
+}
+async function remoteApi(req, m, p) {
+  const sub = p.slice('/api/phone/remote'.length);
+  const remoteOn = () => need(remote.config.enabled, 409, 'Remote access is off');
+  if (m === 'GET' && sub === '') return remoteStatus();
+  if (m === 'GET' && sub === '/config') return remote.config;
+  if (m === 'PUT' && sub === '/config') {
+    const b = await body(req);
+    const before = { ...remote.config };
+    for (const k of ['enabled', 'port', 'publicHost', 'tunnel']) if (k in b) remote.config[k] = b[k];
+    need(remote.config.tunnel === null || remote.config.tunnel === 'cloudflare' || remote.config.tunnel === 'tailscale', 400, 'tunnel must be cloudflare, tailscale or null');
+    remoteLog({ event: 'config_changed', before, after: { ...remote.config } });
+    return remote.config;
+  }
+  if (m === 'POST' && sub === '/test') {
+    remoteOn();
+    need(remote.config.publicHost, 400, 'Set the public address first');
+    remote.lastTest = remote.config.publicHost === 'muster.wayne.dev'
+      ? { ok: true, status: 200, at: new Date().toISOString() }
+      : { ok: false, error: `getaddrinfo ENOTFOUND ${remote.config.publicHost}`, at: new Date().toISOString() };
+    return remote.lastTest;
+  }
+  if (m === 'GET' && sub === '/log') {
+    const limit = Math.min(200, Number(new URL(req.url, 'http://x').searchParams.get('limit') ?? 50) || 50);
+    return remote.log.slice(0, limit);
+  }
+  if (m === 'POST' && sub === '/code') {
+    remoteOn();
+    const code = Array.from({ length: 6 }, () => PAIR_ALPHABET[Math.floor(Math.random() * PAIR_ALPHABET.length)]).join('');
+    remote.code = { code, display: `${code.slice(0, 3)}-${code.slice(3)}`, expiresAt: new Date(Date.now() + 120_000).toISOString() };
+    remoteLog({ event: 'code_issued' });
+    return remote.code;
+  }
+  if (m === 'DELETE' && sub === '/code') {
+    remoteOn();
+    const had = !!remote.code;
+    remote.code = null;
+    if (had) remoteLog({ event: 'code_cancelled' });
+    return { ok: true, cancelled: had };
+  }
+  // dev only: pretend Claude just used the live code (curl -X POST .../remote/dev/use-code)
+  if (m === 'POST' && sub === '/dev/use-code') {
+    need(remote.code, 409, 'No code is active');
+    remote.code = null;
+    remoteLog({ event: 'login_ok', client: 'Claude', ip: '86.12.44.170', ipFrom: 'cf-connecting-ip' });
+    return { ok: true };
+  }
+  const cm = /^\/connections(?:\/([^/]+))?$/.exec(sub);
+  if (m === 'DELETE' && cm) {
+    remoteOn();
+    const id = cm[1] && decodeURIComponent(cm[1]);
+    const n = id ? remote.connections.filter((c) => c.id === id).length : remote.connections.length;
+    need(!id || n, 404, 'No such connection');
+    remote.connections = id ? remote.connections.filter((c) => c.id !== id) : [];
+    remoteLog({ event: 'revoked', grant: id ?? 'all', count: n, reason: 'desktop' });
+    return { ok: true, revoked: n };
+  }
+  if (m === 'GET' && sub === '/pending') return [];
+  if (m === 'GET' && sub === '/settings') return remote.settings;
+  if (m === 'PUT' && sub === '/settings') {
+    const b = await body(req);
+    const before = { ...remote.settings };
+    if (b.confirmWrites === false && remote.settings.confirmWrites) {
+      need(b.confirm === true, 400, 'Turning off the hold lets a poisoned bulletin note get a reply sent without your tap. Send confirm: true to do it anyway.');
+      remote.offSince = new Date().toISOString();
+      remote.sentWithoutTap = 0;
+    }
+    if (typeof b.confirmWrites === 'boolean') remote.settings.confirmWrites = b.confirmWrites;
+    if (typeof b.allowApprove === 'boolean') remote.settings.allowApprove = b.allowApprove;
+    if (JSON.stringify(before) !== JSON.stringify(remote.settings)) remoteLog({ event: 'settings_changed', before, after: { ...remote.settings } });
+    return remote.settings;
+  }
+  throw new HttpError(404, `No remote route ${m} ${p}`);
 }
 
 // GET /api/project (T17 contract). MOCK_GH=missing|unauthed simulates a machine without gh.
