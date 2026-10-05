@@ -14,11 +14,13 @@
 //   MOCK_PHONE=down|empty …                      → /api/phone/*: gateway won't start / no linked phones, no Tailscale
 //   MOCK_REMOTE=warn|off|empty …                 → /api/phone/remote/*: hold off + locked + tunnel not set / remote off / nothing signed in
 //   MOCK_WEEKLY=84 …                             → weekly usage % (default 38; at 75+ an open weekly usage alert note)
+//   MOCK_REMOTE=off …                            → /api/phone/remote/pending fails (remote off / gateway down: no held writes shown)
 //
 // With `npx vite ui` (dev), set VITE_MUSTER_TOKEN=dev-token; vite proxies /api and /ws here.
 // Implements the HTTP API and WebSockets from docs/ARCHITECTURE.md with in-memory state.
 
 import http from 'node:http';
+import { createHash } from 'node:crypto';
 import { readFile } from 'node:fs/promises';
 import { existsSync, readFileSync } from 'node:fs';
 import { dirname, extname, join, normalize } from 'node:path';
@@ -153,7 +155,8 @@ const state = {
     { id: 'N13', type: 'review', from: 'captain', taskId: 'T1', branch: 'ada/invites-db', text: 'Invites table ready to merge. 3 files, 12 tests passing.', createdAt: iso(0.5), open: true, replies: [] },
     { id: 'N14', type: 'stuck', from: 'bea', taskId: 'T4', branch: 'bea/share-dialog', text: 'Which token format does T2 use? The share fixture fails on length.\nTried: regenerating the fixture from the API (still 16 chars), reading src/api/tokens.ts (not on my branch yet).', createdAt: iso(4), open: true,
       replies: [{ at: iso(2), from: 'captain', text: 'Use the 22-char base62 token from T2. ada merged it into their branch; pull it with handoff and rerun the fixture.' },
-        { at: iso(1), from: 'ada', text: 'tokens.ts is on ada/invite-api now. The fixture helper is makeInviteToken() in test/fixtures.ts, use that instead of a hard-coded string.' }] },
+        { at: iso(1), from: 'ada', text: 'tokens.ts is on ada/invite-api now. The fixture helper is makeInviteToken() in test/fixtures.ts, use that instead of a hard-coded string.' },
+        { at: iso(0.6), from: 'you', text: 'Use makeInviteToken() from test/fixtures.ts and rerun the share fixture; no hard-coded tokens.' }] },
     { id: 'N15', type: 'waiting', from: 'design', to: 'bea', taskId: 'T4', branch: 'design/check', text: 'Design check on T4 once bea hands off.', createdAt: iso(6), open: true, replies: [] },
     { id: 'N16', type: 'escalation', from: 'captain', text: 'Should a revoked invite link show a friendly "link expired" page or a plain 404? This is a product call (N12 is related).', createdAt: iso(2), open: true, replies: [] },
     // The Captain's AskUserQuestion menu (docs/ASK.md): one open, one answered.
@@ -171,6 +174,12 @@ const state = {
       ask: [{ header: 'Rollout', question: 'Ship the share dialog behind a flag first?', multiSelect: false, options: [{ label: 'Yes, flag it (Recommended)', description: 'Turn it on for one class first' }, { label: 'No, ship to everyone' }] }],
       answers: [{ header: 'Rollout', choices: ['Yes, flag it (Recommended)'], other: "start with Ms. Lee's class" }],
       replies: [{ at: iso(35), from: 'you', text: "Rollout: Yes, flag it (Recommended) (note: start with Ms. Lee's class)" }] },
+    // a 3-question menu: the long held answer P11 goes to it
+    { id: 'N25', type: 'escalation', from: 'captain', to: 'you', text: 'Export formats: which should the Export dialog offer?\n\nDefault resolution for a new export?\n\nAnything else the crew should know before building the presets?', createdAt: iso(5), open: true, replies: [],
+      ask: [
+        { header: 'Export formats', question: 'which should the Export dialog offer?', multiSelect: true, options: [{ label: 'MP4 (H.264)' }, { label: 'WebM' }, { label: 'GIF' }] },
+        { header: '', question: 'Default resolution for a new export?', multiSelect: false, options: [{ label: '720p' }, { label: '1080p' }, { label: '4K' }] },
+        { header: '', question: 'Anything else the crew should know before building the presets?', multiSelect: false, options: [{ label: 'No, go ahead' }] }] },
     { id: 'N17', type: 'progress', from: 'design', to: 'bea', taskId: 'T4', branch: 'bea/share-dialog', text: 'DRIFT T4 ShareDialog primary button is #2563EB; framework uses var(--color-primary)\nsrc/ui/ShareDialog.tsx:42 — hard-coded #2563EB', createdAt: iso(3), open: false, replies: [] },
     { id: 'N18', type: 'question', from: 'design', taskId: 'T4', text: 'DRIFT T4 Share dialog has no matching board in Vellum. Ask the Captain before adding one?', createdAt: iso(3.5), open: false, replies: [{ at: iso(3), from: 'captain', text: 'Not yet, flag it in the review.' }] },
     { id: 'N19', type: 'done', from: 'design', taskId: 'T2', text: 'PASS T2 Token copy UI matches the framework tokens', createdAt: iso(16), open: false, replies: [] },
@@ -185,7 +194,7 @@ const state = {
     updatedAt: iso(0.2), perAgentCostUsd: {}, paused: false, weeklyWarned: false,
   },
   goal: EMPTY ? undefined : { text: 'Build the invite-link sharing flow', at: iso(42) },
-  nextIds: { agent: 6, task: 10, note: 23, feed: 1, inbox: 1, stage: 6, goal: 15, idea: 12, run: 2 },
+  nextIds: { agent: 6, task: 10, note: 26, feed: 1, inbox: 1, stage: 6, goal: 15, idea: 12, run: 2 },
 };
 if (!EMPTY && WEEKLY >= config.warnAtWeeklyPct) {
   state.usage.weeklyWarned = true;
@@ -365,6 +374,7 @@ const feedSeed = [
   [42.5, 'event', 'ada', undefined, 'ada claimed T3 Invite API endpoints', { taskId: 'T3' }],
   [42.3, 'event', 'bea', undefined, 'bea claimed T4 Share dialog UI', { taskId: 'T4' }],
   [40, 'event', 'muster', undefined, 'design started (design crew)', {}],
+  [37, 'message', 'you', 'captain', 'Also keep a revoke button next to every invite link in the share dialog.', { via: { client: 'Claude', approvedOn: 'not held', approvedAt: iso(37) }, readBy: ['captain'] }],
   [36, 'message', 'design', 'everyone', 'Reading the Muster framework in Vellum: 38 tokens, 9 pages. I will check every UI branch before review.', {}],
   [33, 'message', 'ada', 'bea', 'Heads up: the invite API now returns expiresAt as an ISO string, not a number.', { readBy: ['bea'] }],
   [32, 'message', 'ada', 'bea', 'Types are in src/api/invites.ts if you want them.', { reactions: [react('🙌', 'bea', 30)] }],
@@ -387,6 +397,8 @@ const feedSeed = [
   [2, 'note', 'captain', undefined, 'Should a revoked invite link show a friendly page or a 404?', { noteId: 'N16', noteType: 'escalation' }],
   [1, 'reply', 'ada', undefined, 'Fixture helper is makeInviteToken() in test/fixtures.ts, use that instead of a hard-coded string.', { noteId: 'N14' }],
   [0.8, 'message', 'you', 'captain', "Keep T4 small please, I'd like to try the share link tonight.", { reactions: [react('👍', 'captain', 0.6)], readBy: ['captain'] }],
+  // sent from the Claude app through the remote connector (docs/REMOTE.md): yours, on the right, with a "via Claude" chip
+  [0.6, 'reply', 'you', undefined, 'Use makeInviteToken() from test/fixtures.ts and rerun the share fixture; no hard-coded tokens.', { noteId: 'N14', via: { client: 'Claude', approvedOn: 'phone', approvedAt: iso(0.6) }, reactions: [react('👀', 'bea', 0.4)], readBy: ['bea', 'captain'] }],
   [0.5, 'note', 'captain', undefined, 'Invites table ready to merge. 3 files, 12 tests passing.', { noteId: 'N13', noteType: 'review' }],
 ];
 if (ROADMAP_MODE === 'approved') {
@@ -599,6 +611,7 @@ async function phoneApi(req, m, p) {
     return { ok: true };
   }
   if (m === 'POST' && p === '/api/phone/test') return { ok: true, sent: phone.devices.filter((d) => d.online).length };
+  if (p === '/api/phone/remote/pending' || p.startsWith('/api/phone/remote/pending/')) return remotePendingApi(req, m, p);
   if (m === 'GET' && p === '/api/phone/send') return phoneSend;
   if (m === 'PUT' && p === '/api/phone/send') { phoneSend = { ...phoneSend, ...(await body(req)) }; return phoneSend; }
   if (p === '/api/phone/remote' || p.startsWith('/api/phone/remote/')) return remoteApi(req, m, p);
@@ -736,6 +749,81 @@ async function remoteApi(req, m, p) {
     return remote.settings;
   }
   throw new HttpError(404, `No remote route ${m} ${p}`);
+}
+
+// ---------------------------------------------------------------- held remote writes (docs/REMOTE.md, milestone 4)
+// GET /api/phone/remote/pending, POST .../:id/send { digest } | .../:id/discard. P9 always fails to send (409, the
+// failed state); P7 expires 20 s after start (the expired state); P5 belongs to another project (never shown here).
+const REMOTE_OFF = process.env.MOCK_REMOTE === 'off';
+/** The gateway's project id: repoKey(root) (src/core/tokens.ts). */
+const projectKey = (root) => {
+  let k = root.replace(/\\/g, '/').replace(/\/+$/, '');
+  if (/^[A-Za-z]:\//.test(k)) k = k.toLowerCase();
+  return createHash('sha256').update(k).digest('hex').slice(0, 16);
+};
+const inSec = (s) => new Date(now + s * 1000).toISOString();
+const LONG_OTHER = [
+  'Yes, a few things. Name the presets after where the video goes, not the codec: "YouTube", "YouTube Shorts", "Instagram Reel", "Archive". Archive is the only one that keeps the original frame rate and uses a high bitrate; the others cap at 30 fps.',
+  'Keep the last preset the user picked per project, not globally, because I switch between a landscape channel and a Shorts channel all day.',
+  "Don't add GIF export yet. If the WebM encoder isn't available on this machine, grey the option out with a one-line reason instead of hiding it, so I know it exists.",
+  'Please add a test for the per-project memory, and one that a vertical timeline still opens on YouTube Shorts.',
+].join('\n\n');
+function heldWrite(w) {
+  const projectId = w.projectId ?? projectKey(state.repoRoot);
+  const digest = createHash('sha256').update(JSON.stringify([w.id, projectId, w.kind, w.text ?? null, w.noteId ?? null, w.answers ?? null, w.taskId ?? null])).digest('hex');
+  return { projectName: config.projectName ?? 'acme-app', client: 'Claude', pendingId: w.id, digest, ...w, projectId };
+}
+const remotePending = EMPTY ? [] : [
+  heldWrite({ id: 'P8', kind: 'reply', noteId: 'N12', text: "Go with 7 days, and show the friendly 'link expired' page with a button to ask for a new link.",
+    replyTo: { id: 'N12', from: 'ada', text: "Should invite links expire after 7 days or 30? And should a revoked link show a friendly 'link expired' page or a plain 404?" },
+    createdAt: iso(13), expiresAt: inSec(138) }),
+  heldWrite({ id: 'P11', kind: 'answer', noteId: 'N25', answers: [{ choices: ['MP4 (H.264)', 'WebM'] }, { choices: ['1080p'] }, { choices: [], other: LONG_OTHER }],
+    replyTo: { id: 'N25', from: 'captain', text: 'Export formats: which should the Export dialog offer? Default resolution for a new export? Anything else the crew should know before building the presets?' },
+    createdAt: iso(4), expiresAt: inSec(652) }),
+  heldWrite({ id: 'P9', kind: 'goal', text: 'Run the full export test suite on the Windows build and post the timings for each preset on the board.', createdAt: iso(9), expiresAt: inSec(370) }),
+  heldWrite({ id: 'P7', kind: 'reply', noteId: 'N14', text: 'Pull ada/invite-api first, then rerun the fixture.',
+    replyTo: { id: 'N14', from: 'bea', text: 'Which token format does T2 use? The share fixture fails on length.' }, createdAt: iso(14.6), expiresAt: inSec(20) }),
+  heldWrite({ id: 'P5', kind: 'goal', projectId: '0000000000000000', projectName: 'StarCut', text: 'Another project: never on this board.', createdAt: iso(2), expiresAt: inSec(600) }),
+];
+async function remotePendingApi(req, m, p) {
+  need(!REMOTE_OFF, 503, 'Phone gateway: remote access is off');
+  for (let i = remotePending.length - 1; i >= 0; i--) if (Date.parse(remotePending[i].expiresAt) <= Date.now()) remotePending.splice(i, 1);
+  if (m === 'GET' && p === '/api/phone/remote/pending') {
+    return remotePending.map((w) => ({ ...w, title: `${w.client} wants to ${w.kind} ${w.noteId ?? w.taskId ?? ''}`.trim(), summary: (w.text ?? '').slice(0, 140) }));
+  }
+  const mm = /^\/api\/phone\/remote\/pending\/([^/]+)\/(send|discard)$/.exec(p);
+  need(mm && m === 'POST', 404, `No phone route ${m} ${p}`);
+  const i = remotePending.findIndex((w) => w.id.toUpperCase() === decodeURIComponent(mm[1]).toUpperCase());
+  need(i >= 0, 404, `Nothing held as ${mm[1]}: it was already sent, discarded or has expired`);
+  const w = remotePending[i];
+  if (mm[2] === 'discard') { remotePending.splice(i, 1); return { ok: true, id: w.id }; }
+  const b = await body(req);
+  need(typeof b.digest === 'string' && b.digest, 400, 'Send needs the digest of the card you saw');
+  need(b.digest === w.digest, 409, `${w.id} is not what your screen showed; reload and check it again. Nothing was sent.`);
+  need(w.id !== 'P9', 409, "acme-app's Captain isn't running (Muster said: captain is not running)");
+  const via = { client: w.client, approvedOn: 'desktop', approvedAt: new Date().toISOString() };
+  let summary = '';
+  if (w.kind === 'goal') {
+    state.goal = { text: w.text, at: new Date().toISOString() };
+    addFeed('message', 'you', 'captain', w.text, { via });
+    summary = 'Goal sent to the Captain';
+  } else if (w.kind === 'reply') {
+    const n = findNote(w.noteId);
+    n.replies.push({ at: new Date().toISOString(), from: 'you', text: w.text });
+    addFeed('reply', 'you', undefined, w.text, { noteId: n.id, via });
+    summary = `Replied on ${n.id}`;
+  } else if (w.kind === 'answer') {
+    const n = findNote(w.noteId);
+    n.answers = n.ask.map((q, k) => ({ header: q.header, choices: w.answers[k].choices ?? [], ...(w.answers[k].other ? { other: w.answers[k].other } : {}) }));
+    const text = n.answers.map((a, k) => `${a.header || `Q${k + 1}`}: ${[...a.choices, ...(a.other ? [a.other] : [])].join(', ')}`).join('\n');
+    n.replies.push({ at: new Date().toISOString(), from: 'you', text });
+    addFeed('reply', 'you', undefined, text, { noteId: n.id, via });
+    n.open = false; n.closedAt = new Date().toISOString();
+    summary = `Answered ${n.id}`;
+  }
+  remotePending.splice(i, 1);
+  broadcast();
+  return { ok: true, id: w.id, summary };
 }
 
 // GET /api/project (T17 contract). MOCK_GH=missing|unauthed simulates a machine without gh.

@@ -6,6 +6,7 @@ import type {
 // Phone gateway admin API types (forwarded by the orchestrator's /api/phone/*, docs/PHONE.md).
 import type { PhoneNetworkMode, PhonePairCode, PhoneSendPrefs, PhoneStatus } from './phonemodel';
 import type { RemoteCode, RemoteConfig, RemoteLogEntry, RemoteSettings, RemoteStatus, RemoteTestResult } from './remotemodel';
+import type { PendingRemote } from './heldmodel';
 
 // TODO: import StationDef from src/types.ts once T9 (crew-6) merges.
 // Contract with T12/T14 (crew-8): GET /api/lines.
@@ -215,6 +216,11 @@ export const api = {
   remoteSettings: () => req<RemoteSettings>('GET', '/api/phone/remote/settings'),
   /** Turning the hold off needs confirm: true (the warning dialog); turning it back on doesn't. */
   remoteSetSettings: (patch: Partial<RemoteSettings> & { confirm?: boolean }) => req<RemoteSettings>('PUT', '/api/phone/remote/settings', patch),
+  // remote connector: writes Claude asked for, held until you tap Send (docs/REMOTE.md, milestone 4 contract)
+  remotePending: () => req<PendingRemote[]>('GET', '/api/phone/remote/pending'),
+  /** `digest` is the one on the card you saw: the gateway sends exactly that or refuses (409, nothing sent). */
+  remoteSend: (id: string, digest: string) => req<{ ok: boolean; id: string; summary: string }>('POST', `/api/phone/remote/pending/${enc(id)}/send`, { digest }),
+  remoteDiscard: (id: string) => req<{ ok: boolean; id: string }>('POST', `/api/phone/remote/pending/${enc(id)}/discard`),
 
   // roadmap (the Captain owns the plan; you approve it, send it back, tick criteria)
   roadmap: () => req<RoadmapResponse>('GET', '/api/roadmap'),
