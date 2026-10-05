@@ -933,7 +933,9 @@ export async function startGateway(opts: GatewayOptions = {}): Promise<Gateway> 
       for (const item of items) {
         if (c.known.has(item.id)) continue;
         c.known.add(item.id);
-        if (shouldNotify(item, device.prefs, t)) send(c.ws, { type: 'need', item });
+        // Every new item goes out so the phone's list stays live; only the ones that pass its prefs buzz. 'need_silent'
+        // (not 'need' with a flag) so an older app, which ignores unknown types, never buzzes in quiet hours.
+        send(c.ws, { type: shouldNotify(item, device.prefs, t) ? 'need' : 'need_silent', item });
       }
       for (const id of [...c.known]) {
         if (current.has(id) || !polled.has(id.slice(0, id.indexOf(':')))) continue; // unreachable projects keep their items

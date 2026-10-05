@@ -306,7 +306,8 @@ data class ErrorBody(val error: String = "")
 
 /** Messages on GET /api/events. */
 sealed interface ServerEvent {
-    data class Need(val item: NeedItem) : ServerEvent
+    /** A new item; [notify] false (`need_silent`: quiet hours, a switch off) means add it to the list without buzzing. */
+    data class Need(val item: NeedItem, val notify: Boolean = true) : ServerEvent
     data class Resolved(val id: String) : ServerEvent
     data object Ping : ServerEvent
     data object Test : ServerEvent
@@ -348,7 +349,7 @@ object Parse {
     fun event(text: String): ServerEvent? = try {
         val obj = MusterJson.parseToJsonElement(text).jsonObject
         when (val type = obj["type"]?.jsonPrimitive?.contentOrNull) {
-            "need" -> obj["item"]?.let { ServerEvent.Need(MusterJson.decodeFromJsonElement(NeedItem.serializer(), it)) }
+            "need", "need_silent" -> obj["item"]?.let { ServerEvent.Need(MusterJson.decodeFromJsonElement(NeedItem.serializer(), it), notify = type == "need") }
             "resolved" -> obj["id"]?.jsonPrimitive?.contentOrNull?.let { ServerEvent.Resolved(it) }
             "ping" -> ServerEvent.Ping
             "test" -> ServerEvent.Test
