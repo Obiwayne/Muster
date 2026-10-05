@@ -192,7 +192,9 @@ Crew chat: a message sent via the connector is identical to one you typed except
 phone at 22:06".
 
 Designs (Vellum file "Muster"): Dashboard page y 3980: "Bulletin board — held reply from Claude", "Crew chat — via
-Claude", "Bulletin board — held answer, long", "Send card — failed and expired states". Mobile page y 2080: M10, M11,
+Claude", "Bulletin board — held answer, long", "Send card — failed and expired states". Tablet page y 2280: T07 landscape Needs you with a held answer (list + Send pane, pinned footer), T08 portrait
+full-screen held reply (tap from the list), T09 Needs you and T10 Crew with the hold-off banner (no toggle).
+Mobile page y 2080: M10, M11,
 M12 (long, pinned Send bar), "PC — Settings › Remote access", "PC — Remote access — warnings", "Dialog — turn off the
 hold".
 
