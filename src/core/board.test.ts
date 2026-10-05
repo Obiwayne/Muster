@@ -1,6 +1,6 @@
 import { beforeEach, describe, expect, it } from 'vitest';
-import type { MusterState } from '../types.js';
-import { answerAsk, askHuman, cleanAsk, closeNote, escalate, inboxFor, isNeedsYou, listFeed, listNotes, markRead, noteFeedId, nudgeText, postNote, reactFeed, replyNote, sendMessage } from './board.js';
+import type { MusterState, Task } from '../types.js';
+import { answerAsk, askHuman, cleanAsk, closeNote, reopenWaiting, waitsOnYou, escalate, inboxFor, isNeedsYou, listFeed, listNotes, markRead, noteFeedId, nudgeText, postNote, reactFeed, replyNote, sendMessage } from './board.js';
 import { emptyState } from './store.js';
 import { makeAgent } from './testutil.js';
 
@@ -223,5 +223,44 @@ describe('Captain questions (AskUserQuestion)', () => {
     const n = askHuman(s, 'captain', [art]);
     replyNote(s, n.id, 'you', 'Let me think');
     expect(n.open).toBe(true);
+  });
+});
+
+describe('notes that wait on you', () => {
+  const task = (id: string, extra: Partial<Task>): Task => ({
+    id, title: id, description: '', dependsOn: [], stations: ['plan', 'approve', 'review'], stationIndex: 1, status: 'awaiting_approval',
+    createdBy: 'captain', createdAt: 'x', updatedAt: 'x', history: [], ...extra,
+  });
+
+  it('a Captain reply with close=true leaves a waiting approval note open; your reply closes it', () => {
+    s.tasks.push(task('T1', {}));
+    const n = postNote(s, { actor: 'crew-2', type: 'approval', taskId: 'T1', to: 'you', text: 'T1 waits for your approval' });
+    expect(waitsOnYou(s, n)).toBe(true);
+    replyNote(s, n.id, 'captain', 'Got it, redrawing the logo', true);
+    expect(n.open).toBe(true);
+    expect(isNeedsYou(n)).toBe(true);
+    expect(() => closeNote(s, n.id, 'captain')).toThrow(/still waits/);
+    replyNote(s, n.id, 'you', 'never mind', true);
+    expect(n.open).toBe(false);
+  });
+
+  it('a review note closes normally once you approved the merge', () => {
+    s.tasks.push(task('T2', { status: 'ready_for_merge', stationIndex: 2 }));
+    const n = postNote(s, { actor: 'captain', type: 'review', taskId: 'T2', text: 'T2 ready' });
+    expect(() => closeNote(s, n.id, 'captain')).toThrow();
+    s.tasks[0].mergeApproval = { at: 'x' };
+    closeNote(s, n.id, 'captain');
+    expect(n.open).toBe(false);
+  });
+
+  it('reopenWaiting puts back the newest approval note an agent closed while the task still waits', () => {
+    s.tasks.push(task('T1', {}), task('T3', { status: 'merged' }));
+    const old = postNote(s, { actor: 'crew-2', type: 'approval', taskId: 'T1', to: 'you', text: 'first' });
+    const n = postNote(s, { actor: 'crew-2', type: 'approval', taskId: 'T1', to: 'you', text: 'second' });
+    const done = postNote(s, { actor: 'crew-2', type: 'approval', taskId: 'T3', to: 'you', text: 'merged' });
+    for (const x of [old, n, done]) x.open = false;
+    expect(reopenWaiting(s)).toBe(1);
+    expect([old.open, n.open, done.open]).toEqual([false, true, false]);
+    expect(reopenWaiting(s)).toBe(0);
   });
 });

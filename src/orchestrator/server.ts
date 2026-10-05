@@ -17,7 +17,7 @@ import { newSecret, removeHumanToken, writeHumanToken } from '../core/tokens.js'
 import { installRefGuard } from '../core/refguard.js';
 import { refreshGuard } from '../core/usage.js';
 import { buildStamp, isStale, staleText } from '../core/build.js';
-import { closeNoteIfOpen, postNote, HUMAN, SYSTEM } from '../core/board.js';
+import { closeNoteIfOpen, postNote, reopenWaiting, HUMAN, SYSTEM } from '../core/board.js';
 import { AgentManager, type Timings } from './agents.js';
 import type { GhRunner } from '../core/github.js';
 import { createApi, sendJson } from './api.js';
@@ -393,6 +393,8 @@ export async function startOrchestrator(opts: OrchestratorOptions): Promise<Orch
     n.dismissed = true;
     settled++;
   }
+  // An approval or review an agent closed while the task still waited on you goes back on "Needs you".
+  settled += reopenWaiting(store.state);
   if (settled) store.commit();
   const buildTimer = setInterval(checkBuild, opts.buildCheckMs ?? 60_000).unref();
   // Due watches (approved ideas' re-checks, competitors you keep watching) queue one job each; skipped while paused.

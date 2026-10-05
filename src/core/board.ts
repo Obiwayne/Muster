@@ -103,6 +103,30 @@ export function requireNote(state: MusterState, id: string): Note {
   return n;
 }
 
+/** A review or approval note whose task still waits on you: only you (or approving/rejecting) may close it, or it
+ * would drop off Needs you, the phone and the board's Approve buttons while the task sits waiting. */
+export function waitsOnYou(state: MusterState, n: Note): boolean {
+  if (n.type !== 'review' && n.type !== 'approval') return false;
+  const task = n.taskId ? state.tasks.find((t) => t.id === n.taskId) : undefined;
+  if (!task) return false;
+  return n.type === 'approval' ? task.status === 'awaiting_approval' : task.status === 'ready_for_merge' && !task.mergeApproval;
+}
+
+/** Reopens the newest review/approval note of each task that still waits on you but has none open (an agent closed it
+ * before [waitsOnYou] guarded that). Returns how many it reopened. */
+export function reopenWaiting(state: MusterState): number {
+  const latest = new Map<string, Note>();
+  for (const n of state.notes) if ((n.type === 'review' || n.type === 'approval') && n.taskId) latest.set(`${n.type}:${n.taskId}`, n);
+  let reopened = 0;
+  for (const n of latest.values()) {
+    if (n.open || n.dismissed || !waitsOnYou(state, n)) continue;
+    n.open = true;
+    delete n.closedAt;
+    reopened++;
+  }
+  return reopened;
+}
+
 export function closeNoteIfOpen(n: Note): void {
   if (!n.open) return;
   n.open = false;
@@ -116,7 +140,7 @@ export function replyNote(state: MusterState, noteId: string, actor: string, tex
   if (!text?.trim()) throw badRequest('Reply text is empty');
   const body = text.trim();
   note.replies.push({ at: nowIso(), from, text: body });
-  if (close) closeNoteIfOpen(note);
+  if (close && (from === HUMAN || !waitsOnYou(state, note))) closeNoteIfOpen(note);
   const feedId = addFeed(state, { kind: 'reply', from, noteId: note.id, taskId: note.taskId, text: body, ...(via ? { via } : {}) }).id;
 
   const item = { from, kind: 'reply' as const, text: `reply from ${from} on ${note.id}: ${body}`, noteId: note.id, taskId: note.taskId, feedId };
@@ -127,8 +151,9 @@ export function replyNote(state: MusterState, noteId: string, actor: string, tex
 }
 
 export function closeNote(state: MusterState, noteId: string, actor: string): Note {
-  requireActor(state, actor);
+  const from = requireActor(state, actor);
   const note = requireNote(state, noteId);
+  if (from !== HUMAN && waitsOnYou(state, note)) throw badRequest(`${note.id} stays open: ${note.taskId} still waits for the human's approval; leave it open`);
   closeNoteIfOpen(note);
   return note;
 }
