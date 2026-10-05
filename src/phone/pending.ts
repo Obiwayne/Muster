@@ -1,6 +1,9 @@
 // Held remote writes (docs/REMOTE.md, "Confirmation gate"): what Claude asked to send through the connector, waiting for
 // your tap on Send (phone or desktop). Kept in the gateway's state.json; 15 minutes, then they expire unsent.
-import type { NeedItem } from './needs.js';
+// A held write never changes. Its `digest` covers everything that would be sent, the card shows it, and Send must
+// quote it back, so a tap always sends exactly what was on screen (a stale or different card gets 409).
+import { createHash } from 'node:crypto';
+import type { NeedItem, RemoteWriteView } from './needs.js';
 import type { WriteInput, WriteKind } from './remote.js';
 
 export const PENDING_TTL_MS = 15 * 60_000;
@@ -14,10 +17,22 @@ export interface PendingWrite {
   noteId?: string;
   answers?: WriteInput['answers'];
   taskId?: string;
+  /** The note a reply/answer goes to, as it was when the write was held (agent-written; shown as data). */
+  replyTo?: { id: string; from: string; text: string };
+  /** approve: the task's title when held. */
+  taskTitle?: string;
   /** The connector client that asked (the OAuth client's name). */
   client: string;
   createdAt: string;
   expiresAt: string;
+  /** sha256 of what would be sent (see digestOf). */
+  digest: string;
+}
+
+/** What Send would do, as one canonical string: the digest the card shows and Send must quote back. */
+export function digestOf(w: Pick<PendingWrite, 'id' | 'projectId' | 'kind' | 'text' | 'noteId' | 'answers' | 'taskId'>): string {
+  const what = [w.id, w.projectId, w.kind, w.text ?? null, w.noteId ?? null, w.answers ?? null, w.taskId ?? null];
+  return createHash('sha256').update(JSON.stringify(what)).digest('hex');
 }
 
 const clip = (s: string, n: number) => {
@@ -38,11 +53,29 @@ export function pendingTitle(w: PendingWrite): string {
   }
 }
 
-/** One line of what would be sent. */
+/** One short line for notifications and lists. Cards show `remote` in full instead. */
 export function pendingSummary(w: PendingWrite): string {
   if (w.kind === 'answer') return clip((w.answers ?? []).map((a) => [...(a.choices ?? []), ...(a.other ? [a.other] : [])].join(', ')).join(' | '), 140);
   if (w.kind === 'approve') return `Approve ${w.taskId}; the Captain then merges and pushes it`;
   return clip(w.text ?? '', 140);
+}
+
+/** Everything the Send card must show, untruncated. */
+export function pendingView(w: PendingWrite): RemoteWriteView {
+  return {
+    pendingId: w.id,
+    kind: w.kind,
+    projectName: w.projectName,
+    client: w.client,
+    ...(w.text !== undefined ? { text: w.text } : {}),
+    ...(w.answers ? { answers: w.answers } : {}),
+    ...(w.replyTo ? { replyTo: w.replyTo } : {}),
+    ...(w.taskId ? { taskId: w.taskId } : {}),
+    ...(w.taskTitle ? { taskTitle: w.taskTitle } : {}),
+    createdAt: w.createdAt,
+    expiresAt: w.expiresAt,
+    digest: w.digest,
+  };
 }
 
 /** The Needs-you item for a held write (phone and desktop): Send or Discard. */
@@ -58,6 +91,7 @@ export function pendingToNeed(w: PendingWrite): NeedItem {
     summary: pendingSummary(w),
     from: w.client,
     createdAt: w.createdAt,
+    remote: pendingView(w),
     actions: ['send', 'discard'],
   };
 }

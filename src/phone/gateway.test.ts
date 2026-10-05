@@ -475,6 +475,8 @@ describe('phone gateway: held remote writes (docs/REMOTE.md, confirmation gate)'
   const audit3 = () => readFileSync(phoneFiles(dir3).remoteLog, 'utf8').trim().split('\n').map((l) => JSON.parse(l));
   const orchCalls = (path: string, since: number) => calls.slice(since).filter((c) => c.path === path);
   const remoteItems = async () => ((await phone3('GET', '/api/needs')).data.items as any[]).filter((i) => i.kind === 'remote_write');
+  /** The digest on the card for a held write, as the phone/desktop would send it back with Send. */
+  const dig = async (id: string): Promise<string> => (await remoteItems()).find((i) => i.remote.pendingId === id)?.remote.digest ?? 'gone';
   const start3 = async () => {
     gw3 = await startGateway({ dir: dir3, port: 0, host: '127.0.0.1', recentFile: null, pollMs: 60_000, log: () => {}, now: () => new Date(t3), remote: { port: 0, devToken: 'dev' } });
     cert3 = readFileSync(phoneFiles(dir3).cert, 'utf8');
@@ -514,14 +516,14 @@ describe('phone gateway: held remote writes (docs/REMOTE.md, confirmation gate)'
 
   it('your tap on Send (phone) runs it as you, marked via the connector, and clears it', async () => {
     const before = calls.length;
-    const r = await phone3('POST', `/api/projects/${pid}/pending/P1/send`);
+    const r = await phone3('POST', `/api/projects/${pid}/pending/P1/send`, { digest: await dig('P1') });
     expect(r.status).toBe(200);
     expect(r.data).toMatchObject({ ok: true, id: 'P1', summary: 'goal sent to the Captain' });
     const [ask] = orchCalls('/api/ask', before);
     expect(ask.token).toBe(ORCH_TOKEN);
     expect(ask.body).toMatchObject({ text: 'Add an export button', via: { client: 'dev token', approvedOn: 'phone', approvedAt: new Date(t3).toISOString() } });
     expect(await remoteItems()).toHaveLength(0);
-    expect((await phone3('POST', `/api/projects/${pid}/pending/P1/send`)).status).toBe(404); // only once
+    expect((await phone3('POST', `/api/projects/${pid}/pending/P1/send`, { digest: 'x' })).status).toBe(404); // only once
     expect(audit3().some((l) => l.event === 'write_sent' && l.id === 'P1' && l.approvedOn === 'phone')).toBe(true);
   });
 
@@ -535,7 +537,7 @@ describe('phone gateway: held remote writes (docs/REMOTE.md, confirmation gate)'
     ]);
     const before = calls.length;
     expect((await admin3('POST', '/admin/remote/pending/P3/discard')).status).toBe(200);
-    expect((await admin3('POST', '/admin/remote/pending/P2/send')).status).toBe(200);
+    expect((await admin3('POST', '/admin/remote/pending/P2/send', { digest: listed[0].digest })).status).toBe(200);
     const sent = orchCalls('/api/notes/N5/reply', before);
     expect(sent).toHaveLength(1);
     expect(sent[0].body).toMatchObject({ text: 'Blue', via: { approvedOn: 'desktop' } });
@@ -555,22 +557,71 @@ describe('phone gateway: held remote writes (docs/REMOTE.md, confirmation gate)'
     await tool('muster_send_goal', { text: 'Retry me' });
     askFails = true;
     try {
-      const r = await phone3('POST', `/api/projects/${pid}/pending/P4/send`);
+      const r = await phone3('POST', `/api/projects/${pid}/pending/P4/send`, { digest: await dig('P4') });
       expect(r.status).toBe(409);
       expect((await remoteItems()).map((i) => i.id)).toEqual([`${pid}:P4`]);
     } finally {
       askFails = false;
     }
-    expect((await phone3('POST', `/api/projects/${pid}/pending/P4/send`)).status).toBe(200);
+    expect((await phone3('POST', `/api/projects/${pid}/pending/P4/send`, { digest: await dig('P4') })).status).toBe(200);
+  });
+
+  it('the card carries the write in full: untruncated text, the project, the note it replies to, and when it expires', async () => {
+    const long = 'Rework the export dialog. '.repeat(120).trim(); // ~3100 characters
+    const g = await tool('muster_send_goal', { text: long });
+    const r = await tool('muster_reply', { noteId: 'N5', text: 'Teal, like the logo' });
+    const gid = /as (P\d+)/.exec(g.text)![1];
+    const rid = /as (P\d+)/.exec(r.text)![1];
+    const items = await remoteItems();
+    const goal = items.find((i) => i.remote.pendingId === gid);
+    const reply = items.find((i) => i.remote.pendingId === rid);
+    expect(goal.remote).toMatchObject({ kind: 'goal', projectName: 'Fake Project', client: 'dev token', text: long, expiresAt: new Date(t3 + 15 * 60_000).toISOString() });
+    expect(goal.summary.length).toBeLessThanOrEqual(140); // the short line is for notifications only
+    expect(reply.remote).toMatchObject({ kind: 'reply', text: 'Teal, like the logo', replyTo: { id: 'N5', from: 'ada', text: 'Which colour?' } });
+    expect(goal.remote.digest).toMatch(/^[0-9a-f]{64}$/);
+    for (const id of [gid, rid]) await phone3('POST', `/api/projects/${pid}/pending/${id}/discard`);
+  });
+
+  it('Send sends exactly what the card showed: no digest is 400, a different one is 409, and nothing is sent', async () => {
+    const a = /as (P\d+)/.exec((await tool('muster_send_goal', { text: 'First' })).text)![1];
+    const b = /as (P\d+)/.exec((await tool('muster_send_goal', { text: 'Second' })).text)![1];
+    const before = calls.length;
+    expect((await phone3('POST', `/api/projects/${pid}/pending/${a}/send`)).status).toBe(400);
+    const wrong = await phone3('POST', `/api/projects/${pid}/pending/${a}/send`, { digest: await dig(b) }); // another card's digest
+    expect(wrong.status).toBe(409);
+    expect(wrong.data.error).toContain('not what your screen showed');
+    expect((await admin3('POST', `/admin/remote/pending/${a}/send`, { digest: 'f'.repeat(64) })).status).toBe(409);
+    expect(orchCalls('/api/ask', before)).toHaveLength(0);
+    expect(audit3().some((l) => l.event === 'write_send_refused' && l.id === a && l.reason === 'digest_mismatch')).toBe(true);
+    // two calls with the same text still get different digests (the id is part of it)
+    const c = /as (P\d+)/.exec((await tool('muster_send_goal', { text: 'First' })).text)![1];
+    expect(await dig(c)).not.toBe(await dig(a));
+    for (const id of [a, b, c]) await phone3('POST', `/api/projects/${pid}/pending/${id}/discard`);
+  });
+
+  it('a held write edited on disk is refused even with the digest the card showed', async () => {
+    const id = /as (P\d+)/.exec((await tool('muster_send_goal', { text: 'Original' })).text)![1];
+    const shown = await dig(id);
+    await gw3.close();
+    const file = join(dir3, 'state.json');
+    const st = JSON.parse(readFileSync(file, 'utf8'));
+    st.remote.pending.find((w: any) => w.id === id).text = 'Swapped';
+    writeFileSync(file, JSON.stringify(st));
+    await start3();
+    const before = calls.length;
+    expect((await phone3('POST', `/api/projects/${pid}/pending/${id}/send`, { digest: shown })).status).toBe(409);
+    expect(orchCalls('/api/ask', before)).toHaveLength(0);
+    expect(audit3().some((l) => l.event === 'write_send_refused' && l.reason === 'changed_on_disk')).toBe(true);
+    await phone3('POST', `/api/projects/${pid}/pending/${id}/discard`);
   });
 
   it('held writes expire after 15 minutes unsent', async () => {
-    await tool('muster_send_goal', { text: 'Too late' });
+    const id = /as (P\d+)/.exec((await tool('muster_send_goal', { text: 'Too late' })).text)![1];
     expect(await remoteItems()).toHaveLength(1);
     t3 += 15 * 60_000 + 1;
     expect(await remoteItems()).toHaveLength(0);
-    expect((await phone3('POST', `/api/projects/${pid}/pending/P5/send`)).status).toBe(404);
-    expect(audit3().some((l) => l.event === 'write_expired' && l.id === 'P5')).toBe(true);
+    expect((await phone3('POST', `/api/projects/${pid}/pending/${id}/send`, { digest: 'x' })).status).toBe(404);
+    expect(audit3().some((l) => l.event === 'write_expired' && l.id === id)).toBe(true);
   });
 
   it('turning the hold off needs confirm: true from the desktop; then writes run at once as "not held"', async () => {
@@ -601,7 +652,7 @@ describe('phone gateway: held remote writes (docs/REMOTE.md, confirmation gate)'
       expect(r.text).toMatch(/^Held for your OK as P\d+/);
       const id = /as (P\d+)/.exec(r.text)![1];
       const before = calls.length;
-      expect((await phone3('POST', `/api/projects/${pid}/pending/${id}/send`)).status).toBe(200);
+      expect((await phone3('POST', `/api/projects/${pid}/pending/${id}/send`, { digest: await dig(id) })).status).toBe(200);
       expect(orchCalls('/api/tasks/T1/approve-merge', before)).toHaveLength(1);
     } finally {
       await admin3('PUT', '/admin/remote/settings', { allowApprove: false });

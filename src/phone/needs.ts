@@ -19,7 +19,24 @@ export interface NeedItem {
   createdAt: string;
   evidence?: { id: string; files: number; thumbs: string[] };
   ask?: AskQuestion[]; // escalation from the Captain's question menu: answer with POST .../notes/:nid/answer
+  remote?: RemoteWriteView; // kind 'remote_write': the held write in full; Send must quote back its digest
   actions: NeedAction[];
+}
+
+/** A held remote write as the Send card shows it (docs/REMOTE.md): nothing clipped, plus when it expires. */
+export interface RemoteWriteView {
+  pendingId: string;
+  kind: 'goal' | 'reply' | 'answer' | 'approve';
+  projectName: string;
+  client: string;
+  text?: string;
+  answers?: { choices?: string[]; other?: string }[];
+  replyTo?: { id: string; from: string; text: string };
+  taskId?: string;
+  taskTitle?: string;
+  createdAt: string;
+  expiresAt: string;
+  digest: string;
 }
 
 export interface Prefs {

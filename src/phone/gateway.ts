@@ -18,7 +18,7 @@ import { repoKey, sameToken } from '../core/tokens.js';
 import { clonePrefs, mergePrefs, needsFromState, shouldNotify, type NeedItem, type Prefs } from './needs.js';
 import { hostsFor, lanHosts as realLanHosts, tailscaleInfo as realTailscale, type TailscaleInfo } from './net.js';
 import { displayCode, Pairing } from './pairing.js';
-import { PENDING_TTL_MS, pendingSummary, pendingTitle, pendingToNeed, sweepExpired, type PendingWrite } from './pending.js';
+import { digestOf, PENDING_TTL_MS, pendingSummary, pendingTitle, pendingToNeed, pendingView, sweepExpired, type PendingWrite } from './pending.js';
 import { startRemote, type Remote, type RemoteSettings, type RemoteStatus, type Tunnel, type WriteInput, type WriteOutcome } from './remote.js';
 import { desktopSettingsFile, listProjects, orchestratorFetch, orchestratorJson, OrchestratorError, recentRoots, type Project } from './projects.js';
 import {
@@ -282,7 +282,7 @@ export async function startGateway(opts: GatewayOptions = {}): Promise<Gateway> 
   };
 
   /** Checks a write against the project's current state, so you're never asked to approve something that can't run. */
-  const checkWrite = async (p: Project, input: WriteInput): Promise<void> => {
+  const checkWrite = async (p: Project, input: WriteInput): Promise<Pick<PendingWrite, 'replyTo' | 'taskTitle'>> => {
     const { state: s, config } = await stateOf(p);
     if (config?.projectName) p.name = config.projectName; // the name you know it by, as Needs you shows it
     const textOk = () => {
@@ -293,17 +293,21 @@ export async function startGateway(opts: GatewayOptions = {}): Promise<Gateway> 
       textOk();
       const captain = s.agents.find((a) => a.role === 'captain');
       if (!captain || captain.status === 'stopped') throw new Error(`${p.name} has no running Captain to take a goal.`);
-      return;
+      return {};
     }
     if (input.kind === 'reply' || input.kind === 'answer') {
       const note = s.notes.find((n) => n.id.toUpperCase() === (input.noteId ?? '').trim().toUpperCase());
       if (!note) throw new Error(`No note "${input.noteId}" in ${p.name}.`);
       input.noteId = note.id;
-      if (input.kind === 'reply') return textOk();
+      const replyTo = { id: note.id, from: note.from, text: note.text }; // shown on the card, as it was when held
+      if (input.kind === 'reply') {
+        textOk();
+        return { replyTo };
+      }
       if (!note.ask) throw new Error(`${note.id} is not a question menu; use muster_reply.`);
       if (!note.open) throw new Error(`${note.id} is already answered.`);
       if (!Array.isArray(input.answers) || input.answers.length !== note.ask.length) throw new Error(`${note.id} has ${note.ask.length} question(s); give one answer for each, in order.`);
-      return;
+      return { replyTo };
     }
     // approve
     if (!state.remote.allowApprove) throw new Error('Approving merges from the connector is switched off in Muster Settings.');
@@ -312,6 +316,7 @@ export async function startGateway(opts: GatewayOptions = {}): Promise<Gateway> 
     input.taskId = task.id;
     const ready = (task.status === 'ready_for_merge' && !task.mergeApproval) || task.status === 'awaiting_approval';
     if (!ready) throw new Error(`${task.id} is ${task.status.replace(/_/g, ' ')}; nothing to approve.`);
+    return { taskTitle: task.title };
   };
 
   /** Runs a write against the orchestrator as you, marked `via` so crew chat shows it as yours, via the connector. */
@@ -342,21 +347,23 @@ export async function startGateway(opts: GatewayOptions = {}): Promise<Gateway> 
   /** RemoteContext.write: hold it for your tap (default), or run it now when the hold is off. */
   const remoteWrite = async (input: WriteInput, client: string): Promise<WriteOutcome> => {
     const p = await writeProject(input.project);
-    await checkWrite(p, input);
+    const context = await checkWrite(p, input);
     const t = now().getTime();
-    const w: PendingWrite = {
+    const base = {
       id: `P${state.remote.nextPending++}`,
       projectId: p.id,
       projectName: p.name,
       kind: input.kind,
       ...(input.text !== undefined ? { text: input.text.trim() } : {}),
       ...(input.noteId ? { noteId: input.noteId } : {}),
-      ...(input.answers ? { answers: input.answers } : {}),
+      ...(input.answers ? { answers: JSON.parse(JSON.stringify(input.answers)) as WriteInput['answers'] } : {}), // a copy nothing else holds
       ...(input.taskId ? { taskId: input.taskId } : {}),
+      ...context,
       client,
       createdAt: new Date(t).toISOString(),
       expiresAt: new Date(t + PENDING_TTL_MS).toISOString(),
     };
+    const w: PendingWrite = { ...base, digest: digestOf(base) };
     if (!state.remote.confirmWrites) {
       save(); // the id counter
       return { held: false, projectName: p.name, summary: await runWrite(w, 'not held') };
@@ -377,9 +384,15 @@ export async function startGateway(opts: GatewayOptions = {}): Promise<Gateway> 
     state.remote.pending = state.remote.pending.filter((x) => x.id !== w.id);
     save();
   };
-  /** Your tap on Send. A failed send stays held, so you can retry or discard it. */
-  const sendPending = async (id: string, on: 'phone' | 'desktop', pid?: string) => {
+  /** Your tap on Send: `digest` is the one on the card you saw, so exactly that is sent (409 otherwise, and nothing is
+   *  sent). A failed send stays held, so you can retry or discard it. */
+  const sendPending = async (id: string, on: 'phone' | 'desktop', digest: unknown, pid?: string) => {
     const w = pendingById(id, pid);
+    if (typeof digest !== 'string' || !digest) throw new HttpError(400, 'Send needs the digest of the card you saw');
+    if (digest !== w.digest || digestOf(w) !== w.digest) {
+      auditRemote({ event: 'write_send_refused', id: w.id, reason: digest !== w.digest ? 'digest_mismatch' : 'changed_on_disk', on });
+      throw new HttpError(409, `${w.id} is not what your screen showed; reload and check it again. Nothing was sent.`);
+    }
     const summary = await runWrite(w, on);
     dropPending(w);
     schedule();
@@ -475,8 +488,8 @@ export async function startGateway(opts: GatewayOptions = {}): Promise<Gateway> 
   });
   admin('DELETE', '/admin/remote/connections', () => ({ ok: true, revoked: remoteOn().auth.revoke() }));
   /** Held writes, and your tap on Send / Discard from the desktop. */
-  admin('GET', '/admin/remote/pending', () => livePending().map((w) => ({ ...w, title: pendingTitle(w), summary: pendingSummary(w) })));
-  admin('POST', '/admin/remote/pending/:id/send', ({ params }) => sendPending(params.id, 'desktop'));
+  admin('GET', '/admin/remote/pending', () => livePending().map((w) => ({ id: w.id, projectId: w.projectId, noteId: w.noteId, ...pendingView(w), title: pendingTitle(w), summary: pendingSummary(w) })));
+  admin('POST', '/admin/remote/pending/:id/send', ({ params, body }) => sendPending(params.id, 'desktop', body.digest));
   admin('POST', '/admin/remote/pending/:id/discard', ({ params }) => discardPending(params.id, 'desktop'));
   /** Desktop-only switches. Turning the hold off needs `confirm: true` (the desktop's warning dialog): with it off, an
    *  injected bulletin note could get a reply sent without your tap. */
@@ -589,7 +602,7 @@ export async function startGateway(opts: GatewayOptions = {}): Promise<Gateway> 
     return orchestratorJson<Note>(p, 'POST', `/api/notes/${encodeURIComponent(params.nid)}/answer`, { answers: body.answers });
   });
   /** Send or Discard a held remote write (NeedItem kind 'remote_write'; :id = its "P3"). */
-  phone('POST', '/api/projects/:pid/pending/:id/send', ({ params }) => sendPending(params.id, 'phone', params.pid));
+  phone('POST', '/api/projects/:pid/pending/:id/send', ({ params, body }) => sendPending(params.id, 'phone', body.digest, params.pid));
   phone('POST', '/api/projects/:pid/pending/:id/discard', ({ params }) => discardPending(params.id, 'phone', params.pid));
   phone('POST', '/api/projects/:pid/checkout/commit', async ({ params }) => orchestratorJson(await projectById(params.pid), 'POST', '/api/checkout/commit', {}));
   phone('POST', '/api/projects/:pid/checkout/stash', async ({ params }) => orchestratorJson(await projectById(params.pid), 'POST', '/api/checkout/stash', {}));

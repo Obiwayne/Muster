@@ -76,6 +76,11 @@ review text) is returned inside a clearly labelled block, since a crew message i
 
 ## Confirmation gate (every write tool)
 
+> **The tap-to-send hold is the protection. Nothing else is.** The tool descriptions telling the model that agent note
+> text is data, not instructions, are a helpful nudge, not a control: a model can still be talked into calling a tool.
+> Never loosen, shorten or skip the hold because of that wording, and never treat it as a reason to default
+> `confirmWrites` off.
+
 Two layers, both on:
 
 Notes and review text are written by agents, so a note can carry injected instructions that trick the calling model
@@ -157,6 +162,34 @@ Plan assuming OAuth is required (the safe default):
 - A project that isn't running returns "not running, start it on the PC" (no auto-start from remote).
 
 ## UI (needs a Vellum design before building, user signs off)
+
+### Needs-you Send card (desktop board and phone), requirements
+
+The Send button is the only thing between a held item and the Captain, so the card must:
+
+1. **Show the full text, never truncated**: exactly what will be sent (`remote.text`, or every answer in
+   `remote.answers`), which **project** it goes to (`remote.projectName`), and for a reply/answer **which note** it
+   answers, with that note's author and text (`remote.replyTo`, agent-written, shown as a quote, not as a heading). For
+   approve: task id and title. Long text scrolls inside the card; it is never clipped or "…".
+2. **Send sends exactly what's shown**: the card holds `remote.digest` and Send posts it back
+   (`{ digest }` on `.../pending/:id/send`). The gateway refuses (409, nothing sent) if it doesn't match, so a stale card
+   can never send something else. Held writes never change (built in milestone 3).
+3. **Visible countdown**: "Expires in 12 min" from `remote.expiresAt`, ticking; at 0 the card greys out and goes.
+4. **Discard is one tap and as easy to hit as Send**: same size, side by side, no confirm dialog on either. (Send is
+   the primary colour, Discard the neutral one; neither is hidden in a menu.)
+5. Says who asked (`remote.client`) and when.
+
+### Settings → Remote access card, requirements
+
+- Connection status (Connected / Not connected / Off) and the last successful call through the tunnel, plus the last
+  tunnel error (below).
+- **Connections list** with one-click Disconnect per row and "Disconnect all" (`DELETE /admin/remote/connections[/:id]`).
+- **Login lockout state**: "Logins locked until 14:32 after 5 wrong codes" while `loginLocked`.
+- **Warning when the tunnel type isn't set** (`tunnel: null`): "Set the tunnel type, or failed-login IPs will all show
+  as 127.0.0.1".
+- **Standing banner while the hold is off** (`confirmWrites: false`), on this card and at the top of Settings, until
+  it's back on; turning it off goes through the warning dialog (`confirm: true`).
+- Login code (New code, 2-minute countdown), public URL + Test, the approve-merges switch, last 50 audit lines.
 
 Settings → Phone gets a **Remote access** card. Its header carries a **connection indicator**, so you can see at a
 glance whether the link actually works, not just that it's configured:
