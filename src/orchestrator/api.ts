@@ -1,12 +1,13 @@
 // HTTP API routes (see docs/ARCHITECTURE.md). Handlers return JSON-able values or throw HttpError.
 import type { IncomingMessage, ServerResponse } from 'node:http';
-import type { Agent, MusterConfig, NoteType, Role, Task } from '../types.js';
+import type { Agent, MusterConfig, NoteType, RemoteVia, Role, Task } from '../types.js';
 import { createReadStream, statSync } from 'node:fs';
 import * as board from '../core/board.js';
 import * as checkout from '../core/checkout.js';
 import type { ConfigPatch } from '../core/config.js';
 import * as evidence from '../core/evidence.js';
 import { badRequest, conflict, forbidden, HttpError, notFound } from '../core/errors.js';
+import { repoKey } from '../core/tokens.js';
 import * as gitOps from '../core/git.js';
 import type { MusterPaths } from '../core/paths.js';
 import type { Store } from '../core/store.js';
@@ -130,6 +131,23 @@ const str = (v: unknown, name: string): string => {
   return v;
 };
 const flag = (q: URLSearchParams, k: string) => q.get(k) === '1' || q.get(k) === 'true';
+
+/** `via` on a goal/reply/answer: it came through the remote connector (docs/REMOTE.md). Only you (the gateway, with
+ *  your token) may say so; an agent claiming it is refused, so nobody can pass a message off as yours via Claude. */
+function remoteVia(body: Record<string, unknown>): RemoteVia | undefined {
+  const v = body.via;
+  if (v === undefined || v === null) return undefined;
+  if (body.actor !== board.HUMAN) throw forbidden('Only you send messages through the remote connector');
+  if (typeof v !== 'object' || Array.isArray(v)) throw badRequest('via must be an object');
+  const o = v as Record<string, unknown>;
+  const approvedOn = o.approvedOn;
+  if (approvedOn !== 'phone' && approvedOn !== 'desktop' && approvedOn !== 'not held') throw badRequest('via.approvedOn must be phone, desktop or "not held"');
+  // Strip control characters first, then fall back, and cut by characters (not UTF-16 units) so an emoji stays whole.
+  const name = typeof o.client === 'string' ? Array.from(o.client.replace(/[\u0000-\u001f\u007f]/g, '').trim()).slice(0, 80).join('').trim() : '';
+  const t = typeof o.approvedAt === 'string' ? Date.parse(o.approvedAt) : NaN;
+  const pendingId = typeof o.pendingId === 'string' && /^P\d{1,9}$/.test(o.pendingId) ? o.pendingId : undefined;
+  return { client: name || 'Claude', approvedOn, approvedAt: new Date(Number.isNaN(t) ? Date.now() : t).toISOString(), ...(pendingId ? { pendingId } : {}) };
+}
 
 export function createApi(ctx: ApiContext) {
   const { store, agents } = ctx;
@@ -426,6 +444,22 @@ ${pushed ? `Pushed ${base} to origin.` : `Push to origin failed: ${(r.stderr || 
     const waiting = mutate(() => checkout.checkoutCleared(state(), 'stashed', stashed ? 'git stash pop brings them back' : 'already clean'));
     return { ok: true, stashed, waiting };
   });
+  // The phone gateway's remote connector (docs/REMOTE.md) raising a security alert, e.g. logins locked after wrong
+  // codes: a system note to you (Bulletin board, "Needs you", phone) and, when `toast`, a Windows notification.
+  route('POST', '/api/remote/alert', ({ body }) => {
+    if (body.actor !== board.HUMAN) throw forbidden('Only the gateway (as you) raises remote alerts');
+    const text = str(body.text, 'text').trim().slice(0, 1000);
+    const note = mutate(() => {
+      const n = board.postNote(state(), { actor: board.SYSTEM, type: 'system', text, to: board.HUMAN, topic: 'remote' });
+      n.open = true; // stays on "Needs you" until you dismiss it
+      return n;
+    });
+    if (body.toast === true) {
+      ctx.notify('Muster: remote access', text);
+      ctx.toast('warn', text);
+    }
+    return { ok: true, noteId: note.id };
+  });
   // You're happy with the Captain's review: it may merge the task (merge_task) and push.
   route('POST', '/api/tasks/:id/approve-merge', ({ params, body }) => {
     if (body.actor !== board.HUMAN) throw forbidden('Only you can approve a merge');
@@ -448,6 +482,8 @@ ${pushed ? `Pushed ${base} to origin.` : `Push to origin failed: ${(r.stderr || 
   // ------------------------------------------------------------------ project / GitHub
   const gh = ctx.ghRunner ?? realGh;
   const originUrl = async (): Promise<string | undefined> => (await gitOps.git(ctx.paths.root, ['remote', 'get-url', 'origin'], true)).stdout.trim() || undefined;
+  /** This project's id as the phone gateway knows it (repoKey of the root): the board matches held writes by it. */
+  route('GET', '/api/project/id', () => ({ id: repoKey(ctx.paths.root) }));
   route('GET', '/api/project', async () => {
     const remoteUrl = await originUrl();
     return { name: ctx.config().projectName ?? '', root: ctx.paths.root, ...(remoteUrl ? { remoteUrl } : {}), gh: await ghStatus(gh, ctx.paths.root) };
@@ -473,12 +509,13 @@ ${pushed ? `Pushed ${base} to origin.` : `Push to origin failed: ${(r.stderr || 
   // ------------------------------------------------------------------ goal
   route('POST', '/api/ask', async ({ body }) => {
     const text = str(body.text, 'text').trim();
+    const via = remoteVia(body);
     const captain = board.captainOf(state());
     if (!captain) throw conflict('There is no Captain');
     if (!agents.isRunning(captain.id)) throw conflict(`${captain.id} is not running (muster start ${captain.id})`);
     mutate(() => {
       state().goal = { text, at: board.nowIso() };
-      board.addFeed(state(), { kind: 'message', from: board.HUMAN, to: captain.id, text });
+      board.addFeed(state(), { kind: 'message', from: board.HUMAN, to: captain.id, text, ...(via ? { via } : {}) });
     });
     await agents.type(captain.id, text, true);
     return { ok: true };
@@ -774,7 +811,7 @@ ${pushed ? `Pushed ${base} to origin.` : `Push to origin failed: ${(r.stderr || 
     mutate(() => board.postNote(state(), { actor: str(body.actor, 'actor'), type: str(body.type, 'type') as NoteType, text: str(body.text, 'text'), taskId: body.taskId, to: body.to })),
   );
   route('POST', '/api/notes/:id/reply', ({ params, body }) =>
-    mutate(() => board.replyNote(state(), params.id, str(body.actor, 'actor'), str(body.text, 'text'), Boolean(body.close))),
+    mutate(() => board.replyNote(state(), params.id, str(body.actor, 'actor'), str(body.text, 'text'), Boolean(body.close), remoteVia(body))),
   );
   route('POST', '/api/notes/:id/close', ({ params, body }) => mutate(() => board.closeNote(state(), params.id, str(body.actor, 'actor'))));
   route('POST', '/api/notes/:id/dismiss', ({ params, body }) => mutate(() => board.dismissNote(state(), params.id, str(body.actor, 'actor'))));
@@ -790,7 +827,7 @@ ${pushed ? `Pushed ${base} to origin.` : `Push to origin failed: ${(r.stderr || 
     ctx.toast('warn', note.text);
     return note;
   });
-  route('POST', '/api/notes/:id/answer', ({ params, body }) => mutate(() => board.answerAsk(state(), params.id, str(body.actor, 'actor'), body.answers)));
+  route('POST', '/api/notes/:id/answer', ({ params, body }) => mutate(() => board.answerAsk(state(), params.id, str(body.actor, 'actor'), body.answers, remoteVia(body))));
   route('POST', '/api/messages', ({ body }) => mutate(() => board.sendMessage(state(), str(body.actor, 'actor'), str(body.to, 'to'), str(body.text, 'text'))));
   route('GET', '/api/feed', ({ query }) =>
     board.listFeed(state(), { limit: Number(query.get('limit')) || 200, before: query.get('before') ?? undefined, agent: query.get('agent') ?? undefined }),

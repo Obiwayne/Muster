@@ -29,6 +29,18 @@ export class Pairing {
     return { code: value, expiresAt: this.code.expiresAt };
   }
 
+  /** When the live code expires, or null when there is none (the code itself is never handed out again). */
+  activeUntil(): number | null {
+    return this.code && this.now() <= this.code.expiresAt ? this.code.expiresAt : null;
+  }
+
+  /** Drops the live code (the desktop's "Cancel code"). */
+  cancel(): boolean {
+    const had = this.activeUntil() !== null;
+    this.code = null;
+    return had;
+  }
+
   limited(): boolean {
     const t = this.now();
     this.failures = this.failures.filter((f) => t - f < FAILURE_WINDOW_MS);

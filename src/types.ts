@@ -120,7 +120,7 @@ export interface Note {
   text: string;
   createdAt: string;
   open: boolean; // stuck/question/waiting/review/escalation start open; others start closed
-  topic?: 'weekly_usage' | 'five_hour' | 'roadmap' | 'research' | 'intel' | 'checkout' | 'stale_build'; // what a system/approval note is about, so the UI can offer the right controls
+  topic?: 'weekly_usage' | 'five_hour' | 'roadmap' | 'research' | 'intel' | 'checkout' | 'stale_build' | 'remote'; // what a system/approval note is about, so the UI can offer the right controls
   dismissed?: boolean; // you removed it from the board (POST /api/notes/:id/dismiss); kept in state for history, hidden by default
   closedAt?: string;
   replies: NoteReply[];
@@ -166,6 +166,15 @@ export interface FeedItem {
   text: string;
   reactions?: FeedReaction[]; // emoji reactions from agents and you (POST /api/feed/:id/react toggles one)
   readBy?: string[]; // agents that read the inbox item(s) this message produced (read_inbox / mark read), in order
+  via?: RemoteVia; // sent through the remote connector (docs/REMOTE.md): crew chat shows it as yours with a "via Claude" chip
+}
+
+/** A message you sent from the Claude app through the remote connector. Only your own token may set it. */
+export interface RemoteVia {
+  client: string; // the connector client's name, e.g. "Claude"
+  approvedOn: 'phone' | 'desktop' | 'not held'; // where you tapped Send ('not held' = the hold was switched off)
+  approvedAt: string;
+  pendingId?: string; // the held write it was ("P8"), for the chip's tooltip
 }
 
 /** The emoji agents and you can react with; each means something on the crew chat. */

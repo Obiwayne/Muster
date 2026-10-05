@@ -15,8 +15,10 @@ import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
+import androidx.compose.foundation.gestures.animateScrollBy
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
+import androidx.compose.foundation.lazy.rememberLazyListState
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material3.CircularProgressIndicator
@@ -28,8 +30,11 @@ import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.compositionLocalOf
+import androidx.compose.runtime.derivedStateOf
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableIntStateOf
 import androidx.compose.runtime.mutableStateListOf
+import androidx.compose.runtime.mutableStateMapOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.rememberCoroutineScope
@@ -38,12 +43,17 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.layout.onSizeChanged
+import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.em
 import com.obiwayne.muster.MusterApp
+import com.obiwayne.muster.SendOutcome
+import com.obiwayne.muster.notify.Notifier
 import com.obiwayne.muster.data.Ago
 import com.obiwayne.muster.data.Kind
 import com.obiwayne.muster.data.NeedItem
@@ -58,6 +68,7 @@ fun filtered(items: List<NeedItem>, project: String?) = items.filter { project =
 /** What tapping [item] opens: "task:pid:tid" (M05) or "note:pid:nid" (M06); null for blocked merges, which use a sheet. */
 fun openKey(item: NeedItem): String? = when {
     item.kind == Kind.BLOCKED -> null
+    item.isHeld -> null // held writes from Claude are sent from their card in the list
     item.isReview && item.taskId != null -> "task:${item.projectId}:${item.taskId}"
     item.noteId != null && (item.isReview || item.isQuestion || "answer" in item.actions || item.taskId == null) -> "note:${item.projectId}:${item.noteId}"
     item.taskId != null -> "task:${item.projectId}:${item.taskId}"
@@ -100,16 +111,92 @@ fun NeedsScreen(
     val scope = rememberCoroutineScope()
     val busy = remember { mutableStateListOf<String>() }
     var blockedSheet by remember { mutableStateOf<NeedItem?>(null) }
+    val expiredKept by state.expiredHeld.collectAsState()
+    val heldErrors by state.heldErrors.collectAsState()
+    val maybeSent by state.heldMaybeSent.collectAsState()
+    val focus by state.focusHeld.collectAsState()
+    val heldBusy = remember { mutableStateMapOf<String, String>() } // id -> "send" | "discard"
+    val ctx = LocalContext.current
+    val density = LocalDensity.current
+    val listState = rememberLazyListState()
+    var containerH by remember { mutableIntStateOf(0) }
+    val bodyH = remember { mutableStateMapOf<String, Int>() }
 
     LaunchedEffect(Unit) { state.refreshNeeds() }
 
     val all = needs?.items.orEmpty().sortedByDescending { it.createdAt }
     val items = filtered(all, selected)
+    val heldLive = items.filter { it.isHeld }
+    val held = (heldLive + filtered(expiredKept, selected).filter { e -> heldLive.none { it.id == e.id } }).sortedByDescending { it.createdAt }
     val reviews = items.filter { it.isReview }
     val questions = items.filter { it.isQuestion || it.kind == Kind.STUCK && "answer" in it.actions }
-    val other = items - reviews.toSet() - questions.toSet()
+    val other = items - reviews.toSet() - questions.toSet() - heldLive.toSet()
     val project = needs?.projects?.firstOrNull { it.id == selected }
     val pcName = state.pcName
+    val hold = needs?.hold
+    val holdOff = hold != null && !hold.on
+
+    // A card taller than the list area gets its callout + Send/Discard pinned above the tab bar (M12). The body height
+    // doesn't depend on where the actions are, so the choice can't flip back and forth.
+    val actionsPx = with(density) { 190.dp.toPx() }
+    fun isTall(id: String) = containerH > 0 && (bodyH[id] ?: 0) + actionsPx > containerH
+    val pinnedId by remember {
+        derivedStateOf {
+            val info = listState.layoutInfo
+            info.visibleItemsInfo
+                .filter { (it.key as? String)?.startsWith("held-") == true && isTall((it.key as String).removePrefix("held-")) }
+                .maxByOrNull { minOf(it.offset + it.size, info.viewportEndOffset) - maxOf(it.offset, info.viewportStartOffset) }
+                ?.let { (it.key as String).removePrefix("held-") }
+        }
+    }
+    val pinned = held.firstOrNull { it.id == pinnedId }
+    val moreBelow by remember {
+        derivedStateOf {
+            val info = listState.layoutInfo
+            val it = info.visibleItemsInfo.firstOrNull { it.key == "held-$pinnedId" }
+            it != null && it.offset + it.size > info.viewportEndOffset + 4
+        }
+    }
+
+    fun send(item: NeedItem) {
+        heldBusy[item.id] = "send"
+        scope.launch {
+            val out = state.sendHeld(item)
+            heldBusy.remove(item.id)
+            if (out is SendOutcome.Sent) {
+                Notifier.cancel(ctx, item.id)
+                snack(out.summary.ifBlank { "Sent ${item.remote?.pendingId ?: ""}".trim() })
+            }
+        }
+    }
+
+    fun discard(item: NeedItem) {
+        heldBusy[item.id] = "discard"
+        scope.launch {
+            val ok = state.discardHeld(item) { snack(it) }
+            heldBusy.remove(item.id)
+            if (ok) {
+                Notifier.cancel(ctx, item.id)
+                snack("Discarded ${item.remote?.pendingId ?: ""} · nothing was sent".replace("  ", " "))
+            }
+        }
+    }
+
+    fun dismiss(item: NeedItem) {
+        state.dismissHeld(item.id)
+        Notifier.cancel(ctx, item.id)
+    }
+
+    // A notification tap on a held item: scroll to its card once it's loaded.
+    LaunchedEffect(focus, held.map { it.id }) {
+        val id = focus ?: return@LaunchedEffect
+        val i = held.indexOfFirst { it.id == id }
+        if (i < 0) return@LaunchedEffect
+        // header, title, [offline], [empty], [hold banner], section label, then the held cards.
+        val before = 2 + (if (offline) 1 else 0) + (if (needs != null && items.isEmpty() && !offline) 1 else 0) + (if (holdOff) 1 else 0) + 1
+        listState.animateScrollToItem(before + i)
+        state.focusHeld.value = null
+    }
 
     fun approve(item: NeedItem) {
         val tid = item.taskId ?: return
@@ -141,85 +228,121 @@ fun NeedsScreen(
         }
     }
 
-    PullToRefreshBox(isRefreshing = refreshing, onRefresh = { scope.launch { state.refreshNeeds() } }, modifier = Modifier.fillMaxSize()) {
-        LazyColumn(
-            Modifier.fillMaxSize(),
-            contentPadding = PaddingValues(start = sidePadding, end = sidePadding, top = if (compact) 16.dp else 4.dp, bottom = 16.dp),
-            verticalArrangement = Arrangement.spacedBy(if (compact) 10.dp else 8.dp),
-        ) {
-            item("header") {
-                Row(Modifier.fillMaxWidth().height(40.dp), verticalAlignment = Alignment.CenterVertically) {
-                    Box(Modifier.weight(1f)) {
-                        ProjectChip(needs?.projects.orEmpty(), selected, { state.projectChosen = true; state.selectedProject.value = it })
-                    }
-                    if (!compact) {
-                        Txt("Muster", ts(13, 18, FontWeight.SemiBold, C.faint, spacing = 0.02.em))
-                        Box(Modifier.weight(1f), contentAlignment = Alignment.CenterEnd) {
-                            PcPill(pcName, online = !offline && (ws || demo || needs != null))
+    Column(Modifier.fillMaxSize().onSizeChanged { containerH = it.height }) {
+        Box(Modifier.weight(1f)) {
+            PullToRefreshBox(isRefreshing = refreshing, onRefresh = { scope.launch { state.refreshNeeds() } }, modifier = Modifier.fillMaxSize()) {
+                LazyColumn(
+                    Modifier.fillMaxSize(),
+                    state = listState,
+                    contentPadding = PaddingValues(start = sidePadding, end = sidePadding, top = if (compact) 16.dp else 4.dp, bottom = 16.dp),
+                    verticalArrangement = Arrangement.spacedBy(if (compact) 10.dp else 8.dp),
+                ) {
+                    item("header") {
+                        Row(Modifier.fillMaxWidth().height(40.dp), verticalAlignment = Alignment.CenterVertically) {
+                            Box(Modifier.weight(1f)) {
+                                ProjectChip(needs?.projects.orEmpty(), selected, { state.projectChosen = true; state.selectedProject.value = it })
+                            }
+                            if (!compact) {
+                                Txt("Muster", ts(13, 18, FontWeight.SemiBold, C.faint, spacing = 0.02.em))
+                                Box(Modifier.weight(1f), contentAlignment = Alignment.CenterEnd) {
+                                    PcPill(pcName, online = !offline && (ws || demo || needs != null))
+                                }
+                            }
                         }
                     }
-                }
-            }
-            item("title") {
-                Row(Modifier.padding(start = 4.dp, end = 4.dp, top = if (compact) 6.dp else 8.dp, bottom = 4.dp), verticalAlignment = Alignment.Bottom) {
-                    Column(Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(4.dp)) {
-                        Txt("Needs you", if (compact) ts(28, 34, FontWeight.SemiBold, spacing = (-0.02).em) else ts(30, 36, FontWeight.SemiBold, spacing = (-0.02).em))
-                        val running = project?.running ?: needs?.projects?.any { it.running } ?: false
-                        val sub = when {
-                            needs == null && offline -> "Offline"
-                            needs == null -> "Loading…"
-                            items.isEmpty() -> if (running) "All clear · crew working" else "All clear"
-                            else -> "${items.size} waiting" + if (running) " · crew working" else " · crew stopped"
-                        }
-                        Txt(sub, ts(14, 20, color = C.muted))
-                    }
-                    if (compact && approvable.size >= 2) ApproveAll()
-                }
-            }
-            if (offline) {
-                item("offline") { OfflineCard(pcName, needs != null) { scope.launch { state.refreshNeeds() } } }
-            }
-            if (needs != null && items.isEmpty() && !offline) {
-                item("empty") { EmptyState() }
-            }
-            if (reviews.isNotEmpty()) {
-                item("h-review") {
-                    if (compact) {
-                        SubHeader("Ready for review")
-                    } else {
-                        Row(Modifier.fillMaxWidth().height(32.dp).padding(horizontal = 4.dp), verticalAlignment = Alignment.CenterVertically) {
-                            SectionLabel("Ready for review", Modifier.weight(1f))
-                            if (approvable.size >= 2) ApproveAll()
+                    item("title") {
+                        Row(Modifier.padding(start = 4.dp, end = 4.dp, top = if (compact) 6.dp else 8.dp, bottom = 4.dp), verticalAlignment = Alignment.Bottom) {
+                            Column(Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(4.dp)) {
+                                Txt("Needs you", if (compact) ts(28, 34, FontWeight.SemiBold, spacing = (-0.02).em) else ts(30, 36, FontWeight.SemiBold, spacing = (-0.02).em))
+                                val running = project?.running ?: needs?.projects?.any { it.running } ?: false
+                                val sub = when {
+                                    needs == null && offline -> "Offline"
+                                    needs == null -> "Loading…"
+                                    items.isEmpty() -> if (running) "All clear · crew working" else "All clear"
+                                    else -> "${items.size} waiting" + if (running) " · crew working" else " · crew stopped"
+                                }
+                                Txt(sub, ts(14, 20, color = C.muted))
+                            }
+                            if (compact && approvable.size >= 2) ApproveAll()
                         }
                     }
-                }
-                items(reviews, key = { it.id }) { item ->
-                    if (compact) {
-                        ReviewRow(item, openKey(item) == selectedKey, busy = item.id in busy, onApprove = { approve(item) }, onOpen = { onOpenTask(item) })
-                    } else {
-                        ReviewCard(item, busy = item.id in busy, onApprove = { approve(item) }, onOpen = { onOpenTask(item) })
+                    if (offline) {
+                        item("offline") { OfflineCard(pcName, needs != null) { scope.launch { state.refreshNeeds() } } }
                     }
-                }
-            }
-            if (questions.isNotEmpty()) {
-                item("h-q") { SubHeader("Questions") }
-                items(questions, key = { it.id }) { item ->
-                    if (compact) QuestionRow(item, openKey(item) == selectedKey) { onOpenNote(item) } else QuestionCard(item) { onOpenNote(item) }
-                }
-            }
-            if (other.isNotEmpty()) {
-                item("h-o") { SubHeader("Other") }
-                items(other, key = { it.id }) { item ->
-                    when (item.kind) {
-                        Kind.BLOCKED -> BlockedCard(item, pcName) { blockedSheet = item }
-                        else -> InfoCard(item, compact && openKey(item) == selectedKey) {
-                            when {
-                                item.noteId != null && ("answer" in item.actions) -> onOpenNote(item)
-                                item.taskId != null -> onOpenTask(item)
+                    if (needs != null && items.isEmpty() && !offline) {
+                        item("empty") { EmptyState() }
+                    }
+                    if (holdOff && hold != null) {
+                        item("hold-off") { HoldOffBanner(hold, pcName) }
+                    }
+                    if (held.isNotEmpty()) {
+                        item("h-held") {
+                            Box(Modifier.fillMaxWidth().padding(top = 2.dp), contentAlignment = Alignment.BottomStart) {
+                                Txt("From Claude · waiting for your tap".uppercase(), Type.label.copy(color = C.glowBlue))
+                            }
+                        }
+                        items(held, key = { "held-" + it.id }) { item ->
+                            val phase = heldPhase(item, expiredKept.any { it.id == item.id }, heldBusy[item.id], heldErrors[item.id], item.id in maybeSent)
+                            SendCard(
+                                item, phase,
+                                showActions = !isTall(item.id),
+                                onSend = { send(item) }, onDiscard = { discard(item) }, onDismiss = { dismiss(item) },
+                                bodyModifier = Modifier.onSizeChanged { bodyH[item.id] = it.height },
+                            )
+                        }
+                    }
+                    if (reviews.isNotEmpty()) {
+                        item("h-review") {
+                            if (compact) {
+                                SubHeader("Ready for review")
+                            } else {
+                                Row(Modifier.fillMaxWidth().height(32.dp).padding(horizontal = 4.dp), verticalAlignment = Alignment.CenterVertically) {
+                                    SectionLabel("Ready for review", Modifier.weight(1f))
+                                    if (approvable.size >= 2) ApproveAll()
+                                }
+                            }
+                        }
+                        items(reviews, key = { it.id }) { item ->
+                            if (compact) {
+                                ReviewRow(item, openKey(item) == selectedKey, busy = item.id in busy, onApprove = { approve(item) }, onOpen = { onOpenTask(item) })
+                            } else {
+                                ReviewCard(item, busy = item.id in busy, onApprove = { approve(item) }, onOpen = { onOpenTask(item) })
+                            }
+                        }
+                    }
+                    if (questions.isNotEmpty()) {
+                        item("h-q") { SubHeader("Questions") }
+                        items(questions, key = { it.id }) { item ->
+                            if (compact) QuestionRow(item, openKey(item) == selectedKey) { onOpenNote(item) } else QuestionCard(item) { onOpenNote(item) }
+                        }
+                    }
+                    if (other.isNotEmpty()) {
+                        item("h-o") { SubHeader("Other") }
+                        items(other, key = { it.id }) { item ->
+                            when (item.kind) {
+                                Kind.BLOCKED -> BlockedCard(item, pcName) { blockedSheet = item }
+                                else -> InfoCard(item, compact && openKey(item) == selectedKey) {
+                                    when {
+                                        item.noteId != null && ("answer" in item.actions) -> onOpenNote(item)
+                                        item.taskId != null -> onOpenTask(item)
+                                    }
+                                }
                             }
                         }
                     }
                 }
+            }
+            if (pinned != null && moreBelow) {
+                ScrollHint(
+                    onClick = { scope.launch { listState.animateScrollBy(containerH * 0.6f) } },
+                    modifier = Modifier.align(Alignment.BottomCenter),
+                )
+            }
+        }
+        pinned?.let { item ->
+            val phase = heldPhase(item, expiredKept.any { it.id == item.id }, heldBusy[item.id], heldErrors[item.id], item.id in maybeSent)
+            PinnedSendBar(expired = phase is HeldPhase.Expired) {
+                SendCardActions(item, phase, onSend = { send(item) }, onDiscard = { discard(item) }, onDismiss = { dismiss(item) })
             }
         }
     }

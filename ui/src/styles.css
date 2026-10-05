@@ -1251,3 +1251,93 @@ a.rs-evq:hover, a.rs-evrow:hover { border-color: color-mix(in oklab, var(--color
 .in-btn.quiet { border-color: transparent; color: var(--color-faint); }
 .in-btn.quiet:hover { color: var(--color-text); background: transparent; }
 .banner .in-actions { padding-top: 0; flex-shrink: 0; }
+
+/* held remote writes (docs/REMOTE.md "Needs-you Send card"): HELD rows, the Send card with its pinned footer */
+.held-badge { font-size: 10px; font-weight: 700; letter-spacing: 0.08em; line-height: 12px; color: #8fa9ff; background: color-mix(in oklab, var(--color-glow-blue) 18%, transparent); border-radius: 4px; padding: 3px 6px; white-space: nowrap; display: inline-block; }
+.held-badge.over { color: var(--color-muted); background: var(--color-surface-2); }
+.note-row.held-row { box-shadow: inset 2px 0 0 color-mix(in oklab, var(--color-glow-blue) 45%, transparent); }
+.note-row.held-row.sel { background: color-mix(in oklab, var(--color-glow-blue) 8%, var(--color-surface)); box-shadow: inset 2px 0 0 var(--color-glow-blue); }
+.note-row.held-row.over { box-shadow: none; opacity: .65; }
+.note-row.held-row.over.sel { background: var(--color-surface); box-shadow: inset 2px 0 0 var(--color-muted); }
+.held-text { font-size: 14px; line-height: 20px; overflow-wrap: anywhere; } /* full text; line breaks fold in the list, the card keeps them */
+.held-left { font-family: var(--font-mono); font-size: 11px; color: var(--color-muted); }
+.held-left.warm { color: var(--color-warm); }
+.held-failed { color: var(--color-stuck); }
+
+.held-pane { background: var(--color-bg); }
+.held-card { flex: 1; min-height: 0; display: flex; flex-direction: column; }
+.hc-head { display: flex; flex-direction: column; gap: 12px; padding: 24px 28px 20px; border-bottom: 1px solid var(--color-line); flex-shrink: 0; }
+.hc-top { display: flex; align-items: center; gap: 8px; min-width: 0; }
+.hc-ref { font-family: var(--font-mono); font-size: 12px; color: var(--color-muted); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; min-width: 0; }
+.cd-chip { display: inline-flex; align-items: center; gap: 6px; padding: 4px 10px; border-radius: 999px; border: 1px solid var(--color-line); font-family: var(--font-mono); font-size: 12px; color: var(--color-text); white-space: nowrap; flex-shrink: 0; }
+.cd-chip svg { color: var(--color-muted); }
+.cd-chip.warm { color: var(--color-warm); border-color: color-mix(in oklab, var(--color-warm) 55%, transparent); background: color-mix(in oklab, var(--color-warm) 12%, transparent); }
+.cd-chip.warm svg { color: var(--color-warm); }
+.cd-chip.over, .cd-chip.over svg { color: var(--color-faint); }
+.hc-title { font-size: 22px; line-height: 28px; font-weight: 600; overflow-wrap: anywhere; }
+.hc-to { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; }
+.hc-to .lbl { font-size: 13px; color: var(--color-muted); }
+.to-chip { display: inline-flex; align-items: center; gap: 6px; padding: 3px 9px; border-radius: 999px; background: var(--color-surface-2); font-size: 13px; font-weight: 500; }
+.to-chip .dot6 { width: 6px; height: 6px; border-radius: 3px; background: var(--role, var(--color-muted)); }
+.to-chip.task .mono { font-size: 12px; color: var(--color-muted); }
+.held-card.over .hc-ref, .held-card.over .hc-to .lbl { color: var(--color-faint); }
+.held-card.over .hc-title, .held-card.over .to-chip { color: var(--color-muted); }
+.held-card.over .to-chip .dot6 { opacity: .6; }
+
+.hc-bodywrap { flex: 1; min-height: 0; position: relative; display: flex; flex-direction: column; }
+.hc-body { flex: 1; min-height: 0; overflow-y: auto; display: flex; flex-direction: column; gap: 18px; padding: 22px 28px; }
+.hc-body > * { flex-shrink: 0; }
+.hc-fade { position: absolute; left: 0; right: 0; bottom: 0; height: 64px; display: none; align-items: flex-end; justify-content: center; padding-bottom: 10px; pointer-events: none; background: linear-gradient(to bottom, color-mix(in oklab, var(--color-bg) 0%, transparent), var(--color-bg) 70%); }
+.hc-bodywrap.overflows .hc-fade { display: flex; }
+.hc-hint { display: inline-flex; align-items: center; gap: 6px; padding: 4px 10px; border-radius: 999px; background: var(--color-surface-2); border: 1px solid var(--color-line); font-size: 12px; color: var(--color-muted); }
+.hc-hint svg { color: var(--color-muted); }
+.cap { font-size: 11px; font-weight: 600; letter-spacing: 0.08em; color: var(--color-faint); }
+.hc-quote { display: flex; flex-direction: column; gap: 6px; padding: 2px 0 2px 14px; border-left: 2px solid var(--color-line); }
+.hc-qhead { display: flex; align-items: center; gap: 6px; flex-wrap: wrap; }
+.hc-qhead .mono { font-size: 12px; color: var(--color-muted); }
+.hc-qhead .mono.who { color: var(--role, var(--color-muted)); }
+.hc-qtext { font-size: 14px; line-height: 21px; color: var(--color-muted); white-space: pre-wrap; overflow-wrap: anywhere; }
+.hc-qnote { font-size: 12px; color: var(--color-faint); }
+.hc-exact { display: flex; flex-direction: column; gap: 8px; padding: 16px; border-radius: var(--radius-md); background: var(--color-term); border: 1px solid var(--color-line); }
+.hc-exact.over { border-style: dashed; }
+.hc-exact.over .hc-text { color: var(--color-muted); }
+.hc-text { font-size: 15px; line-height: 23px; color: var(--color-text); white-space: pre-wrap; overflow-wrap: anywhere; }
+.hc-exact.answers { gap: 0; padding: 0; }
+.hc-exact.answers .cap.pad { padding: 14px 16px 4px; }
+.hc-ans { display: flex; flex-direction: column; gap: 8px; padding: 12px 16px; }
+.hc-ans + .hc-ans { border-top: 1px solid var(--color-line); }
+.hc-ans:last-child { padding-bottom: 16px; }
+.hc-q { padding-left: 12px; border-left: 2px solid var(--color-line); font-size: 13px; line-height: 19px; color: var(--color-muted); overflow-wrap: anywhere; }
+.hc-choices { display: flex; flex-wrap: wrap; gap: 6px; }
+.hc-choice { padding: 4px 10px; border-radius: 6px; background: color-mix(in oklab, var(--color-glow-blue) 16%, transparent); font-size: 14px; font-weight: 500; color: var(--color-text); white-space: pre-wrap; overflow-wrap: anywhere; }
+.hc-exact.over .hc-choice { background: var(--color-surface-2); color: var(--color-muted); }
+
+.hc-foot { display: flex; flex-direction: column; gap: 12px; padding: 14px 28px 16px; border-top: 1px solid var(--color-line); background: var(--color-bg); flex-shrink: 0; }
+.hc-callout { display: flex; align-items: flex-start; gap: 10px; padding: 10px 14px; border-radius: var(--radius-sm); background: color-mix(in oklab, var(--color-glow-blue) 10%, transparent); border: 1px solid color-mix(in oklab, var(--color-glow-blue) 35%, transparent); }
+.hc-callout > svg { flex-shrink: 0; color: #8fa9ff; margin-top: 1px; }
+.hc-callout.failed { background: color-mix(in oklab, var(--color-stuck) 10%, transparent); border-color: color-mix(in oklab, var(--color-stuck) 45%, transparent); }
+.hc-callout.failed > svg { color: var(--color-stuck); }
+.hc-callout.neutral { background: var(--color-surface); border-color: var(--color-line); }
+.hc-callout.neutral > svg { color: var(--color-muted); }
+.hc-callout .cc { display: flex; flex-direction: column; gap: 2px; min-width: 0; }
+.hc-callout .cb { font-size: 14px; line-height: 19px; font-weight: 600; color: var(--color-text); }
+.hc-callout .cs { font-size: 13px; line-height: 18px; color: var(--color-muted); overflow-wrap: anywhere; }
+.hc-actions { display: flex; gap: 10px; }
+.hc-btn { flex: 1 1 0; min-width: 0; height: 44px; border-radius: var(--radius-sm); background: var(--color-surface-2); border: 1px solid var(--color-line); display: flex; align-items: center; justify-content: center; gap: 8px; font-size: 14px; font-weight: 600; color: var(--color-text); cursor: pointer; }
+.hc-btn:hover:not(:disabled) { border-color: color-mix(in oklab, var(--color-line) 60%, var(--color-muted)); }
+.hc-btn.send { background: var(--color-glow-blue); border-color: var(--color-glow-blue); color: #fff; }
+.hc-btn.send:hover:not(:disabled) { filter: brightness(1.08); border-color: var(--color-glow-blue); }
+.hc-btn:disabled { opacity: .6; cursor: default; }
+
+/* crew chat: a line you sent from the Claude app through the remote connector */
+.cmsg.mine .ccol { position: relative; } /* the chip's tooltip sits left of your bubble, like the design */
+.via-chip { display: inline-flex; align-items: center; gap: 4px; padding: 1px 7px 1px 5px; border-radius: 999px; align-self: center; background: color-mix(in oklab, var(--color-glow-blue) 16%, transparent); border: 1px solid color-mix(in oklab, var(--color-glow-blue) 35%, transparent); font-size: 11px; line-height: 14px; font-weight: 500; color: #8fa9ff; cursor: default; white-space: nowrap; }
+.via-chip svg { color: #8fa9ff; }
+.via-tip { position: absolute; right: calc(100% + 10px); top: -6px; z-index: 20; display: none; flex-direction: column; gap: 2px; padding: 8px 11px; border-radius: 8px; background: var(--color-surface-2); border: 1px solid var(--color-line); box-shadow: 0 8px 24px rgba(0, 0, 0, .45); font-size: 12px; line-height: 16px; font-weight: 400; white-space: nowrap; }
+.via-tip .vt { font-weight: 600; color: var(--color-text); }
+.via-tip .vd { color: var(--color-muted); }
+.via-chip:hover .via-tip, .via-chip:focus-visible .via-tip { display: flex; }
+.nreply .via-chip { position: relative; }
+.nreply .via-tip { right: auto; left: 0; top: calc(100% + 6px); }
+.chead a.via-link { font-size: 11px; line-height: 14px; color: #8fa9ff; }
+.chead a.via-link:hover { color: #b3c4ff; }

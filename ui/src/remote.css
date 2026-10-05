@@ -1,0 +1,134 @@
+/* ---------- Settings → Remote access (Vellum "PC — Settings › Remote access", "… warnings", "Dialog — turn off the hold") ---------- */
+.set-tab.on.t-remote { border-bottom-color: var(--color-glow-blue); }
+
+.ra { display: flex; flex-direction: column; gap: 20px; }
+.ra-card { overflow: hidden; }
+.ra-head { display: flex; align-items: center; gap: 12px; padding: 14px 18px 8px; }
+.ra-head .section-label { flex: 1; }
+.ra-head-r { font-size: 12px; color: var(--color-muted); }
+
+.ra-lbl { flex: 1; display: flex; flex-direction: column; gap: 2px; min-width: 0; }
+.ra-t { font-size: 13px; font-weight: 550; line-height: 16px; }
+.ra-s { font-size: 12px; line-height: 17px; color: var(--color-muted); }
+.ra-row { display: flex; align-items: center; gap: 12px; padding: 12px 18px; border-top: 1px solid var(--color-line); }
+.ra-btn { height: 32px; padding: 0 12px; font-size: 13px; color: var(--color-text); gap: 6px; }
+.ra-btn.lg { height: 34px; padding: 0 14px; }
+.ra-btn:disabled { opacity: .4; cursor: default; }
+.ra-btn.primary:disabled { opacity: .5; }
+
+/* connection */
+.ra-conn { display: flex; align-items: center; gap: 14px; padding: 18px; }
+.ra-conn-dot { width: 40px; height: 40px; flex-shrink: 0; border-radius: 20px; background: var(--color-surface-2); display: flex; align-items: center; justify-content: center; }
+.ra-conn-dot span { width: 12px; height: 12px; border-radius: 6px; background: var(--color-faint); }
+.ra-conn.s-connected .ra-conn-dot { background: color-mix(in oklab, var(--color-success) 14%, transparent); }
+.ra-conn.s-connected .ra-conn-dot span { background: var(--color-success); box-shadow: 0 0 0 4px color-mix(in oklab, var(--color-success) 22%, transparent); }
+.ra-conn.s-off .ra-conn-dot span { background: transparent; border: 2px solid var(--color-faint); width: 12px; height: 12px; }
+.ra-conn-body { flex: 1; display: flex; flex-direction: column; gap: 3px; min-width: 0; }
+.ra-conn-t { font-size: 18px; line-height: 22px; font-weight: 600; }
+.ra-conn-s { font-size: 13px; line-height: 17px; color: var(--color-muted); }
+.ra-test { font-size: 12px; line-height: 16px; margin-top: 2px; }
+.ra-test.ok { color: var(--color-success); }
+.ra-test.bad { color: var(--color-stuck); }
+
+.ra-url { display: flex; align-items: center; gap: 8px; height: 32px; padding: 0 10px; border-radius: var(--radius-sm); background: var(--color-term); border: 1px solid var(--color-line); flex-shrink: 0; max-width: 300px; }
+.ra-url-t { font-family: var(--font-mono); font-size: 12px; color: var(--color-text); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; cursor: text; }
+.ra-copy { display: flex; color: #9b9ba4; }
+.ra-copy:hover { color: var(--color-text); }
+.ra-host-input { width: 240px; flex-shrink: 0; }
+
+.ra-select { width: 180px; flex-shrink: 0; }
+.ra-select .select-wrap { width: 100%; }
+.ra-select select { height: 32px; font-size: 13px; color: var(--color-text); background: transparent; }
+.ra-select.warn select { color: var(--color-warm); border-color: color-mix(in oklab, var(--color-warm) 60%, transparent); }
+
+.ra-foot { display: flex; align-items: center; gap: 8px; padding: 12px 18px 14px; border-top: 1px solid var(--color-line); font-size: 12px; line-height: 16px; color: var(--color-faint); }
+.ra-foot > svg { flex-shrink: 0; color: var(--color-faint); }
+.ra-foot-lines { flex: 1; min-width: 0; display: flex; flex-direction: column; gap: 4px; }
+.ra-link { font-size: 12px; color: var(--color-muted); flex-shrink: 0; }
+.ra-link:hover:not(:disabled) { color: var(--color-text); }
+
+/* approved apps (and the older signed-in apps card) */
+.ra-danger-link { font-size: 12px; font-weight: 500; color: var(--color-stuck); }
+.ra-danger-link:hover:not(:disabled), .ra-disc:hover:not(:disabled) { filter: brightness(1.15); text-decoration: underline; }
+.ra-app { display: flex; align-items: center; gap: 12px; padding: 12px 18px; border-top: 1px solid var(--color-line); }
+.ra-app-ic { width: 32px; height: 32px; flex-shrink: 0; border-radius: 8px; background: color-mix(in oklab, var(--color-glow-blue) 16%, transparent); color: #8fa9ff; display: flex; align-items: center; justify-content: center; }
+.ra-disc { width: 92px; flex-shrink: 0; text-align: right; font-size: 13px; font-weight: 500; color: var(--color-stuck); }
+.ra-empty { padding: 14px 18px 16px; border-top: 1px solid var(--color-line); font-size: 12px; line-height: 17px; color: var(--color-muted); }
+
+/* the allow-list: apps waiting for approval sit on top, tinted blue so they're noticed */
+.ra-card.ra-apps-waiting { border-color: color-mix(in oklab, var(--color-glow-blue) 45%, transparent); }
+.ra-wait { background: color-mix(in oklab, var(--color-glow-blue) 7%, transparent); border-top: 1px solid color-mix(in oklab, var(--color-glow-blue) 30%, transparent); }
+.ra-wait-label { display: flex; align-items: center; gap: 6px; padding: 10px 18px 0; font-size: 11px; font-weight: 600; letter-spacing: 0.06em; text-transform: uppercase; color: #8fa9ff; }
+.ra-wait .ra-app { border-top: none; }
+.ra-wait .ra-app + .ra-app { border-top: 1px solid color-mix(in oklab, var(--color-glow-blue) 18%, transparent); }
+.ra-app-wait .ra-btn { flex-shrink: 0; }
+.ra-wait + .ra-app { border-top-color: color-mix(in oklab, var(--color-glow-blue) 30%, transparent); }
+
+/* the waiting count on the Remote access tab */
+.set-tab-badge { min-width: 16px; height: 16px; padding: 0 5px; margin-left: 2px; border-radius: 8px; background: var(--color-glow-blue); color: #fff; font-size: 10px; font-weight: 700; line-height: 16px; text-align: center; }
+
+/* what Claude may do */
+.ra-sw { display: flex; align-items: flex-start; gap: 12px; padding: 14px 18px; border-top: 1px solid var(--color-line); }
+.ra-sw .ra-lbl { gap: 3px; }
+.ra-sw.hold-on { background: color-mix(in oklab, var(--color-glow-blue) 5%, transparent); }
+.ra-sw.hold-off { background: color-mix(in oklab, var(--color-stuck) 7%, transparent); }
+.ra-t-row { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; }
+.ra-rec { padding: 2px 6px; border-radius: 4px; background: color-mix(in oklab, var(--color-success) 14%, transparent); font-size: 10px; font-weight: 600; letter-spacing: 0.06em; color: var(--color-success); }
+.ra .toggle { flex-shrink: 0; padding: 2px; }
+.ra .toggle:not(.on) { border: 1px solid var(--color-line); }
+.ra .toggle:not(.on) .knob { width: 14px; height: 14px; background: var(--color-faint); }
+.ra .toggle.on { background: var(--color-glow-blue); }
+.ra .toggle.on .knob { background: #fff; }
+.ra .toggle:disabled { opacity: .5; cursor: default; }
+
+/* sign in a new app */
+.ra-card.ra-code-live { border-color: color-mix(in oklab, var(--color-glow-blue) 45%, transparent); }
+.ra-code { display: flex; align-items: center; gap: 18px; padding: 14px 18px; border-top: 1px solid var(--color-line); }
+.ra-code-body { flex: 1; display: flex; flex-direction: column; gap: 4px; min-width: 0; }
+.ra-idle-t { font-size: 14px; line-height: 19px; font-weight: 550; }
+.ra-code-v { font-family: var(--font-mono); font-size: 30px; line-height: 36px; font-weight: 500; letter-spacing: 0.08em; user-select: all; }
+.ra-count-row { display: flex; align-items: center; gap: 8px; }
+.ra-bar { width: 120px; height: 4px; border-radius: 2px; background: var(--color-surface-2); overflow: hidden; }
+.ra-bar-fill { height: 4px; border-radius: 2px; background: var(--color-glow-blue); transition: width .9s linear; }
+.ra-count { font-family: var(--font-mono); font-size: 12px; color: var(--color-muted); }
+.ra-lock-t { font-size: 20px; line-height: 26px; font-weight: 600; color: var(--color-stuck); }
+.ra-lock-s { font-family: var(--font-mono); font-size: 12px; color: var(--color-faint); }
+
+/* activity */
+.ra-log { display: flex; flex-direction: column; gap: 7px; padding: 12px 18px 16px; border-top: 1px solid var(--color-line); background: var(--color-term); max-height: 420px; overflow-y: auto; }
+.ra-log-l { display: flex; gap: 12px; font-family: var(--font-mono); font-size: 12px; line-height: 16px; }
+.ra-log-time { width: 44px; flex-shrink: 0; color: var(--color-faint); }
+.ra-log-x { flex: 1; min-width: 0; overflow-wrap: anywhere; color: var(--color-muted); }
+.ra-log-x.t-text { color: var(--color-text); }
+.ra-log-x.t-red { color: var(--color-stuck); }
+.ra-log-x.t-warm { color: var(--color-warm); }
+.ra-log-empty { font-size: 12px; color: var(--color-faint); }
+
+/* the hold-off banner, on top of every Settings tab */
+.ra-banner {
+  display: flex; align-items: center; gap: 14px; padding: 12px 16px; border-radius: var(--radius-md); flex-shrink: 0;
+  background: color-mix(in oklab, var(--color-stuck) 12%, var(--color-surface));
+  border: 1px solid color-mix(in oklab, var(--color-stuck) 55%, transparent);
+}
+.ra-banner > svg { flex-shrink: 0; color: var(--color-stuck); }
+.ra-banner-body { flex: 1; display: flex; flex-direction: column; gap: 2px; min-width: 0; }
+.ra-banner-t { font-size: 14px; line-height: 18px; font-weight: 600; }
+.ra-banner-s { font-size: 12px; line-height: 16px; color: var(--color-muted); }
+.ra-banner-btn { height: 34px; padding: 0 14px; font-size: 13px; }
+
+/* "Turn off the hold?" */
+.ra-dialog {
+  display: flex; flex-direction: column; gap: 16px; width: 480px; max-width: calc(100vw - 32px); padding: 24px;
+  border-radius: var(--radius-lg); background: var(--color-surface); border: 1px solid var(--color-line); box-shadow: 0 24px 60px rgba(0, 0, 0, .5);
+}
+.ra-dialog-ic { width: 40px; height: 40px; border-radius: 20px; background: color-mix(in oklab, var(--color-stuck) 16%, transparent); color: var(--color-stuck); display: flex; align-items: center; justify-content: center; }
+.ra-dialog-txt { display: flex; flex-direction: column; gap: 8px; }
+.ra-dialog-t { font-size: 18px; line-height: 24px; font-weight: 600; }
+.ra-dialog-txt p { font-size: 14px; line-height: 21px; color: var(--color-muted); }
+.ra-understand { display: flex; align-items: center; gap: 8px; padding: 10px 12px; border-radius: var(--radius-sm); background: var(--color-term); border: 1px solid var(--color-line); font-size: 13px; cursor: pointer; }
+.ra-understand input { width: 16px; height: 16px; flex-shrink: 0; accent-color: var(--color-stuck); cursor: pointer; }
+.ra-dialog-foot { display: flex; gap: 8px; justify-content: flex-end; }
+.ra-keep { height: 36px; padding: 0 16px; }
+.ra-off-btn { height: 36px; padding: 0 16px; border-radius: var(--radius-sm); border: 1px solid color-mix(in oklab, var(--color-stuck) 40%, transparent); font-size: 13px; font-weight: 600; color: var(--color-stuck); }
+.ra-off-btn:hover:not(:disabled) { background: color-mix(in oklab, var(--color-stuck) 12%, transparent); }
+.ra-off-btn:disabled { opacity: .5; cursor: default; }

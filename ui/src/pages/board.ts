@@ -13,6 +13,7 @@ import { intelNoteView, isIntelJobNote, runAgainBody, type IntelNoteAction } fro
 import { startJob } from '../intelapi';
 import { createUpdateBar } from '../update';
 import { answerLines, answersPayload, canSubmit, emptyDraft, optionViews, setOther, toggleChoice, type AskDraft } from '../askmodel';
+import { createHeldStore, heldCard, heldRow, POLL_MS, tickCountdowns } from './heldcard';
 
 type Filter = 'open' | 'stuck' | 'question' | 'waiting' | 'review' | 'approval' | 'all' | 'needsYou';
 
@@ -81,9 +82,15 @@ export function createBoard(): Page {
   const composer = h('div.composer', null, replyInput, clearBtn, replyBtn);
   const thread = h('div.thread', null, head, replies, composer);
   const weekly = createWeeklyAlertView({ dismiss: (id) => dismiss(id) });
+  const heldPane = h('div.thread.held-pane', { hidden: true }); // the Send card for a held remote write
   const update = createUpdateBar(); // "Update" when a newer Muster build is waiting (desktop app only)
-  const el = h('div.page', null, update.el, h('div.split', null, left, thread, weekly.el));
+  const el = h('div.page', null, update.el, h('div.split', null, left, thread, weekly.el, heldPane));
   let updateTimer: ReturnType<typeof setInterval> | undefined;
+  // Writes Claude asked for through the remote connector, held for your tap (docs/REMOTE.md): polled while visible.
+  const held = createHeldStore(() => render());
+  let pollTimer: ReturnType<typeof setInterval> | undefined;
+  let tickTimer: ReturnType<typeof setInterval> | undefined;
+  let heldKey = '';
 
   async function dismiss(id: string): Promise<void> {
     if (await run(api.dismissNote(id), `Dismissed ${id}`)) {
@@ -148,7 +155,7 @@ export function createBoard(): Page {
   function renderFilters(state: MusterState): void {
     const open = state.notes.filter((n) => n.open);
     const count = (t: NoteType) => open.filter((n) => n.type === t).length;
-    const needs = state.notes.filter(isNeedsYou).length;
+    const needs = state.notes.filter(isNeedsYou).length + held.waiting();
     const approvable = awaitingApproval(state);
     const chip = (f: Filter, label: string, n?: number, cls = '') => h('button.chip', {
       class: [filter === f && 'active', cls],
@@ -258,6 +265,22 @@ export function createBoard(): Page {
       }, icon('x', 12)) : null));
   }
 
+  /** The Send card of a held write in the thread pane (rebuilt only when what it shows changes, so scrolling stays). */
+  function renderHeld(state: MusterState, id: string | null): boolean {
+    const e = id ? held.get(id) : undefined;
+    heldPane.hidden = !e;
+    if (!e) { heldKey = ''; return false; }
+    thread.hidden = true;
+    weekly.el.hidden = true;
+    lastThreadKey = '';
+    const key = `${e.p.pendingId}:${e.p.digest}:${e.status}:${e.error ?? ''}:${e.p.replyTo?.id}:${state.agents.length}`;
+    if (key !== heldKey) {
+      heldKey = key;
+      setChildren(heldPane, heldCard(state, e, held));
+    }
+    return true;
+  }
+
   function renderThread(state: MusterState, n: Note | undefined): void {
     const weeklyOn = !!n && isWeeklyNote(n);
     weekly.el.hidden = !weeklyOn;
@@ -362,11 +385,23 @@ export function createBoard(): Page {
     const state = visibleState(snap.state);
     renderFilters(state);
     const notes = sortNotes(state.notes.filter((n) => matches(n, filter)));
-    if (!selected || !state.notes.some((n) => n.id === selected)) selected = notes[0]?.id ?? null;
+    // held remote writes sit at the top of Open, Needs you and All
+    const heldList = filter === 'open' || filter === 'needsYou' || filter === 'all' ? held.list() : [];
+    const ids = [...heldList.map((e) => e.p.pendingId), ...notes.map((n) => n.id)];
+    const heldSel = heldList.some((e) => e.p.pendingId === selected);
+    if (!selected || !(heldSel || state.notes.some((n) => n.id === selected))) selected = ids[0] ?? null;
     const scroll = list.scrollTop;
-    setChildren(list, notes.length ? notes.map((n) => row(state, n)) : h('div.empty', null, filter === 'needsYou' ? 'Nothing needs you right now.' : 'No notes.'));
+    const rows = [
+      ...heldList.map((e) => heldRow(state, e, e.p.pendingId === selected, () => { selected = e.p.pendingId; render(); })),
+      ...notes.map((n) => row(state, n)),
+    ];
+    setChildren(list, rows.length ? rows : h('div.empty', null, filter === 'needsYou' ? 'Nothing needs you right now.' : 'No notes.'));
     list.scrollTop = scroll;
-    renderThread(state, state.notes.find((n) => n.id === selected));
+    if (!renderHeld(state, heldList.some((e) => e.p.pendingId === selected) ? selected : null)) renderThread(state, state.notes.find((n) => n.id === selected));
+  }
+
+  function projectName(s: Snapshot): string {
+    return s.config.projectName || s.state.repoRoot.split(/[\\/]/).filter(Boolean).pop() || '';
   }
 
   return {
@@ -374,12 +409,24 @@ export function createBoard(): Page {
     show() {
       void update.check();
       updateTimer ??= setInterval(() => void update.check(), 60_000);
+      if (snap) void held.setProject(snap.state.repoRoot, projectName(snap)).then(() => held.load(true));
+      pollTimer ??= setInterval(() => void held.load(), POLL_MS);
+      tickTimer ??= setInterval(() => { if (!held.tick()) tickCountdowns(el); }, 1_000);
     },
     hide() {
       clearInterval(updateTimer);
       updateTimer = undefined;
+      clearInterval(pollTimer);
+      pollTimer = undefined;
+      clearInterval(tickTimer);
+      tickTimer = undefined;
     },
-    update(s) { snap = s; weekly.update(s); render(); },
+    update(s) {
+      snap = s;
+      weekly.update(s);
+      render();
+      void held.setProject(s.state.repoRoot, projectName(s)).then(() => held.load()); // the events refresh polls too
+    },
     params(p) {
       const id = p.get('note');
       if (id) {

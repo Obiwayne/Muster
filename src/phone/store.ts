@@ -7,6 +7,7 @@ import { join } from 'node:path';
 import * as selfsigned from 'selfsigned';
 import { secretsBase } from '../core/tokens.js';
 import { clonePrefs, DEFAULT_PREFS, type Prefs } from './needs.js';
+import type { PendingWrite } from './pending.js';
 
 export const DEFAULT_PHONE_PORT = 47910;
 
@@ -27,7 +28,31 @@ export interface PhoneState {
   projects: string[];
   /** Prefs a newly paired device starts with (the desktop's "Send to phone" toggles; GET/PUT /admin/send). */
   defaultPrefs: Prefs;
+  /** The remote connector's desktop-only switches and held writes (docs/REMOTE.md). */
+  remote: RemoteState;
 }
+
+export interface RemoteState {
+  confirmWrites: boolean; // hold every write for your tap (default on)
+  allowApprove: boolean; // expose muster_approve (default off)
+  pending: PendingWrite[];
+  nextPending: number;
+  /** Set while the hold is off: when it was turned off, and how many writes went out without your tap since. */
+  offSince?: string;
+  sentWithoutTap?: number;
+  /** Set from Settings → Remote access (PUT /admin/remote/config). Unset = the env/flags seed it. */
+  config?: RemoteConfig;
+}
+
+export interface RemoteConfig {
+  enabled: boolean;
+  port: number;
+  /** The tunnel's public hostname, e.g. muster.example.com (no scheme, no path). */
+  publicHost: string | null;
+  tunnel: 'cloudflare' | 'tailscale' | null;
+}
+
+const freshRemote = (): RemoteState => ({ confirmWrites: true, allowApprove: false, pending: [], nextPending: 1 });
 
 export interface ServerFile {
   port: number;
@@ -46,13 +71,15 @@ export const phoneFiles = (dir: string) => ({
   cert: join(dir, 'cert.pem'),
   key: join(dir, 'key.pem'),
   adminToken: join(dir, 'admin-token'),
+  remoteToken: join(dir, 'remote-dev-token'),
+  remoteLog: join(dir, 'remote.log'),
   server: join(dir, 'server.json'),
   log: join(dir, 'gateway.log'),
 });
 
 export const sha256hex = (s: string | Buffer): string => createHash('sha256').update(s).digest('hex');
 
-function writePrivate(file: string, text: string): void {
+export function writePrivate(file: string, text: string): void {
   const tmp = `${file}.${process.pid}.tmp`;
   writeFileSync(tmp, text, { mode: 0o600 });
   try {
@@ -68,7 +95,7 @@ export function ensureDir(dir: string): void {
 }
 
 function freshState(): PhoneState {
-  return { pcName: hostname(), devices: [], network: { mode: 'lan' }, projects: [], defaultPrefs: clonePrefs(DEFAULT_PREFS) };
+  return { pcName: hostname(), devices: [], network: { mode: 'lan' }, projects: [], defaultPrefs: clonePrefs(DEFAULT_PREFS), remote: freshRemote() };
 }
 
 const withDefaults = (p: Partial<Prefs> | undefined, base: Prefs): Prefs => ({
@@ -90,6 +117,24 @@ export function loadState(dir: string): PhoneState {
       network: { mode: raw.network?.mode === 'tailscale' ? 'tailscale' : 'lan' },
       projects: Array.isArray(raw.projects) ? raw.projects.filter((p) => typeof p === 'string') : [],
       defaultPrefs,
+      remote: {
+        confirmWrites: raw.remote?.confirmWrites !== false, // anything but an explicit false keeps the hold on
+        allowApprove: raw.remote?.allowApprove === true,
+        pending: Array.isArray(raw.remote?.pending) ? raw.remote.pending : [],
+        nextPending: Number.isInteger(raw.remote?.nextPending) && raw.remote!.nextPending > 0 ? raw.remote!.nextPending : 1,
+        ...(raw.remote?.confirmWrites === false && typeof raw.remote.offSince === 'string' ? { offSince: raw.remote.offSince } : {}),
+        ...(raw.remote?.confirmWrites === false && Number.isInteger(raw.remote.sentWithoutTap) ? { sentWithoutTap: raw.remote.sentWithoutTap } : {}),
+        ...(raw.remote?.config && typeof raw.remote.config === 'object'
+          ? {
+              config: {
+                enabled: raw.remote.config.enabled === true,
+                port: Number.isInteger(raw.remote.config.port) ? raw.remote.config.port : 47911,
+                publicHost: typeof raw.remote.config.publicHost === 'string' && raw.remote.config.publicHost ? raw.remote.config.publicHost : null,
+                tunnel: raw.remote.config.tunnel === 'cloudflare' || raw.remote.config.tunnel === 'tailscale' ? raw.remote.config.tunnel : null,
+              },
+            }
+          : {}),
+      },
     };
   } catch {
     return freshState();
@@ -116,6 +161,21 @@ export function ensureAdminToken(dir: string): string {
   ensureDir(dir);
   const token = randomBytes(24).toString('hex');
   writePrivate(phoneFiles(dir).adminToken, token);
+  return token;
+}
+
+/** Milestone 1 of the remote connector (docs/REMOTE.md): one bearer token for /mcp until OAuth lands. */
+export function ensureRemoteDevToken(dir: string): string {
+  const file = phoneFiles(dir).remoteToken;
+  try {
+    const t = readFileSync(file, 'utf8').trim();
+    if (t) return t;
+  } catch {
+    /* first use */
+  }
+  ensureDir(dir);
+  const token = randomBytes(32).toString('base64url');
+  writePrivate(file, token);
   return token;
 }
 

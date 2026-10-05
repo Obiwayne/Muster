@@ -6,13 +6,14 @@ import android.content.Intent
 import androidx.core.app.RemoteInput
 import com.obiwayne.muster.MusterApp
 import com.obiwayne.muster.data.AnswerChoice
+import com.obiwayne.muster.data.ApiException
 import com.obiwayne.muster.data.AskOption
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.SupervisorJob
 import kotlinx.coroutines.launch
 
-/** APPROVE, REPLY and ANSWER from a notification: calls the gateway, then updates the notification. */
+/** APPROVE, REPLY, ANSWER and DISCARD (a held remote write) from a notification: calls the gateway, then updates the notification. */
 class ActionReceiver : BroadcastReceiver() {
     override fun onReceive(context: Context, intent: Intent) {
         val app = context.applicationContext
@@ -49,6 +50,23 @@ class ActionReceiver : BroadcastReceiver() {
                             Notifier.postStatus(app, itemId, kind, projectName, "Couldn't send your answer", error ?: "Try again from the app.", null)
                         }
                     }
+                    ACTION_DISCARD -> {
+                        val pendingId = intent.getStringExtra(Notifier.EXTRA_PENDING) ?: return@launch
+                        var error: String? = null
+                        val ok = state.call({ error = it }) {
+                            try {
+                                discardPending(pid, pendingId)
+                            } catch (e: ApiException) {
+                                if (e.code != 404) throw e // 404: already gone, which is what Discard wanted
+                            }
+                        } != null
+                        if (ok) {
+                            state.removeNeed(itemId, keep = false)
+                            Notifier.postStatus(app, itemId, kind, projectName, "Discarded $pendingId", "Nothing was sent.", 4000)
+                        } else {
+                            Notifier.postStatus(app, itemId, kind, projectName, "Couldn't discard $pendingId", error ?: "Open Muster to discard it.", null)
+                        }
+                    }
                     ACTION_ANSWER -> {
                         val choice = intent.getStringExtra(Notifier.EXTRA_CHOICE)
                         if (nid == null || choice == null) return@launch
@@ -73,6 +91,7 @@ class ActionReceiver : BroadcastReceiver() {
         const val ACTION_APPROVE = "com.obiwayne.muster.APPROVE"
         const val ACTION_REPLY = "com.obiwayne.muster.REPLY"
         const val ACTION_ANSWER = "com.obiwayne.muster.ANSWER"
+        const val ACTION_DISCARD = "com.obiwayne.muster.DISCARD"
         private val scope = CoroutineScope(SupervisorJob() + Dispatchers.IO)
     }
 }
