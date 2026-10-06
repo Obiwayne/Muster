@@ -54,7 +54,7 @@ const MAIN_DECK: Spot[] = [
   { ...at(154, 226), pose: 'hammer', flip: true, tagLift: 24 },
 ];
 const CANNON: Spot[] = [at(212, 203), at(196, 204)];
-const STERN: Spot[] = [{ ...at(58, 206), pose: 'hammer' }];
+const STERN: Spot[] = [{ ...at(58, 206), pose: 'hammer', tagLift: 12 }]; // lifted clear of the Captain's tag at the helm
 const RIGGING: Spot[] = [at(159, 190), at(60, 150)]; // right rope first: the left one sits under the Captain's bubble
 const REST: Spot[] = [at(262, 186), at(58, 206)];
 /** The barrel game rolls back and forth along the main deck around here. */
