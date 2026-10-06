@@ -12,7 +12,7 @@ import type { PendingRemote } from './heldmodel';
 // Contract with T12/T14 (crew-8): GET /api/lines.
 export interface LineDef { name: string; label: string; stations: string[]; builtin: boolean }
 export interface LinesResponse { lines: LineDef[]; defaultLine: string }
-export interface StationDef { name: string; role: 'crew' | 'design' | 'captain' | 'human'; guideline: string; builtin: boolean; skills?: string[] }
+export interface StationDef { name: string; role: 'crew' | 'design' | 'captain' | 'human' | 'qa'; guideline: string; builtin: boolean; locked?: boolean; skills?: string[] }
 
 /** Token: injected <meta name="muster-token">, else ?token= in the URL, else VITE_MUSTER_TOKEN (dev). */
 export function getToken(): string {

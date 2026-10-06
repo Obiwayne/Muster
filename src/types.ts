@@ -65,7 +65,27 @@ export interface Task {
   createdAt: string;
   updatedAt: string;
   history: TaskEvent[];
+  qa?: TaskQa; // the QA gate before review (absent until the qa station has scored the task)
 }
+
+/** The QA gate's state on a task: how many rounds it has had, and the latest verdict. */
+export interface TaskQa {
+  round: number; // 1, 2, 3...
+  escalated?: boolean; // three failed rounds: the Captain and you decide
+  last?: QaVerdict;
+}
+
+export interface QaVerdict {
+  score: number; // 0-5; only 5/5 passes
+  at: string;
+  findings: QaFinding[];
+  rubric: QaRubric;
+}
+
+export interface QaFinding { file: string; line?: number; problem: string; fix: string }
+
+/** One point each; true = the check passed. */
+export interface QaRubric { correct: boolean; tested: boolean; clean: boolean; scoped: boolean; safe: boolean }
 
 /** One add_evidence call: files copied from the agent's worktree to .muster/evidence/<task>/<id>/. */
 export interface Evidence {
@@ -435,6 +455,7 @@ export interface StationDef {
   role: Role; // which role works it
   builtin: boolean; // build, test, design, review
   guideline: string; // Markdown shown to the agent working the station; '' when none
+  locked?: boolean; // a gate station (qa): always sits just before review; it can't be reordered, removed or given another role
   skills: string[]; // skills of the Muster plugin (plugin/skills) the worker should use there, e.g. ["evidence-driven-testing"]
 }
 
