@@ -226,6 +226,12 @@ ${block}`;
     ctx.toast('info', note.text);
   };
 
+  /** A task waiting at the qa station needs the standing QA agent running; a failed start is logged, not fatal to the request. */
+  const wakeQa = async (task: Task) => {
+    if (task.status !== 'ready' || task.stations[task.stationIndex] !== 'qa') return;
+    await agents.ensureQa().catch((e) => ctx.toast('warn', `The QA agent did not start: ${e instanceof Error ? e.message : String(e)}`));
+  };
+
   /** After a task lands on an agent: fix up its branch, and wake the agent if it was stopped. */
   const afterTake = async (agent: Agent | undefined, task: Task) => {
     if (!agent) return;
@@ -598,16 +604,21 @@ ${pushed ? `Pushed ${base} to origin.` : `Push to origin failed: ${(r.stderr || 
     const current = tasks.requireTask(state(), params.id);
     const from = await agents.stationBranch(current); // 409 unless it contains the earlier stations' work
     if (body.to) await agents.assertCanTakeBranch(body.to, current);
-    const r = mutate(() => tasks.handoffTask(state(), params.id, str(body.actor, 'actor'), body.to || undefined, body.note ?? '', from, stations.stationRoles(ctx.paths)));
+    const qa = await agents.qaSkip(current, from);
+    const r = mutate(() => tasks.handoffTask(state(), params.id, str(body.actor, 'actor'), body.to || undefined, body.note ?? '', from, stations.stationRoles(ctx.paths), qa));
     announceApproval(r.task);
+    await wakeQa(r.task);
     if (r.receiver) await afterTake(r.receiver, r.task);
     attachGuideline(r.task.assignee, r.task, ['handoff', 'review']);
     return r.task;
   });
   route('POST', '/api/tasks/:id/done', async ({ params, body }) => {
-    const from = await agents.stationBranch(tasks.requireTask(state(), params.id));
-    const done = mutate(() => tasks.doneTask(state(), params.id, str(body.actor, 'actor'), body.summary ?? '', from, stations.stationRoles(ctx.paths)));
+    const current = tasks.requireTask(state(), params.id);
+    const from = await agents.stationBranch(current);
+    const qa = await agents.qaSkip(current, from);
+    const done = mutate(() => tasks.doneTask(state(), params.id, str(body.actor, 'actor'), body.summary ?? '', from, stations.stationRoles(ctx.paths), qa));
     announceApproval(done);
+    await wakeQa(done);
     attachGuideline(done.assignee, done, ['review', 'handoff']);
     return done;
   });
@@ -628,6 +639,7 @@ ${pushed ? `Pushed ${base} to origin.` : `Push to origin failed: ${(r.stderr || 
   route('POST', '/api/tasks/:id/approve', async ({ params, body }) => {
     const task = mutate(() => tasks.approveTask(state(), params.id, str(body.actor, 'actor'), body.note ?? '', stations.stationRoles(ctx.paths)));
     announceApproval(task);
+    await wakeQa(task);
     attachGuideline(task.assignee, task, ['handoff', 'review']);
     return task;
   });

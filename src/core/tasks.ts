@@ -4,6 +4,7 @@ import { STATION_ROLE, type Agent, type MusterConfig, type MusterState, type Not
 import { addFeed, addInbox, captainOf, closeNoteIfOpen, findAgent, HUMAN, idNum, isCaptain, nowIso, postNote, replyNote, requireActor, requireAgent, SYSTEM } from './board.js';
 import { badRequest, conflict, forbidden, notFound } from './errors.js';
 import { activateGoal, advanceRoadmap, remindMerged, goalForTask } from './roadmap.js';
+import { QA_STATION } from './qa.js';
 import { nextId } from './store.js';
 import { assertNotPaused } from './usage.js';
 
@@ -91,7 +92,7 @@ export function createTask(state: MusterState, config: MusterConfig, input: Task
     assertNotPaused(state);
     assertCanTake(state, requireAgent(state, input.assignee));
   }
-  const stations = (input.stations?.length ? input.stations : config.defaultStations).map((s) => s.trim().toLowerCase()).filter((s) => s && s !== 'review');
+  const stations = (input.stations?.length ? input.stations : config.defaultStations).map((s) => s.trim().toLowerCase()).filter((s) => s && s !== 'review' && s !== QA_STATION);
   const at = nowIso();
   const task: Task = {
     id: nextId(state, 'task'),
@@ -100,7 +101,7 @@ export function createTask(state: MusterState, config: MusterConfig, input: Task
     dependsOn,
     ...(input.line ? { line: input.line } : {}),
     ...(goal ? { goalId: goal.id } : {}),
-    stations: [...stations, 'review'],
+    stations: [...stations, QA_STATION, 'review'],
     stationIndex: 0,
     status: 'ready',
     createdBy: actor,
@@ -214,7 +215,7 @@ function announceReady(state: MusterState, task: Task, actor: string, roles?: Re
   }
   // Nobody free to pick it up (e.g. the only crew agent just handed it on): the Captain decides who takes it.
   const captain = captainOf(state);
-  if (!told && captain && captain.id !== actor) {
+  if (!told && captain && captain.id !== actor && role !== 'qa') { // the standing QA agent is started by the orchestrator
     addInbox(state, {
       agentId: captain.id,
       from: actor,
@@ -315,6 +316,17 @@ export function rejectTask(state: MusterState, taskId: string, actor: string, no
   return task;
 }
 
+/** `skipQa`: the diff only touches docs or images (qaSkippable), so a task arriving at the qa station moves straight on. */
+export interface QaOpts {
+  skipQa?: boolean;
+}
+
+function skipQa(task: Task, actor: string, opts: QaOpts): void {
+  if (!opts.skipQa || currentStation(task) !== QA_STATION) return;
+  event(task, actor, 'note', 'qa skipped: the diff only changes docs or images');
+  task.stationIndex = Math.min(task.stationIndex + 1, task.stations.length - 1);
+}
+
 export interface HandoffResult {
   task: Task;
   /** Branch that carried the work before the handoff; the receiver's worktree should merge it. */
@@ -326,7 +338,7 @@ export interface HandoffResult {
  * Moves the task to its next station. `from` is the finishing station's branch (checked by the caller
  * to contain the task's inputs); it becomes the task branch and an input every later branch must contain.
  */
-export function handoffTask(state: MusterState, taskId: string, actor: string, to: string | undefined, note: string, from?: StationBranch, roles?: Record<string, Role>): HandoffResult {
+export function handoffTask(state: MusterState, taskId: string, actor: string, to: string | undefined, note: string, from?: StationBranch, roles?: Record<string, Role>, opts: QaOpts = {}): HandoffResult {
   requireActor(state, actor);
   const task = requireTask(state, taskId);
   requireHolder(state, task, actor);
@@ -340,6 +352,7 @@ export function handoffTask(state: MusterState, taskId: string, actor: string, t
   }
   const fromBranch = task.branch;
   task.stationIndex = Math.min(task.stationIndex + 1, task.stations.length - 1);
+  skipQa(task, actor, opts);
   const station = currentStation(task);
   const noteText = note?.trim() || '(no note)';
   event(task, actor, 'handoff', `to ${station === 'review' ? 'review' : (receiver?.id ?? 'any ' + stationRole(station, roles))}: ${noteText}`);
@@ -367,7 +380,7 @@ export function handoffTask(state: MusterState, taskId: string, actor: string, t
   return { task, fromBranch, receiver };
 }
 
-export function doneTask(state: MusterState, taskId: string, actor: string, summary: string, from?: StationBranch, roles?: Record<string, Role>): Task {
+export function doneTask(state: MusterState, taskId: string, actor: string, summary: string, from?: StationBranch, roles?: Record<string, Role>, opts: QaOpts = {}): Task {
   requireActor(state, actor);
   const task = requireTask(state, taskId);
   requireHolder(state, task, actor);
@@ -377,7 +390,7 @@ export function doneTask(state: MusterState, taskId: string, actor: string, summ
   // the task goes on to the next one rather than jumping straight to the Captain.
   if (task.stations[task.stationIndex + 1] !== 'review' && task.stationIndex < task.stations.length - 1) {
     postNote(state, { actor, type: 'done', taskId: task.id, text: `${task.id} ${task.title} (${currentStation(task)}): ${text}` });
-    return handoffTask(state, taskId, actor, undefined, text, from, roles).task;
+    return handoffTask(state, taskId, actor, undefined, text, from, roles, opts).task;
   }
   if (from) {
     task.branch = from.branch;

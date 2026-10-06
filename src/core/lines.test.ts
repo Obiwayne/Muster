@@ -24,10 +24,10 @@ describe('factory lines', () => {
   it('ships four built-in lines that end with review and use only stations that resolve', () => {
     const lines = listLines(cfg());
     expect(lines.map((l) => [l.name, l.label, l.stations.join(' ')])).toEqual([
-      ['new-app', 'New app / big feature', 'discover concept design plan approval review'],
-      ['feature', 'Feature', 'plan build test review'],
-      ['ui', 'UI change', 'design build design-check review'],
-      ['bugfix', 'Bug fix', 'reproduce fix test review'],
+      ['new-app', 'New app / big feature', 'discover concept design plan approval qa review'],
+      ['feature', 'Feature', 'plan build test qa review'],
+      ['ui', 'UI change', 'design build design-check qa review'],
+      ['bugfix', 'Bug fix', 'reproduce fix test qa review'],
     ]);
     for (const l of lines) for (const s of l.stations) expect(getStation(p, s), `${l.name}/${s}`).toBeDefined();
     expect(defaultLineName(cfg())).toBe('feature');
@@ -36,8 +36,8 @@ describe('factory lines', () => {
   it('merges your edits over the built-ins and adds custom lines after them', () => {
     const lines = listLines(cfg({ feature: { label: 'Feature', stations: ['build', 'test'] }, mine: { label: 'Mine', stations: ['plan'] } }));
     expect(lines.map((l) => l.name)).toEqual(['new-app', 'feature', 'ui', 'bugfix', 'mine']);
-    expect(getLine(cfg({ feature: { label: 'F', stations: ['build'] } }), 'feature')).toEqual({ name: 'feature', label: 'F', stations: ['build', 'review'], builtin: true });
-    expect(getLine(cfg({ mine: { label: 'Mine', stations: ['plan'] } }), 'mine')).toMatchObject({ builtin: false, stations: ['plan', 'review'] });
+    expect(getLine(cfg({ feature: { label: 'F', stations: ['build'] } }), 'feature')).toEqual({ name: 'feature', label: 'F', stations: ['build', 'qa', 'review'], builtin: true });
+    expect(getLine(cfg({ mine: { label: 'Mine', stations: ['plan'] } }), 'mine')).toMatchObject({ builtin: false, stations: ['plan', 'qa', 'review'] });
     expect(lineStations(cfg(), 'ui')).toEqual(['design', 'build', 'design-check']);
     expect(defaultLineName({ ...cfg(), defaultLine: 'gone' })).toBe('feature');
   });
@@ -69,14 +69,14 @@ describe('factory lines', () => {
     const s = emptyState('/repo');
     s.agents.push(makeAgent('captain', 'captain'));
     const t = createTask(s, DEFAULT_CONFIG, { title: 'T', stations: lineStations(cfg(), 'bugfix'), line: 'bugfix', actor: 'captain' });
-    expect(t).toMatchObject({ line: 'bugfix', stations: ['reproduce', 'fix', 'test', 'review'] });
+    expect(t).toMatchObject({ line: 'bugfix', stations: ['reproduce', 'fix', 'test', 'qa', 'review'] });
 
-    expect(loadConfig(p).defaultStations).toEqual(['plan', 'build', 'test', 'review']);
+    expect(loadConfig(p).defaultStations).toEqual(['plan', 'build', 'test', 'qa', 'review']);
     writeFileSync(p.config, JSON.stringify({ defaultLine: 'ui', lines: { ui: { label: 'UI', stations: ['design', 'build'] } } }));
-    expect(loadConfig(p)).toMatchObject({ defaultLine: 'ui', defaultStations: ['design', 'build', 'review'] });
+    expect(loadConfig(p)).toMatchObject({ defaultLine: 'ui', defaultStations: ['design', 'build', 'qa', 'review'] });
     // Migration: a config.json from before lines keeps its defaultStations as the default line's stations.
     writeFileSync(p.config, JSON.stringify({ defaultStations: ['build', 'review'] }));
-    expect(loadConfig(p)).toMatchObject({ defaultLine: 'feature', defaultStations: ['build', 'review'] });
-    expect(getLine(loadConfig(p), 'feature')!.stations).toEqual(['build', 'review']);
+    expect(loadConfig(p)).toMatchObject({ defaultLine: 'feature', defaultStations: ['build', 'qa', 'review'] });
+    expect(getLine(loadConfig(p), 'feature')!.stations).toEqual(['build', 'qa', 'review']);
   });
 });

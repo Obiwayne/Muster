@@ -124,6 +124,8 @@ export async function musterFetch<T>(path: string, opts?: { method?: string; bod
 | DELETE | /api/stations/:name | | `StationDef[]` — human only; also removed from `config.defaultStations`; `review` is refused (400), unknown is 404. Claiming and handoff resolve a station's role from these files (tasks.ts stays pure: roles are passed in) |
 | POST | /api/shutdown | `{ clean?: boolean }` | `{ ok }` — stops every agent, removes merged worktrees if clean, exits |
 
+**QA gate.** Every line ends `… qa, review`: `qa` is a locked station (`StationDef.locked`, like `review`; role fixed to `qa`, can't be removed or re-roled) worked by the standing QA agent (role `qa`, id `qa`, outside `maxCrew`, started by the orchestrator when a task reaches the station: `AgentManager.ensureQa`, never added by hand). It reads the builder's branch in a detached checkout and never edits code (the guard denies edits). `Task.qa = { round, escalated?, last?: { score 1-5, at, findings: {file, line?, problem, fix}[], rubric: {correct, tested, clean, scoped, safe} } }` holds its verdicts (written by `qa_verdict`, server 2/2). A handoff/done whose diff against base only touches docs or images (`qaSkippable`, core/qa.ts) skips the station and goes straight to review.
+
 Station guidelines are delivered where an agent picks up work: `claim_task` appends the current station's guideline to its result; assignment, handoff-to-an-agent and review inbox items carry it (the inbox text, not the terminal nudge); the Captain's launch prompt lists the stations and the review guideline.
 
 ### Factory lines (src/core/lines.ts, src/core/starters.ts)

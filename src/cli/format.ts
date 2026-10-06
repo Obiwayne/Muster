@@ -157,7 +157,7 @@ export function formatStatus(
   if (!state.agents.length) {
     out.push('No agents yet. Run `muster up` to start the Captain, `muster add` for crew.');
   } else {
-    const order: Record<Role, number> = { captain: 0, crew: 1, design: 2, research: 3, human: 4 };
+    const order: Record<Role, number> = { captain: 0, crew: 1, design: 2, research: 3, qa: 4, human: 5 };
     const agents = [...state.agents].sort((a, b) => order[a.role] - order[b.role]);
     const rows = agents.map((a) => {
       const color = roleColor(c, a.role);

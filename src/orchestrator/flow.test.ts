@@ -47,6 +47,11 @@ async function ok<T = any>(actor: string, method: string, path: string, body?: R
 const state = () => orch.store.state as MusterState;
 const task = (id: string) => state().tasks.find((t) => t.id === id)!;
 const agent = (id: string) => state().agents.find((a) => a.id === id)!;
+/** The QA agent (started when a task reaches the qa station) takes the task and passes it to review. */
+const qaPass = async (id: string) => {
+  await ok('captain', 'POST', `/api/tasks/${id}/assign`, { agentId: 'qa' });
+  await ok('qa', 'POST', `/api/tasks/${id}/done`, { summary: 'qa ok' });
+};
 const head = (ref: string) => gitSync(repo, 'rev-parse', ref);
 const contains = (ancestor: string, ref: string) => {
   try {
@@ -97,6 +102,7 @@ describe('task flows', () => {
     const wt = agent('crew-2').worktree;
     commitFile(wt, 'alpha.ts', 'export const alpha = 1;\n');
     await ok('crew-2', 'POST', '/api/tasks/T1/done', { summary: 'alpha' });
+    await qaPass('T1');
     const reviewed = await ok<Task>('captain', 'POST', '/api/tasks/T1/review', { summary: 'tested' });
     expect(reviewed.reviewedSha).toBe(head('crew-2/alpha'));
     // the branch owner is told to leave the reviewed branch alone
@@ -181,7 +187,7 @@ describe('task flows', () => {
     gitSync(wt4, 'add', 'shared.txt');
     gitSync(wt4, 'commit', '-q', '--no-edit');
     const done = await ok<Task>('crew-4', 'POST', '/api/tasks/T4/done', { summary: 'tested' });
-    expect(done).toMatchObject({ status: 'review', branch: 'crew-4/delta' });
+    expect(done).toMatchObject({ status: 'ready', branch: 'crew-4/delta' }); // waits at the qa station
     expect(stuck.open).toBe(false);
   });
 
@@ -190,6 +196,7 @@ describe('task flows', () => {
     expect(task('T5').branch).toBe('crew-3/epsilon'); // crew-3/delta belongs to T4
     commitFile(agent('crew-3').worktree, 'eps.ts', 'export const eps = 1;\n');
     await ok('crew-3', 'POST', '/api/tasks/T5/done', { summary: 'eps' });
+    await qaPass('T5');
     const t5 = await ok<Task>('captain', 'POST', '/api/tasks/T5/review', { summary: 'ok' });
 
     await ok<Task>('captain', 'POST', '/api/tasks', { title: 'Zeta', dependsOn: ['T5'] }); // T6

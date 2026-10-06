@@ -411,7 +411,7 @@ function researchShell(command: string): Decision {
 export function decide(input: PreToolInput, env: GuardEnv): Decision {
   const role = env.role;
   const tool = input.tool_name ?? '';
-  if (role !== 'captain' && role !== 'crew' && role !== 'design' && role !== 'research') return ALLOW;
+  if (role !== 'captain' && role !== 'crew' && role !== 'design' && role !== 'research' && role !== 'qa') return ALLOW;
   const cwd = input.cwd || env.worktree || process.cwd();
 
   if (READ_TOOLS.has(tool)) {
@@ -429,6 +429,7 @@ export function decide(input: PreToolInput, env: GuardEnv): Decision {
 
   if (EDIT_TOOLS.has(tool)) {
     if (role === 'captain') return deny("The Captain doesn't write code: post_task or assign it to crew");
+    if (role === 'qa') return deny('The QA agent reviews, it never edits code: put what to change in the findings of qa_verdict');
     if (role === 'research') return deny(`${SCOUT}: no file edits. Post what you found with add_idea.`);
     const target = toolPath(input);
     if (!target || !env.worktree) return ALLOW;

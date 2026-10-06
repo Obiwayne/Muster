@@ -9,21 +9,24 @@
 import { existsSync, mkdirSync, readdirSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { STATION_ROLE, type MusterConfig, type Role, type SkillInfo, type StationDef, type Task } from '../types.js';
+import { QA_STATION } from './qa.js';
 import { badRequest, notFound } from './errors.js';
 import { STARTER_GUIDELINES } from './starters.js';
 import { PLUGIN_DIR, type MusterPaths } from './paths.js';
 
 export const MAX_GUIDELINE = 20_000;
-const ROLES: Role[] = ['captain', 'crew', 'design', 'human'];
+const ROLES: Role[] = ['captain', 'crew', 'design', 'human', 'qa'];
 const NAME_RE = /^[a-z0-9][a-z0-9-]{0,29}$/;
 const SKILL_RE = /^[a-z0-9][a-z0-9-]{0,63}$/;
 const REVIEW = 'review';
+const LOCKED = [QA_STATION, REVIEW]; // on every line, role fixed, never removed
 const NL = String.fromCharCode(10);
 const BUILT_IN = Object.keys(STATION_ROLE); // stations that work without a file: starter role + guideline
-const SEEDED = [...Object.keys(STARTER_GUIDELINES), REVIEW]; // every station of the built-in lines, plus review
+const SEEDED = [...Object.keys(STARTER_GUIDELINES), QA_STATION, REVIEW]; // every station of the built-in lines, plus review
 
 const DEFAULT_GUIDELINE: Record<string, string> = {
   ...STARTER_GUIDELINES,
+  qa: "The QA agent scores the task's diff before the Captain's review (1-5; only 5/5 passes) and sends findings back to the builder. It reviews and runs tests; it never edits code.",
   review: "Extra checks for the Captain's review. The fixed rules (tests pass, diff matches the task, only the human merges) always apply and can't be relaxed here. Read the diff, run the tests, and check the acceptance criteria before flagging the branch ready for merge.",
 };
 
@@ -107,7 +110,7 @@ function read(p: MusterPaths, name: string): StationFile | undefined {
   }
 }
 
-const roleFor = (name: string, file?: { role?: Role }): Role => (name === REVIEW ? 'captain' : (file?.role ?? STATION_ROLE[name] ?? 'crew'));
+const roleFor = (name: string, file?: { role?: Role }): Role => (name === REVIEW ? 'captain' : name === QA_STATION ? 'qa' : (file?.role ?? STATION_ROLE[name] ?? 'crew'));
 
 /** Writes the starter file of every built-in line station (and review) that is missing; existing files are never touched. */
 export function seedStations(p: MusterPaths): void {
@@ -133,8 +136,8 @@ export function listStations(p: MusterPaths, config: Pick<MusterConfig, 'default
     /* no folder yet */
   }
   const ordered = (config?.defaultStations ?? []).filter((n) => NAME_RE.test(n));
-  const names = [...new Set([...ordered, ...files.sort(), REVIEW])].filter((n) => files.includes(n) || BUILT_IN.includes(n));
-  names.splice(0, names.length, ...names.filter((n) => n !== REVIEW), REVIEW);
+  const names = [...new Set([...ordered, ...files.sort(), QA_STATION, REVIEW])].filter((n) => files.includes(n) || BUILT_IN.includes(n));
+  names.splice(0, names.length, ...names.filter((n) => !LOCKED.includes(n)), QA_STATION, REVIEW);
   return names.map((n) => describe(p, n));
 }
 
@@ -146,6 +149,7 @@ function describe(p: MusterPaths, name: string): StationDef {
     guideline: file?.guideline ?? DEFAULT_GUIDELINE[name] ?? '',
     skills: file?.skills ?? DEFAULT_SKILLS[name] ?? [],
     builtin: BUILT_IN.includes(name),
+    ...(LOCKED.includes(name) ? { locked: true } : {}),
   };
 }
 
@@ -161,6 +165,8 @@ export function saveStation(p: MusterPaths, rawName: unknown, patch: { role?: un
   const name = stationName(rawName);
   if (patch.role !== undefined && (typeof patch.role !== 'string' || !ROLES.includes(patch.role as Role))) throw badRequest('role must be "captain", "crew", "design" or "human"');
   if (name === REVIEW && patch.role !== undefined && patch.role !== 'captain') throw badRequest('The review station is always worked by the captain');
+  if (name === QA_STATION && patch.role !== undefined && patch.role !== 'qa') throw badRequest('The qa station is always worked by the QA agent');
+  if (name !== QA_STATION && patch.role === 'qa') throw badRequest('Only the qa station is worked by the QA agent');
   if (patch.guideline !== undefined) {
     if (typeof patch.guideline !== 'string') throw badRequest('guideline must be a string');
     if (patch.guideline.length > MAX_GUIDELINE) throw badRequest(`guideline is longer than ${MAX_GUIDELINE} characters`);
@@ -177,10 +183,10 @@ export function saveStation(p: MusterPaths, rawName: unknown, patch: { role?: un
   return describe(p, name);
 }
 
-/** Removes a station file. The review station cannot be removed. */
+/** Removes a station file. The qa and review stations cannot be removed. */
 export function deleteStation(p: MusterPaths, rawName: unknown): void {
   const name = stationName(rawName);
-  if (name === REVIEW) throw badRequest('The review station cannot be removed');
+  if (LOCKED.includes(name)) throw badRequest(`The ${name} station cannot be removed`);
   if (!existsSync(fileOf(p, name))) throw notFound(`No station "${name}"`);
   rmSync(fileOf(p, name), { force: true });
 }
@@ -210,7 +216,7 @@ Load ${skills.map((s) => `\`muster:${s}\``).join(', ')} with the Skill tool befo
  */
 export function evidenceStation(task: Pick<Task, 'stations'>, roles: Record<string, Role> = {}): string {
   const roleOf = (s: string) => roles[s] ?? STATION_ROLE[s] ?? 'crew';
-  return task.stations.filter((s) => s !== REVIEW && roleOf(s) !== 'human').at(-1) ?? REVIEW;
+  return task.stations.filter((s) => s !== REVIEW && s !== QA_STATION && roleOf(s) !== 'human').at(-1) ?? REVIEW;
 }
 
 /** What the evidence station is told to produce. */
