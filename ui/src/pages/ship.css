@@ -36,7 +36,7 @@
 .ship-card .link { font-size: 13px; font-weight: 600; color: var(--color-crew); }
 
 .ship-bubble {
-  position: absolute; transform: translate(-32%, -100%); width: 360px; display: flex; flex-direction: column; gap: 12px; padding: 16px 18px;
+  position: absolute; transform: translate(-90%, -100%); width: 300px; display: flex; flex-direction: column; gap: 12px; padding: 16px 18px;
   border-radius: 16px; background: #fff7e6; color: #1c1408; border: 3px solid var(--color-captain); z-index: 2;
   box-shadow: 0 0 0 4px rgba(245, 165, 36, 0.18), 0 14px 36px rgba(0, 0, 0, 0.55);
 }
@@ -51,7 +51,7 @@
 .ship-bubble button.ghost { color: #8a6a3a; }
 .ship-bubble button:hover { filter: brightness(1.1); }
 .ship-bubble .tail {
-  position: absolute; left: 32%; bottom: -13px; width: 22px; height: 22px; margin-left: -11px; background: #fff7e6;
+  position: absolute; left: 90%; bottom: -13px; width: 22px; height: 22px; margin-left: -11px; background: #fff7e6;
   border-right: 3px solid var(--color-captain); border-bottom: 3px solid var(--color-captain); transform: rotate(45deg);
 }
 
@@ -105,3 +105,15 @@
 .view-switch button.on { background: var(--color-bg); color: var(--color-text); font-weight: 600; box-shadow: 0 1px 2px rgba(0, 0, 0, 0.4); }
 .view-switch .needs { min-width: 16px; height: 16px; padding: 0 4px; border-radius: 8px; background: var(--color-warm); color: #2a1305; font-size: 10px; font-weight: 700; display: inline-flex; align-items: center; justify-content: center; }
 
+
+.ship-chip {
+  position: absolute; display: flex; align-items: center; gap: 8px; height: 30px; padding: 0 10px 0 6px; border-radius: 15px; cursor: pointer; z-index: 1;
+  background: rgba(12, 12, 14, 0.9); border: 1.5px solid color-mix(in oklab, var(--color-stuck) 70%, transparent);
+  box-shadow: 0 0 18px rgba(242, 85, 90, 0.3); font: 13px/18px var(--font-sans); color: var(--color-text); white-space: nowrap;
+}
+.ship-chip.right { transform: translate(0, -50%); }
+.ship-chip.left { transform: translate(-100%, -50%); }
+.ship-chip .bang { width: 18px; height: 18px; border-radius: 9px; background: var(--color-stuck); color: #2a0608; font-weight: 800; display: flex; align-items: center; justify-content: center; }
+.ship-chip .faint { color: var(--color-faint); font-family: var(--font-mono); font-size: 12px; }
+.ship-chip .go { color: var(--color-stuck); font-weight: 600; }
+.ship-chip:hover { filter: brightness(1.15); }

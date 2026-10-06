@@ -31,10 +31,10 @@ describe('shipView', () => {
     });
     const v = shipView(s, CFG);
     const at = (id: string) => v.sailors.find((x) => x.id === id)!;
-    expect(at('captain')).toMatchObject({ x: 268, pose: 'captain' });
-    expect(at('design')).toMatchObject({ x: 422, feet: 186 });
-    expect(at('crew-2')).toMatchObject({ feet: 560, pose: 'hammer' });
-    expect(at('crew-3')).toMatchObject({ x: 650, pose: 'stand' }); // at the cannon: the test station
+    expect(at('captain')).toMatchObject({ x: 152, feet: 206, pose: 'captain' });
+    expect(at('design')).toMatchObject({ x: 180, feet: 70 });
+    expect(at('crew-2')).toMatchObject({ feet: 226, pose: 'hammer' });
+    expect(at('crew-3')).toMatchObject({ x: 282, pose: 'stand' }); // at the cannon: the test station
     expect(at('crew-5')).toMatchObject({ pose: 'sit' });
     expect(v.tone).toBe('ok');
     expect(v.title).toBe('Fair winds');
