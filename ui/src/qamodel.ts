@@ -28,3 +28,11 @@ export function qaLabel(task: Task): string | null {
 }
 
 export const failedChecks = (r: QaRubric): string[] => CHECKS.filter((c) => !r[c.key]).map((c) => c.label);
+
+/** "Round 1 3/5 · Round 2 4/5"; from `history` when the server sends it, else just the last verdict. Null before any score. */
+export function qaHistory(task: Task): string | null {
+  const qa = task.qa;
+  if (!qa) return null;
+  const rounds = qa.history?.length ? qa.history : qa.last ? [{ round: qa.round, score: qa.last.score }] : [];
+  return rounds.length ? rounds.map((r) => `Round ${r.round} ${r.score}/5`).join(' · ') : null;
+}

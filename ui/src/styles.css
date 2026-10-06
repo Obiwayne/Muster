@@ -1364,3 +1364,6 @@ a.rs-evq:hover, a.rs-evrow:hover { border-color: color-mix(in oklab, var(--color
 .se-lock { color: var(--icon); display: flex; }
 .se-locked { display: flex; align-items: center; gap: 8px; padding: 10px 14px; border-radius: var(--radius-sm); background: var(--color-surface); border: 1px solid var(--color-line); font-size: 13px; color: var(--color-muted); }
 .r-qa { --role: var(--color-warm); }
+.qa-history { font-family: var(--font-mono); font-size: 11px; color: var(--color-muted); margin-bottom: 10px; }
+.qa-strip .qa-history { margin-bottom: 0; }
+.qa-badge:focus-visible { outline: 2px solid var(--q); outline-offset: 2px; }

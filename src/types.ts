@@ -73,7 +73,10 @@ export interface TaskQa {
   round: number; // 1, 2, 3...
   escalated?: boolean; // three failed rounds: the Captain and you decide
   last?: QaVerdict;
+  history?: QaRound[]; // one entry per scored round, oldest first
 }
+
+export interface QaRound { round: number; score: number; at: string }
 
 export interface QaVerdict {
   score: number; // 0-5; only 5/5 passes

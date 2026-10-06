@@ -142,7 +142,7 @@ const state = {
       evidence: [evidence('E1', 'build', 'ada', 'Migration applies and rolls back; 12 invite tests pass.', ['01-after-token-copy.png', 'tests.txt', 'assertions.md'], 6)],
       history: [{ at: iso(44), agentId: 'captain', kind: 'created' }, { at: iso(3), agentId: 'captain', kind: 'review_requested', text: 'Migration adds the invites table with a unique token index. Tests pass. Safe to merge.' }] }),
     task('T2', 'Invite token generator', 'review', S5, 4, { branch: 'ada/tokens', assignee: 'captain', created: 43,
-      qa: { round: 3, escalated: true, last: { score: 3, at: iso(7), rubric: { correct: true, tested: false, clean: true, scoped: true, safe: false }, findings: [
+      qa: { round: 3, escalated: true, history: [{ round: 1, score: 2, at: iso(40) }, { round: 2, score: 4, at: iso(22) }, { round: 3, score: 3, at: iso(7) }], last: { score: 3, at: iso(7), rubric: { correct: true, tested: false, clean: true, scoped: true, safe: false }, findings: [
         { file: 'src/core/tokens.ts', line: 41, problem: 'Tokens come from Math.random(), so they can be guessed.', fix: 'Use crypto.randomBytes and encode as base62.' },
         { file: 'src/core/tokens.test.ts', problem: 'No test covers a collision on the unique index.', fix: 'Add a test that inserts the same token twice and expects the second to be rejected.' },
         { file: 'src/core/tokens.ts', line: 18, problem: 'The expiry default is read from process.env without a fallback.', fix: 'Fall back to 7 days when INVITE_TTL_DAYS is unset.' }] } },

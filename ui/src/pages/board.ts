@@ -376,7 +376,7 @@ export function createBoard(): Page {
       items.push(h('div.banner.warm', null, icon('alert', 16), h('div.flex1', null, msg, hint), act));
       if (n.type === 'review' && task) items.push(evidenceStrip(task));
     }
-    const qa = task?.qa && n.open && (n.type === 'review' || n.type === 'escalation' || (n.type as string) === 'approval') ? qaStrip(task, 5) : null;
+    const qa = task?.qa && n.open && (n.type === 'review' || n.type === 'escalation' || (n.type as string) === 'approval') ? qaStrip(task, 5, true) : null;
     if (qa) items.push(qa);
     setChildren(replies, items);
     if (n.ask && n.open && !n.replies.length) replies.scrollTop = 0; // a fresh question menu reads from its first question
