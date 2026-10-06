@@ -1,7 +1,7 @@
 // Shared types for Muster. This file is the contract between the orchestrator,
 // the CLI, muster-mcp, the hooks and the dashboard. Change it deliberately.
 
-export type Role = 'captain' | 'crew' | 'design' | 'human' | 'research'; // research = the scout: reads public pages, posts ideas, never edits code or takes tasks // human = an approval station: nobody claims it, you Approve or Send back from the board
+export type Role = 'captain' | 'crew' | 'design' | 'human' | 'research' | 'qa'; // qa = the standing QA agent (id "qa", outside maxCrew): scores a task's diff at the locked qa station before review, never edits code // research = the scout: reads public pages, posts ideas, never edits code or takes tasks // human = an approval station: nobody claims it, you Approve or Send back from the board
 
 export type AgentStatus =
   | 'starting' // PTY spawned, claude booting
@@ -60,11 +60,35 @@ export interface Task {
   mergeApproval?: { at: string; sha?: string }; // you approved the reviewed commit; the Captain may merge it (merge_task)
   goalId?: string; // roadmap goal this task delivers ("G3"); progress on the roadmap is counted from these
   inputs?: TaskBranchInput[]; // commits the task branch must contain (earlier stations, dependencies); checked before done/review
+  qa?: TaskQa; // the QA gate's state: rounds run and the latest verdict
   evidence?: Evidence[]; // proof the work does what it should (screenshots, test output…); required before ready_for_merge
   createdBy: string;
   createdAt: string;
   updatedAt: string;
   history: TaskEvent[];
+}
+
+/** One thing the QA agent wants changed. */
+export interface QaFinding {
+  file: string;
+  line?: number;
+  problem: string;
+  fix: string;
+}
+
+export interface QaRubric {
+  correct: number;
+  tested: number;
+  clean: number;
+  scoped: number;
+  safe: number;
+}
+
+/** The QA gate on a task: `round` counts QA passes, `escalated` is set when the builder and QA could not agree, `last` is the latest verdict. */
+export interface TaskQa {
+  round: number;
+  escalated?: boolean;
+  last?: { score: number; at: string; findings: QaFinding[]; rubric: QaRubric }; // score 1-5; 5 passes
 }
 
 /** One add_evidence call: files copied from the agent's worktree to .muster/evidence/<task>/<id>/. */
@@ -419,6 +443,7 @@ export const STATION_ROLE: Record<string, Role> = {
   build: 'crew',
   test: 'crew',
   design: 'design',
+  qa: 'qa',
   review: 'captain',
   approval: 'human',
   discover: 'crew',
@@ -434,6 +459,7 @@ export interface StationDef {
   name: string; // lowercase, e.g. "build"
   role: Role; // which role works it
   builtin: boolean; // build, test, design, review
+  locked?: boolean; // qa and review: always on every line, role fixed, can't be removed
   guideline: string; // Markdown shown to the agent working the station; '' when none
   skills: string[]; // skills of the Muster plugin (plugin/skills) the worker should use there, e.g. ["evidence-driven-testing"]
 }

@@ -11,8 +11,9 @@ import * as gitOps from '../core/git.js';
 import type { MusterPaths } from '../core/paths.js';
 import { sanitizeTyped } from '../core/sanitize.js';
 import type { Store } from '../core/store.js';
+import { QA_ID, QA_STATION, qaSkippable } from '../core/qa.js';
 import { failRun, runningRun, SCOUT_ID } from '../core/research.js';
-import { addInput, assignTask, hasReportedDone, MERGE_CONFLICT, requireTask, untake, type StationBranch } from '../core/tasks.js';
+import { addInput, assignTask, hasReportedDone, MERGE_CONFLICT, requireTask, untake, type QaOpts, type StationBranch } from '../core/tasks.js';
 import { assertNotPaused } from '../core/usage.js';
 import { lastLines, RingBuffer, stripAnsi, type PtyLauncher, type PtyProcess } from './terminal.js';
 
@@ -110,7 +111,7 @@ export const CREW_NAMES = [
 ];
 const START_OUTPUT_MAX = 64 * 1024;
 const ID_PATTERN = /^[a-z0-9][a-z0-9_-]{0,39}$/i;
-const ROLES: Role[] = ['captain', 'crew', 'design', 'research'];
+const ROLES: Role[] = ['captain', 'crew', 'design', 'research', 'qa'];
 /** The Captain and the research agent work in the repo root on the base branch; everyone else gets a worktree. */
 const atRoot = (role: Role) => role === 'captain' || role === 'research';
 const sleep = (ms: number) => new Promise((r) => setTimeout(r, ms));
@@ -151,6 +152,7 @@ export class AgentManager {
   private closing = new Set<string>(); // agents being tidied away after an idle shutdown
   private zombies = new Map<string, number>(); // agent id → pid that survived stop()
   private starting = new Map<string, Promise<Agent>>();
+  private qaEnsuring?: Promise<Agent>;
   private flaggedStopped = new Set<string>(); // 'agent:task' keys of stopped agents the watchdog already told the Captain about
   private timings: Timings;
   private nudgeTimer?: NodeJS.Timeout;
@@ -189,10 +191,12 @@ export class AgentManager {
     const internal = input.actor === SYSTEM;
     if (!ROLES.includes(role)) throw badRequest(`Unknown role "${role}"`);
     if (role === 'research' && !internal) throw badRequest('The research agent is started by a research run (Roadmap → Research), not added by hand');
+    if (role === 'qa' && !internal) throw badRequest('The QA agent is started when a task reaches the qa station, not added by hand');
+    if (role === 'qa' && state.agents.some((a) => a.role === 'qa')) throw conflict('There is already a QA agent');
     if (!internal && input.actor !== HUMAN && !isCaptain(state, input.actor)) throw forbidden('Only the Captain or you can add agents');
     if (!internal) assertNotPaused(state);
     if (role === 'captain' && captainOf(state)) throw conflict(`${captainOf(state)!.id} is already the Captain; change roles instead`);
-    if (role !== 'captain' && !input.name) {
+    if (role !== 'captain' && role !== 'qa' && !input.name) {
       const reused = await this.reuseStopped(role, input);
       if (reused) return reused;
     }
@@ -315,6 +319,7 @@ export class AgentManager {
   /** After a --resume the conversation is back, but the agent doesn't know it was restarted. */
   private resumePromptFor(agent: Agent): string | undefined {
     if (agent.role === 'research') return runningRun(this.state) || this.o.intel?.runningJob() ? this.firstPromptFor(agent) : undefined;
+    if (agent.role === 'qa' && !agent.taskId) return this.firstPromptFor(agent);
     const task = agent.taskId ? this.state.tasks.find((t) => t.id === agent.taskId) : undefined;
     if (!task || task.assignee !== agent.id || task.status !== 'in_progress') return undefined;
     return `[muster] You were restarted. Continue ${task.id} ${task.title}; call read_inbox first.`;
@@ -333,6 +338,7 @@ export class AgentManager {
       const task = this.state.tasks.find((t) => t.id === agent.taskId);
       return `[muster] You are ${agent.id} (${agent.role}). Your task: ${agent.taskId} ${task?.title ?? ''}. Call read_inbox and claim/confirm it, then start.`;
     }
+    if (agent.role === 'qa') return `[muster] You are ${agent.id}, the standing QA agent. Call read_inbox, then claim_task to pick up a task waiting at the qa station.`;
     if (agent.role === 'crew') return `[muster] You are ${agent.id}, crew. Call claim_task to pick up work.`;
     if (agent.role === 'design') return `[muster] You are ${agent.id}, the Vellum design crew. Call read_board, then claim_task to pick up design checks.`;
     return undefined;
@@ -678,6 +684,7 @@ export class AgentManager {
     if (!ROLES.includes(role)) throw badRequest(`Unknown role "${role}"`);
     if (agent.role === role) return agent;
     if (role === 'research' || agent.role === 'research') throw conflict('The research agent keeps its role; it is started by a research run');
+    if (role === 'qa' || agent.role === 'qa') throw conflict('The QA agent keeps its role; it is started when a task reaches the qa station');
     if (role === 'design' && state.agents.some((a) => a.role === 'design' && a.id !== id)) throw conflict('There is already a design crew agent');
     const config = this.o.config();
 
@@ -702,6 +709,25 @@ export class AgentManager {
     agent.role = role;
     agent.model = modelFor(role, config);
     if (wasRunning) await this.start(agent.id);
+  }
+
+  // ---------------------------------------------------------------- QA agent
+
+  /**
+   * A task is waiting at the qa station: make sure the one QA agent (id "qa", outside maxCrew) exists and runs.
+   * A stopped one restarts with its session; a running one was told by announceReady.
+   */
+  ensureQa(): Promise<Agent> {
+    this.qaEnsuring ??= this.doEnsureQa().finally(() => (this.qaEnsuring = undefined));
+    return this.qaEnsuring;
+  }
+
+  private async doEnsureQa(): Promise<Agent> {
+    const existing = findAgent(this.state, QA_ID);
+    if (!existing) return this.create({ name: QA_ID, role: 'qa', actor: SYSTEM });
+    if (existing.role !== 'qa') throw conflict(`An agent called "${QA_ID}" already exists and isn't the QA agent; rename or remove it first`);
+    existing.model = modelFor('qa', this.o.config());
+    return this.runtimes.has(existing.id) ? existing : this.start(existing.id);
   }
 
   // ---------------------------------------------------------------- research agent
@@ -775,7 +801,7 @@ export class AgentManager {
    */
   async assertCanTakeBranch(agentId: string | undefined, task?: Task): Promise<void> {
     const agent = agentId ? findAgent(this.state, agentId) : undefined;
-    if (!agent || atRoot(agent.role) || !existsSync(agent.worktree)) return;
+    if (!agent || atRoot(agent.role) || agent.role === 'qa' || !existsSync(agent.worktree)) return;
     if (await this.needsFreshBranch(agent, task)) await this.assertClean(agent);
   }
 
@@ -789,6 +815,7 @@ export class AgentManager {
    */
   async syncTaskBranch(agent: Agent, task: Task): Promise<void> {
     if (agent.role === 'captain') return;
+    if (agent.role === 'qa') return this.checkoutForQa(agent, task);
     try {
       await this.setupTaskBranch(agent, task);
     } catch (e) {
@@ -801,6 +828,18 @@ export class AgentManager {
     const ok = incoming ? await this.mergeInput(agent, task, incoming, incoming, `${incoming} (${task.id}'s previous station)`) : true;
     if (ok) task.branch = agent.branch;
     await this.mergeDependencies(agent, task);
+  }
+
+  /** The QA agent reviews the builder's branch as it is: a detached checkout, no branch of its own, task.branch unchanged. */
+  private async checkoutForQa(agent: Agent, task: Task): Promise<void> {
+    try {
+      await this.ensureWorktree(agent);
+      if (task.branch && (await gitOps.branchExists(this.o.paths.root, task.branch))) await gitOps.git(agent.worktree, ['checkout', '--detach', '--quiet', task.branch]);
+    } catch (e) {
+      untake(this.state, task, agent, errText(e));
+      this.o.store.commit();
+      throw e;
+    }
   }
 
   private async setupTaskBranch(agent: Agent, task: Task): Promise<void> {
@@ -870,7 +909,7 @@ export class AgentManager {
    */
   async stationBranch(task: Task): Promise<StationBranch | undefined> {
     const holder = task.assignee ? findAgent(this.state, task.assignee) : undefined;
-    const branch = holder && holder.role !== 'captain' ? holder.branch : task.branch;
+    const branch = holder && holder.role !== 'captain' && holder.role !== 'qa' ? holder.branch : task.branch;
     if (!branch) return undefined;
     const root = this.o.paths.root;
     const sha = await gitOps.revParse(root, branch);
@@ -887,6 +926,14 @@ export class AgentManager {
       throw conflict(`${task.id}: ${branch} commits ${EVIDENCE_DIR}/ files (${tracked.split('\n').length}). Evidence is attached with add_evidence, never committed: git rm -r --cached ${EVIDENCE_DIR} and commit, then try again.`);
     }
     return { branch, sha };
+  }
+
+  /** Whether the station after this one is qa and the branch's diff against base is docs/images only (then qa is skipped). */
+  async qaSkip(task: Task, from?: StationBranch): Promise<QaOpts> {
+    if (task.stations[task.stationIndex + 1] !== QA_STATION || !from) return {};
+    const r = await gitOps.git(this.o.paths.root, ['diff', '--name-only', `${this.o.config().baseBranch}...${from.branch}`], true);
+    const files = r.stdout.split(/\r?\n/).filter(Boolean);
+    return { skipQa: files.length > 0 && qaSkippable(files) };
   }
 
   // ---------------------------------------------------------------- terminal I/O

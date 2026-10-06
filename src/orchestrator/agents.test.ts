@@ -353,6 +353,20 @@ describe('AgentManager after the first live run', () => {
     expect(store.state.agents.map((a) => a.role).sort()).toEqual(['crew', 'design']);
   });
 
+  it('keeps one standing QA agent, "qa", outside maxCrew, started by ensureQa and never added by hand', async () => {
+    const f = ctlLauncher();
+    const { agents, store } = setup(f.launcher, {}, {}, { maxCrew: 1 });
+    await agents.create({ role: 'crew', actor: SYS });
+    await expect(agents.create({ role: 'qa', actor: 'you' })).rejects.toThrow(/started when a task reaches the qa station/);
+    const [a, b] = await Promise.all([agents.ensureQa(), agents.ensureQa().catch(() => undefined)]);
+    expect(a.id).toBe('qa');
+    expect(a.role).toBe('qa');
+    expect(store.state.agents.filter((x) => x.role === 'qa')).toHaveLength(1);
+    expect(b === undefined || b.id === 'qa').toBe(true);
+    expect((await agents.ensureQa()).id).toBe('qa');
+    await expect(agents.setRole('qa', 'crew', 'you')).rejects.toThrow(/keeps its role/);
+  });
+
   it('names new crew (ada, bea…) unless crewNames is "numbers"', async () => {
     const f = ctlLauncher();
     const { agents } = setup(f.launcher, {}, {}, { crewNames: 'names' });

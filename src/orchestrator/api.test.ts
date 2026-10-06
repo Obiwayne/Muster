@@ -83,6 +83,11 @@ const ok = async <T = any>(method: string, path: string, body?: unknown): Promis
   if (r.status !== 200) throw new Error(`${method} ${path} → ${r.status} ${JSON.stringify(r.data)}`);
   return r.data;
 };
+/** The QA agent (started when a task reaches the qa station) takes the task and passes it to review. */
+const qaPass = async (id: string) => {
+  await ok('POST', `/api/tasks/${id}/assign`, { agentId: 'qa', actor: 'you' });
+  await ok('POST', `/api/tasks/${id}/done`, { actor: 'qa', summary: 'qa ok' });
+};
 const state = async () => (await ok<{ state: MusterState }>('GET', '/api/state')).state;
 const agent = async (id: string) => (await state()).agents.find((a) => a.id === id)!;
 
@@ -170,7 +175,7 @@ describe('orchestrator API', () => {
 
   it('runs a task from claim to merge', async () => {
     const task = await ok<Task>('POST', '/api/tasks', { title: 'Share dialog', description: 'add it', actor: 'captain' });
-    expect(task).toMatchObject({ id: 'T1', status: 'ready', stations: ['build', 'review'] });
+    expect(task).toMatchObject({ id: 'T1', status: 'ready', stations: ['build', 'qa', 'review'] });
     const claimed = await ok<Task>('POST', '/api/tasks/claim', { actor: 'crew-2' });
     expect(claimed).toMatchObject({ id: 'T1', status: 'in_progress', assignee: 'crew-2', branch: 'crew-2/share-dialog' });
     const crew = await agent('crew-2');
@@ -187,6 +192,7 @@ describe('orchestrator API', () => {
 
     expect((await call('POST', '/api/agents/crew-2/merge', { actor: 'you' })).status).toBe(409); // not flagged yet
     await ok('POST', '/api/tasks/T1/done', { actor: 'crew-2', summary: 'dialog works' });
+    await qaPass('T1');
     expect((await call('POST', '/api/tasks/T1/review', { actor: 'crew-2', summary: 'me' })).status).toBe(403);
     const reviewed = await ok<Task>('POST', '/api/tasks/T1/review', { actor: 'captain', summary: 'tested' });
     expect(reviewed.status).toBe('ready_for_merge');
@@ -367,6 +373,7 @@ describe('orchestrator API', () => {
       await ok('POST', '/api/tasks/T2/assign', { agentId: 'captain', actor: 'crew-2' }); // the old Captain is crew now
       await ok('POST', '/api/tasks/T2/done', { actor: 'captain', summary: 'tested' });
     }
+    await qaPass('T2');
     await ok('POST', '/api/tasks/T2/review', { actor: 'crew-2', summary: 'ok' }); // crew-2 is the Captain now
     const merged = await ok('POST', '/api/agents/captain/merge', { actor: 'you', taskId: 'T2' });
     expect(merged.ok).toBe(true);
@@ -420,7 +427,7 @@ describe('orchestrator API', () => {
 
   it('serves stations from .muster/stations: agents read, only you write', async () => {
     const list = async () => ok<any[]>('GET', '/api/stations');
-    expect((await list()).map((s) => s.name)).toEqual(['build', 'approval', 'concept', 'design', 'design-check', 'discover', 'fix', 'plan', 'reproduce', 'test', 'review']);
+    expect((await list()).map((s) => s.name)).toEqual(['build', 'approval', 'concept', 'design', 'design-check', 'discover', 'fix', 'plan', 'reproduce', 'test', 'qa', 'review']);
     expect(existsSync(join(repo, '.muster', 'stations', 'build.md'))).toBe(true);
     const put = await ok('PUT', '/api/stations/lint', { role: 'crew', guideline: '# Lint - run eslint.' });
     expect(put).toMatchObject({ name: 'lint', role: 'crew', builtin: false, guideline: '# Lint - run eslint.' });
@@ -462,29 +469,29 @@ describe('orchestrator API', () => {
     const r = await ok<{ lines: any[]; defaultLine: string }>('GET', '/api/lines');
     expect(r.defaultLine).toBe('feature');
     expect(r.lines.map((l) => l.name)).toEqual(['new-app', 'feature', 'ui', 'bugfix']);
-    expect(r.lines.find((l) => l.name === 'ui')).toMatchObject({ label: 'UI change', stations: ['design', 'build', 'design-check', 'review'], builtin: true });
+    expect(r.lines.find((l) => l.name === 'ui')).toMatchObject({ label: 'UI change', stations: ['design', 'build', 'design-check', 'qa', 'review'], builtin: true });
     expect((await call('GET', '/api/lines', undefined, orch.agentToken('crew-2'))).status).toBe(200);
     expect((await call('PUT', '/api/lines/mine', { stations: ['build'], actor: 'crew-2' })).status).toBe(403);
     expect((await call('DELETE', '/api/lines/ui', undefined, orch.agentToken('crew-2'))).status).toBe(403);
     expect((await call('PUT', '/api/lines/mine', { stations: ['nope'] })).status).toBe(400);
-    expect(await ok('PUT', '/api/lines/mine', { stations: ['plan', 'approval'], label: 'Mine' })).toMatchObject({ label: 'Mine', stations: ['plan', 'approval', 'review'], builtin: false });
-    expect(await ok('PUT', '/api/lines/ui', { stations: ['design', 'build'] })).toMatchObject({ label: 'UI change', stations: ['design', 'build', 'review'], builtin: true });
+    expect(await ok('PUT', '/api/lines/mine', { stations: ['plan', 'approval'], label: 'Mine' })).toMatchObject({ label: 'Mine', stations: ['plan', 'approval', 'qa', 'review'], builtin: false });
+    expect(await ok('PUT', '/api/lines/ui', { stations: ['design', 'build'] })).toMatchObject({ label: 'UI change', stations: ['design', 'build', 'qa', 'review'], builtin: true });
 
     const t = await ok<Task>('POST', '/api/tasks', { title: 'Plan it', line: 'mine', actor: 'captain' });
-    expect(t).toMatchObject({ line: 'mine', stations: ['plan', 'approval', 'review'] });
+    expect(t).toMatchObject({ line: 'mine', stations: ['plan', 'approval', 'qa', 'review'] });
     const explicit = await ok<Task>('POST', '/api/tasks', { title: 'Explicit', line: 'mine', stations: ['build'], actor: 'captain' });
-    expect(explicit.stations).toEqual(['build', 'review']); // explicit stations win
+    expect(explicit.stations).toEqual(['build', 'qa', 'review']); // explicit stations win
     expect((await call('POST', '/api/tasks', { title: 'Bad', line: 'nope', actor: 'captain' })).status).toBe(404);
     for (const id of [t.id, explicit.id]) await ok('POST', `/api/tasks/${id}/cancel`, { actor: 'you', reason: 'test over' });
 
     // defaultStations is an alias for the default line: patching it edits that line, patching the line moves it.
     expect((await call('PATCH', '/api/config', { defaultLine: 'nope' })).status).toBe(400);
-    expect(await ok('PATCH', '/api/config', { defaultLine: 'bugfix', defaultStations: ['reproduce', 'fix', 'test', 'review'] })).toMatchObject({ defaultLine: 'bugfix', defaultStations: ['reproduce', 'fix', 'test', 'review'] });
-    expect(await ok('PATCH', '/api/config', { defaultStations: ['fix', 'test', 'review'] })).toMatchObject({ defaultLine: 'bugfix', defaultStations: ['fix', 'test', 'review'] });
-    expect((await ok<any>('GET', '/api/lines')).lines.find((l: any) => l.name === 'bugfix').stations).toEqual(['fix', 'test', 'review']);
+    expect(await ok('PATCH', '/api/config', { defaultLine: 'bugfix', defaultStations: ['reproduce', 'fix', 'test', 'qa', 'review'] })).toMatchObject({ defaultLine: 'bugfix', defaultStations: ['reproduce', 'fix', 'test', 'qa', 'review'] });
+    expect(await ok('PATCH', '/api/config', { defaultStations: ['fix', 'test', 'qa', 'review'] })).toMatchObject({ defaultLine: 'bugfix', defaultStations: ['fix', 'test', 'qa', 'review'] });
+    expect((await ok<any>('GET', '/api/lines')).lines.find((l: any) => l.name === 'bugfix').stations).toEqual(['fix', 'test', 'qa', 'review']);
 
     // DELETE resets a built-in line and removes a custom one (the default falls back to feature).
-    expect((await ok<any>('DELETE', '/api/lines/bugfix')).lines.find((l: any) => l.name === 'bugfix').stations).toEqual(['reproduce', 'fix', 'test', 'review']);
+    expect((await ok<any>('DELETE', '/api/lines/bugfix')).lines.find((l: any) => l.name === 'bugfix').stations).toEqual(['reproduce', 'fix', 'test', 'qa', 'review']);
     await ok('DELETE', '/api/lines/ui');
     await ok('PATCH', '/api/config', { defaultLine: 'mine' });
     const after = await ok<any>('DELETE', '/api/lines/mine');

@@ -30,7 +30,7 @@ describe('stations', () => {
 
   it('works with no files: built-in defaults', () => {
     expect(getStation(p, 'design')).toMatchObject({ role: 'design', builtin: true });
-    expect(stationRoles(p)).toEqual({ review: 'captain' });
+    expect(stationRoles(p)).toEqual({ qa: 'qa', review: 'captain' });
   });
 
   it('saves role and guideline, keeping omitted fields', () => {

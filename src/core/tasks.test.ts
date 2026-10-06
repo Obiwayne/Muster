@@ -10,15 +10,21 @@ const config = { ...DEFAULT_CONFIG, defaultStations: ['build', 'review'] };
 
 beforeEach(() => {
   s = emptyState('/repo');
-  s.agents.push(makeAgent('captain', 'captain'), makeAgent('crew-2', 'crew'), makeAgent('crew-3', 'crew'), makeAgent('design', 'design'));
+  s.agents.push(makeAgent('captain', 'captain'), makeAgent('crew-2', 'crew'), makeAgent('crew-3', 'crew'), makeAgent('design', 'design'), makeAgent('qa', 'qa'));
 });
+
+/** The standing QA agent takes the task from the qa station and passes it on to review. */
+const qaPass = (id: string) => {
+  expect(claimTask(s, 'qa')?.id).toBe(id);
+  doneTask(s, id, 'qa', 'qa ok');
+};
 
 describe('tasks', () => {
   it('defaults stations and always ends with review', () => {
     const a = createTask(s, config, { title: 'A', actor: 'captain' });
-    expect(a.stations).toEqual(['build', 'review']);
+    expect(a.stations).toEqual(['build', 'qa', 'review']);
     const b = createTask(s, config, { title: 'B', stations: ['build', 'review', 'test'], actor: 'captain' });
-    expect(b.stations).toEqual(['build', 'test', 'review']);
+    expect(b.stations).toEqual(['build', 'test', 'qa', 'review']);
     expect([a.id, b.id]).toEqual(['T1', 'T2']);
   });
 
@@ -52,6 +58,7 @@ describe('tasks', () => {
     expect(claimTask(s, 'crew-2')?.id).toBe('T1');
     expect(claimTask(s, 'crew-3')).toBeNull();
     doneTask(s, api.id, 'crew-2', 'built');
+    qaPass(api.id);
     requestReview(s, api.id, 'captain', 'looks good');
     expect(tests.status).toBe('ready');
     expect(claimTask(s, 'crew-3')?.id).toBe('T2');
@@ -98,7 +105,10 @@ describe('tasks', () => {
     expect(claimTask(s, 'design')?.id).toBe(t.id);
 
     handoffTask(s, t.id, 'design', undefined, 'matches the framework');
-    expect(t).toMatchObject({ stationIndex: 3, status: 'review', assignee: 'captain' });
+    expect(t).toMatchObject({ stationIndex: 3, status: 'ready', assignee: undefined }); // the qa station: only the QA agent claims it
+    expect(claimTask(s, 'crew-2')).toBeNull();
+    qaPass(t.id);
+    expect(t).toMatchObject({ stationIndex: 4, status: 'review', assignee: 'captain' });
     expect(inboxFor(s, 'captain').some((i) => i.kind === 'review' && i.taskId === t.id)).toBe(true);
     expect(hasReportedDone(s, s.agents.find((a) => a.id === 'design')!)).toBe(true);
   });
@@ -117,9 +127,11 @@ describe('tasks', () => {
     expect(s.inbox.some((i) => i.agentId === 'crew-3' && i.taskId === t.id && /test station/.test(i.text))).toBe(true);
     expect(claimTask(s, 'crew-3')?.id).toBe(t.id);
     doneTask(s, t.id, 'crew-3', 'all green');
-    expect(t).toMatchObject({ status: 'review', assignee: 'captain', stationIndex: 2 });
+    expect(t).toMatchObject({ status: 'ready', assignee: undefined, stationIndex: 2 });
+    qaPass(t.id);
+    expect(t).toMatchObject({ status: 'review', assignee: 'captain', stationIndex: 3 });
     const done = listNotes(s, { type: 'done' });
-    expect(done).toHaveLength(2);
+    expect(done).toHaveLength(3);
     expect(done[0]).toMatchObject({ open: false, taskId: t.id });
   });
 
@@ -127,6 +139,7 @@ describe('tasks', () => {
     const t = createTask(s, config, { title: 'X', actor: 'captain' });
     claimTask(s, 'crew-2');
     doneTask(s, t.id, 'crew-2', 'ok');
+    qaPass(t.id);
     expect(() => requestReview(s, t.id, 'crew-2', 'self review')).toThrow(/Only the Captain/);
     const { note } = requestReview(s, t.id, 'captain', 'tested');
     expect(t.status).toBe('ready_for_merge');
@@ -138,6 +151,7 @@ describe('tasks', () => {
     claimTask(s, 'crew-2');
     handoffTask(s, t.id, 'crew-2', 'crew-3', 'test it');
     doneTask(s, t.id, 'crew-3', 'tested');
+    qaPass(t.id);
     requestReview(s, t.id, 'captain', 'ok');
     expect(() => sendBack(s, t.id, 'crew-3', 'no')).toThrow(/Captain or you/);
 
@@ -181,6 +195,7 @@ describe('tasks', () => {
     claimTask(s, 'crew-2'); // A again, at the test station
     doneTask(s, a.id, 'crew-2', 'ok');
     expect(claimTask(s, 'crew-2')).toBeNull(); // free again, nothing left
+    qaPass(a.id);
     assignTask(s, createTask(s, config, { title: 'C', actor: 'captain' }).id, 'crew-2', 'captain');
     expect(() => sendBack(s, a.id, 'captain', 'again')).toThrow(/crew-2 already holds T3/);
     expect(a.status).toBe('review');
@@ -273,6 +288,8 @@ describe('human approval stations', () => {
     expect(() => approveTask(s, t.id, 'captain', '', roles)).toThrow(/Only you/);
     approveTask(s, t.id, 'you', 'ok', roles);
     expect(note.open).toBe(false);
+    expect(t.status).toBe('ready'); // on to the qa station
+    qaPass(t.id);
     expect(t.status).toBe('review');
     expect(t.assignee).toBe('captain');
     expect(() => approveTask(s, t.id, 'you', '', roles)).toThrow(/not awaiting approval/);

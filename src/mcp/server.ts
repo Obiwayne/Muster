@@ -152,7 +152,9 @@ export function createMusterServer(opts: MusterServerOptions): McpServer {
           ? `You are ${me}, the Muster Captain. Check read_board first every turn. Never write code; merge only tasks the user approved, with merge_task.`
           : role === 'research'
             ? `You are ${me}, the Muster research agent. In a research run: research_brief, add_idea (then intel_check when competitors are tracked), finish_research. In an intel job: intel_brief, record_intel, add_opportunity + intel_check, finish_intel_job. Read-only; never sign in yourself; never change code.`
-            : `You are ${me}, Muster ${role === 'design' ? 'design crew' : 'crew'}. Work only in your worktree; ask crew before the Captain.`,
+            : role === 'qa'
+              ? `You are ${me}, the Muster QA agent. Claim the task waiting at the qa station, review its diff and run its tests. Never edit code.`
+              : `You are ${me}, Muster ${role === 'design' ? 'design crew' : 'crew'}. Work only in your worktree; ask crew before the Captain.`,
     },
   );
 

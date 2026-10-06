@@ -46,6 +46,11 @@ const ok = async <T = any>(method: string, path: string, body?: unknown): Promis
   if (r.status !== 200) throw new Error(`${method} ${path} → ${r.status} ${JSON.stringify(r.data)}`);
   return r.data;
 };
+/** The QA agent (started when a task reaches the qa station) takes the task and passes it to review. */
+const qaPass = async (id: string) => {
+  await ok('POST', `/api/tasks/${id}/assign`, { agentId: 'qa', actor: 'you' });
+  await ok('POST', `/api/tasks/${id}/done`, { actor: 'qa', summary: 'qa ok' });
+};
 
 beforeAll(async () => {
   process.env.MUSTER_NO_NOTIFY = '1';
@@ -97,6 +102,7 @@ describe('evidence API', () => {
     gitSync(crew.worktree, 'rm', '-r', '-q', '--cached', '.muster-evidence');
     gitSync(crew.worktree, 'commit', '-q', '-m', 'untrack evidence');
     await ok('POST', '/api/tasks/T1/done', { actor: 'crew-2', summary: 'dialog works' });
+    await qaPass('T1');
 
     const refused = await call('POST', '/api/tasks/T1/review', { actor: 'captain', summary: 'tested' });
     expect(refused.status).toBe(409);

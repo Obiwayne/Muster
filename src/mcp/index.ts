@@ -4,7 +4,7 @@ import type { Role } from '../types.js';
 import { createMusterServer } from './server.js';
 
 const envRole = process.env.MUSTER_ROLE;
-const role: Role = envRole === 'captain' || envRole === 'design' || envRole === 'research' ? envRole : 'crew';
+const role: Role = envRole === 'captain' || envRole === 'design' || envRole === 'research' || envRole === 'qa' ? envRole : 'crew';
 const agentId = process.env.MUSTER_AGENT || (role === 'captain' ? 'captain' : 'unknown');
 
 const server = createMusterServer({ role, agentId });

@@ -19,7 +19,9 @@ export const BUILT_IN_LINES: Record<string, Entry> = {
 export const DEFAULT_LINE = 'feature';
 const MAX_STATIONS = 12;
 
-const withReview = (stations: string[]) => [...stations.filter((s) => s !== 'review'), 'review'];
+const isLocked = (s: string) => s === 'review' || s === 'qa';
+/** Every line ends with the locked qa station, then review. */
+const withReview = (stations: string[]) => [...stations.filter((s) => !isLocked(s)), 'qa', 'review'];
 const valid = (e: unknown): e is Partial<Entry> => Boolean(e) && typeof e === 'object';
 
 function describe(name: string, edit: unknown): LineDef {
@@ -44,7 +46,7 @@ export const defaultLineName = (config: Partial<LineConfig> | undefined): string
 
 /** Station names of a line, without review (what task creation takes as `stations`). */
 export const lineStations = (config: Pick<MusterConfig, 'lines'> | undefined, name: string): string[] | undefined =>
-  getLine(config, name)?.stations.filter((s) => s !== 'review');
+  getLine(config, name)?.stations.filter((s) => !isLocked(s));
 
 /**
  * Validates a PUT /api/lines/:name body and returns the entry to store in config.lines.
@@ -53,10 +55,10 @@ export const lineStations = (config: Pick<MusterConfig, 'lines'> | undefined, na
 export function lineEntry(p: MusterPaths, config: Pick<MusterConfig, 'lines'>, rawName: unknown, patch: { stations?: unknown; label?: unknown }): { name: string; entry: Entry } {
   const name = stationName(rawName);
   const current = getLine(config, name);
-  let stations = current?.stations.filter((s) => s !== 'review');
+  let stations = current?.stations.filter((s) => !isLocked(s));
   if (patch.stations !== undefined) {
     if (!Array.isArray(patch.stations) || patch.stations.some((s) => typeof s !== 'string')) throw badRequest('stations must be a list of station names');
-    stations = [...new Set(patch.stations.map((s: string) => stationName(s)).filter((s) => s !== 'review'))];
+    stations = [...new Set(patch.stations.map((s: string) => stationName(s)).filter((s) => !isLocked(s)))];
     if (!stations.length) throw badRequest('A line needs at least one station before review');
     if (stations.length > MAX_STATIONS) throw badRequest(`A line has at most ${MAX_STATIONS} stations`);
     const unknown = stations.filter((s) => !getStation(p, s));
@@ -78,7 +80,7 @@ export const lineNameOrThrow = (raw: unknown): string => stationName(raw);
 export function checkedEntry(p: MusterPaths, raw: unknown, needLabel = true): Entry {
   const e = raw as Partial<Entry> | null;
   if (!e || typeof e !== 'object' || !Array.isArray(e.stations)) throw badRequest('a line needs a stations list');
-  const stations = [...new Set(e.stations.map((s) => stationName(s)).filter((s) => s !== 'review'))];
+  const stations = [...new Set(e.stations.map((s) => stationName(s)).filter((s) => !isLocked(s)))];
   if (!stations.length) throw badRequest('A line needs at least one station before review');
   if (stations.length > MAX_STATIONS) throw badRequest(`A line has at most ${MAX_STATIONS} stations`);
   const label = typeof e.label === 'string' && e.label.trim() ? e.label.trim().slice(0, 60) : '';
