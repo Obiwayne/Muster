@@ -688,7 +688,9 @@ ${pushed ? `Pushed ${base} to origin.` : `Push to origin failed: ${(r.stderr || 
     mutate(() => tasks.cancelTask(state(), params.id, str(body.actor, 'actor'), body.reason ?? '')),
   );
   route('POST', '/api/tasks/:id/approve', async ({ params, body }) => {
-    const task = mutate(() => tasks.approveTask(state(), params.id, str(body.actor, 'actor'), body.note ?? '', stations.stationRoles(ctx.paths)));
+    const current = tasks.requireTask(state(), params.id);
+    const qa = await agents.qaSkip(current, await agents.stationBranch(current));
+    const task = mutate(() => tasks.approveTask(state(), params.id, str(body.actor, 'actor'), body.note ?? '', stations.stationRoles(ctx.paths), qa));
     announceApproval(task);
     await wakeQa(task);
     attachGuideline(task.assignee, task, ['handoff', 'review']);

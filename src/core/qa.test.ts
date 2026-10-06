@@ -6,7 +6,7 @@ import { DEFAULT_CONFIG, type MusterState } from '../types.js';
 import { qaSkippable } from './qa.js';
 import { musterPaths } from './paths.js';
 import { deleteStation, getStation, listStations, saveStation, seedStations } from './stations.js';
-import { claimTask, createTask, doneTask } from './tasks.js';
+import { approveTask, claimTask, createTask, doneTask } from './tasks.js';
 import { emptyState } from './store.js';
 import { makeAgent } from './testutil.js';
 
@@ -50,6 +50,16 @@ describe('qa gate in tasks', () => {
     expect(s.inbox.some((i) => i.agentId === 'qa' && i.taskId === t.id && /qa station/.test(i.text))).toBe(true);
     expect(claimTask(s, 'crew-2')).toBeNull();
     expect(claimTask(s, 'qa')?.id).toBe(t.id);
+  });
+
+  it('skips qa when an approval hands a docs/images-only task on', () => {
+    const roles = { signoff: 'human' as const };
+    const t = createTask(s, { ...DEFAULT_CONFIG, defaultStations: ['build', 'signoff'] }, { title: 'Docs', actor: 'captain' }, roles);
+    claimTask(s, 'crew-2', roles);
+    doneTask(s, t.id, 'crew-2', 'readme', undefined, roles);
+    expect(t.status).toBe('awaiting_approval');
+    approveTask(s, t.id, 'you', 'ok', roles, { skipQa: true });
+    expect(t).toMatchObject({ status: 'review', assignee: 'captain' });
   });
 
   it('skips qa for a docs/images-only diff', () => {

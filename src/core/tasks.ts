@@ -267,11 +267,12 @@ function arrive(state: MusterState, task: Task, actor: string, text: string, rol
 }
 
 /** You approve the task at a 'human' station; it moves on to the next station (or the Captain's review). Only you. */
-export function approveTask(state: MusterState, taskId: string, actor: string, note: string, roles?: Record<string, Role>): Task {
+export function approveTask(state: MusterState, taskId: string, actor: string, note: string, roles?: Record<string, Role>, opts: QaOpts = {}): Task {
   const task = requireAwaitingApproval(state, taskId, actor, 'approve');
   const text = note?.trim() || 'Approved';
   closeApprovals(state, task);
   task.stationIndex = Math.min(task.stationIndex + 1, task.stations.length - 1);
+  skipQa(task, actor, opts);
   const station = currentStation(task);
   event(task, actor, 'handoff', `approved, to ${station === 'review' ? 'review' : 'any ' + stationRole(station, roles)}: ${text}`);
   addFeed(state, { kind: 'event', from: actor, taskId: task.id, text: `approved ${task.id} ${task.title}: ${text}` });

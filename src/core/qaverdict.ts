@@ -27,9 +27,8 @@ const text = (v: unknown, what: string): string => {
   return v.trim();
 };
 
-/** Shape-checks a qa_verdict body; names the field on a 400. The score must be the lowest rubric score; below 5 needs a finding. */
+/** Shape-checks a qa_verdict body; names the field on a 400. The score is derived: the lowest rubric score (an explicit one must match). Below 5 needs a finding, 5 needs none. */
 export function parseVerdict(body: { score?: unknown; rubric?: unknown; findings?: unknown; summary?: unknown }): VerdictInput {
-  if (!isScore(body.score)) throw badRequest('score must be a whole number from 1 to 5');
   const r = body.rubric as Record<string, unknown> | null | undefined;
   if (!r || typeof r !== 'object') throw badRequest(`rubric is required: ${RUBRIC_KEYS.join(', ')} (each 1-5)`);
   const rubric = {} as QaRubric;
@@ -38,7 +37,8 @@ export function parseVerdict(body: { score?: unknown; rubric?: unknown; findings
     rubric[k] = r[k] as number;
   }
   const min = Math.min(...RUBRIC_KEYS.map((k) => rubric[k]));
-  if (body.score !== min) throw badRequest(`score ${body.score} must equal the lowest rubric score (${min})`);
+  if (body.score !== undefined && body.score !== min) throw badRequest(`score ${String(body.score)} must equal the lowest rubric score (${min}); leave score out and the server derives it`);
+  const score = min as QaVerdict['score'];
   const raw = body.findings === undefined ? [] : body.findings;
   if (!Array.isArray(raw)) throw badRequest('findings must be a list');
   if (raw.length > MAX_FINDINGS) throw badRequest(`At most ${MAX_FINDINGS} findings; keep the ones that matter`);
@@ -47,8 +47,9 @@ export function parseVerdict(body: { score?: unknown; rubric?: unknown; findings
     if (f.line !== undefined && (typeof f.line !== 'number' || !Number.isInteger(f.line) || f.line < 1)) throw badRequest(`findings[${i}].line must be a positive whole number`);
     return { file: text(f.file, `findings[${i}].file`), ...(f.line !== undefined ? { line: f.line as number } : {}), problem: text(f.problem, `findings[${i}].problem`), fix: text(f.fix, `findings[${i}].fix`) };
   });
-  if (body.score < 5 && !findings.length) throw badRequest('A score below 5 needs at least one finding (file, problem, fix)');
-  return { score: body.score as QaVerdict['score'], rubric, findings, summary: text(body.summary, 'summary') };
+  if (score < 5 && !findings.length) throw badRequest('A score below 5 needs at least one finding (file, problem, fix)');
+  if (score === 5 && findings.length) throw badRequest('A 5/5 has no findings: if something needs fixing, score it lower');
+  return { score, rubric, findings, summary: text(body.summary, 'summary') };
 }
 
 /** Only the QA agent holding the task at the qa station may give a verdict. */

@@ -40,7 +40,10 @@ describe('parseVerdict', () => {
     expect(parseVerdict(ok).score).toBe(4);
     expect(() => parseVerdict({ ...ok, score: 5 })).toThrow(/must equal the lowest rubric score \(4\)/);
     expect(() => parseVerdict({ ...ok, findings: [] })).toThrow(/needs at least one finding/);
-    expect(() => parseVerdict({ ...ok, score: 6 })).toThrow(/score must be/);
+    expect(() => parseVerdict({ ...ok, score: 6 })).toThrow(/must equal the lowest rubric score/);
+    expect(parseVerdict({ ...ok, score: undefined }).score).toBe(4); // derived
+    expect(() => parseVerdict({ score: 5, rubric: rubric(5), findings: [{ file: 'a.ts', problem: 'p', fix: 'f' }], summary: 's' })).toThrow(/5\/5 has no findings/);
+    expect(() => parseVerdict({ rubric: { ...rubric(5), clean: 6 }, summary: 's' })).toThrow(/rubric\.clean/);
     expect(() => parseVerdict({ ...ok, rubric: { ...ok.rubric, safe: undefined } })).toThrow(/rubric\.safe/);
     expect(() => parseVerdict({ ...ok, findings: [{ file: 'a.ts', problem: 'p' }] })).toThrow(/findings\[0\]\.fix/);
     expect(() => parseVerdict({ ...ok, summary: ' ' })).toThrow(/summary is required/);

@@ -966,17 +966,18 @@ ${r.note}` : ''}`;
       const score = z.number().int().min(1).max(5);
       tool(
         'qa_verdict',
-        'Give your verdict on the task you hold at the qa station. rubric = correct, tested, clean, scoped, safe (each 1-5); score = the LOWEST rubric score (5 passes it to review; anything lower sends it back to its builder, and the third failed round escalates to the Captain and the user). A score below 5 needs at least one finding: file, line, what is wrong, how to fix it.',
+        'Give your verdict on the task you hold at the qa station. rubric = correct, tested, clean, scoped, safe (each 1-5). The server derives the score = the LOWEST rubric item: 5 passes it to review (and has no findings); anything lower sends it back to its builder, and the third failed round escalates to the Captain and the user. A score below 5 needs at least one finding: file, line, what is wrong, how to fix it.',
         {
           task: z.string().optional().describe('Defaults to the task you hold'),
-          score,
+          score: score.optional().describe('Optional; if given it must equal the lowest rubric item'),
           rubric: z.object({ correct: score, tested: score, clean: score, scoped: score, safe: score }),
           findings: z.array(z.object({ file: z.string().min(1), line: z.number().int().min(1).optional(), problem: z.string().min(1), fix: z.string().min(1) })).optional(),
           summary: z.string().min(1).describe('The verdict in a line or two'),
         },
-        async ({ task, score: s, rubric, findings, summary }) => {
+        async ({ task, score: given, rubric, findings, summary }) => {
+          const s = given ?? Math.min(rubric.correct, rubric.tested, rubric.clean, rubric.scoped, rubric.safe);
           const t = task ? await findTask(task) : await myTask();
-          const r = await api<{ task: Task; outcome: 'passed' | 'sent_back' | 'escalated'; round: number }>(`/api/tasks/${enc(t.id)}/qa`, { method: 'POST', body: { actor: me, score: s, rubric, findings: findings ?? [], summary } });
+          const r = await api<{ task: Task; outcome: 'passed' | 'sent_back' | 'escalated'; round: number }>(`/api/tasks/${enc(t.id)}/qa`, { method: 'POST', body: { actor: me, ...(given !== undefined ? { score: given } : {}), rubric, findings: findings ?? [], summary } });
           if (r.outcome === 'passed') return `${r.task.id} passed QA (5/5, round ${r.round}) and is with the Captain for review. Call claim_task for more work.`;
           if (r.outcome === 'escalated') return `${r.task.id} failed QA ${r.round} times: parked with the Captain and the user. Call claim_task for more work.`;
           return `${r.task.id} sent back to its builder (QA round ${r.round}/3, ${s}/5). It returns to you when they hand it off again. Call claim_task for more work.`;
