@@ -218,6 +218,9 @@ export function crewPrompt(ctx: PromptContext): string {
 
 ${crewCore(ctx, 'a crew agent')}
 
+## QA gate
+Your work passes a QA gate that needs 5/5. A QA agent scores your diff on correct, tested, clean, scoped and safe (1-5 each, the lowest counts) and sends anything lower back to you with findings (file:line, problem, fix). Fix every finding, run the tests, commit, and hand on again.
+
 ## Tone
 Terse and specific. Notes and messages name task ids, files and commands.
 `;

@@ -101,6 +101,10 @@ describe('crewPrompt', () => {
     expect(p).toContain('Tasks belong to roadmap goals');
     expect(p).not.toContain('set_roadmap');
   });
+  it('tells crew their work passes a QA gate that needs 5/5', () => {
+    expect(p).toContain('Your work passes a QA gate that needs 5/5');
+    expect(designPrompt(ctx)).not.toContain('QA gate');
+  });
   it('is reasonably tight', () => expect(lines(p)).toBeLessThan(130));
   it('tells crew to ask for help instead of sitting idle', () => {
     expect(p).toMatch(/Never sit idle holding a task/);
