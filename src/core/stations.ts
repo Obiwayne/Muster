@@ -235,7 +235,7 @@ export function stationBrief(p: MusterPaths, task: Task, roles?: Record<string, 
   const station = task.stations[task.stationIndex] ?? REVIEW;
   const def = getStation(p, station);
   const parts = [formatGuideline(station, def?.guideline ?? '', def?.skills ?? [])];
-  if (!task.evidence?.length && evidenceStation(task, roles ?? stationRoles(p)) === station) parts.push(evidenceBlock(task.id, station));
+  if (!task.evidence?.some((e) => e.station !== 'qa') && evidenceStation(task, roles ?? stationRoles(p)) === station) parts.push(evidenceBlock(task.id, station));
   return parts.filter(Boolean).join(NL + NL);
 }
 

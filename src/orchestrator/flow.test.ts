@@ -50,7 +50,7 @@ const agent = (id: string) => state().agents.find((a) => a.id === id)!;
 /** The QA agent (started when a task reaches the qa station) takes the task and passes it to review. */
 const qaPass = async (id: string) => {
   await ok('captain', 'POST', `/api/tasks/${id}/assign`, { agentId: 'qa' });
-  await ok('qa', 'POST', `/api/tasks/${id}/done`, { summary: 'qa ok' });
+  await ok('qa', 'POST', `/api/tasks/${id}/qa`, { score: 5, rubric: { correct: 5, tested: 5, clean: 5, scoped: 5, safe: 5 }, summary: 'qa ok' });
 };
 const head = (ref: string) => gitSync(repo, 'rev-parse', ref);
 const contains = (ancestor: string, ref: string) => {
@@ -234,6 +234,48 @@ describe('task flows', () => {
       gitSync(repo, 'remote', 'remove', 'origin');
       rmSync(remote, { recursive: true, force: true });
     }
+  });
+
+  it('QA verdicts: validated, only the qa holder, evidence stored, sent back twice, escalated on the third failure', async () => {
+    const builder = state().agents.find((a) => a.role === 'crew' && !a.taskId)!.id;
+    const t = await ok<Task>('captain', 'POST', '/api/tasks', { title: 'Qa target', assignee: builder });
+    commitFile(agent(builder).worktree, 'qa-target.ts', 'export const q = 1;\n');
+    await ok('crew-2' === builder ? 'crew-2' : builder, 'POST', `/api/tasks/${t.id}/done`, { summary: 'built' });
+    expect(task(t.id)).toMatchObject({ status: 'ready' });
+    expect(task(t.id).stations.at(-2)).toBe('qa');
+    await ok('captain', 'POST', `/api/tasks/${t.id}/assign`, { agentId: 'qa' });
+    const rubric = { correct: 3, tested: 5, clean: 5, scoped: 5, safe: 5 };
+    const findings = [{ file: 'qa-target.ts', line: 1, problem: 'magic number', fix: 'name it' }];
+
+    expect((await call(builder, 'POST', `/api/tasks/${t.id}/qa`, { score: 5, rubric: { ...rubric, correct: 5 }, summary: 'ok' })).status).toBe(403);
+    expect((await call('qa', 'POST', `/api/tasks/${t.id}/qa`, { score: 5, rubric, findings, summary: 'x' })).status).toBe(400); // score != min rubric
+    expect((await call('qa', 'POST', `/api/tasks/${t.id}/qa`, { score: 3, rubric, findings: [], summary: 'x' })).status).toBe(400); // no findings
+    expect((await call('qa', 'POST', `/api/tasks/${t.id}/handoff`, { note: 'x' })).status).toBe(409); // qa_verdict is its way out
+
+    const r1 = await ok<{ outcome: string; round: number }>('qa', 'POST', `/api/tasks/${t.id}/qa`, { score: 3, rubric, findings, summary: 'one fix' });
+    expect(r1).toMatchObject({ outcome: 'sent_back', round: 1 });
+    expect(task(t.id)).toMatchObject({ status: 'in_progress', assignee: builder, qa: { round: 1, last: { score: 3 } } });
+    expect(state().inbox.some((i) => i.agentId === builder && i.taskId === t.id && /QA round 1\/3: score 3\/5 - fix these:[\s\S]*qa-target\.ts:1: magic number/.test(i.text))).toBe(true);
+    const e = task(t.id).evidence!.find((x) => x.station === 'qa')!;
+    expect(e.files.map((f) => f.name).sort()).toEqual(['findings.md', 'rubric.json']);
+
+    for (const score of [2, 4]) {
+      await ok(builder, 'POST', `/api/tasks/${t.id}/done`, { summary: 'fixed' });
+      await ok('captain', 'POST', `/api/tasks/${t.id}/assign`, { agentId: 'qa' });
+      await ok('qa', 'POST', `/api/tasks/${t.id}/qa`, { score, rubric: { ...rubric, correct: score }, findings, summary: `round ${score}` });
+    }
+    expect(task(t.id)).toMatchObject({ status: 'review', assignee: 'captain', qa: { round: 3, escalated: true } });
+    const note = state().notes.find((n) => n.type === 'stuck' && n.taskId === t.id && n.to === 'you')!;
+    expect(note.open).toBe(true);
+    expect(note.text.match(/# QA round \d of 3/g)).toHaveLength(3);
+    expect((await call('captain', 'POST', `/api/tasks/${t.id}/review`, { summary: 'ship' })).status).toBe(409);
+    await ok('captain', 'POST', `/api/tasks/${t.id}/sendback`, { note: 'use the other approach' });
+    expect(task(t.id)).toMatchObject({ status: 'in_progress', qa: { round: 0 } });
+    await ok(builder, 'POST', `/api/tasks/${t.id}/done`, { summary: 'redone' });
+    await ok('captain', 'POST', `/api/tasks/${t.id}/assign`, { agentId: 'qa' });
+    await ok('qa', 'POST', `/api/tasks/${t.id}/qa`, { score: 5, rubric: { correct: 5, tested: 5, clean: 5, scoped: 5, safe: 5 }, summary: 'clean' });
+    expect(task(t.id)).toMatchObject({ status: 'review', qa: { round: 1, last: { score: 5 } } });
+    expect((await ok<Task>('captain', 'POST', `/api/tasks/${t.id}/review`, { summary: 'ship' })).status).toBe('ready_for_merge');
   });
 
   it('a dirty main checkout blocks the merge with one note; Commit & merge clears it', async () => {

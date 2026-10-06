@@ -21,7 +21,7 @@ export function requireTask(state: MusterState, id: string): Task {
   return t;
 }
 
-function event(task: Task, agentId: string, kind: TaskEvent['kind'], text?: string): void {
+export function event(task: Task, agentId: string, kind: TaskEvent['kind'], text?: string): void {
   const at = nowIso();
   task.history.push({ at, agentId, kind, ...(text ? { text } : {}) });
   task.updatedAt = at;
@@ -123,7 +123,7 @@ export function createTask(state: MusterState, config: MusterConfig, input: Task
  * Gives the task to an agent at its current station. The branch is settled afterwards by
  * AgentManager.syncTaskBranch (a fresh branch per task, with the previous station's work merged in).
  */
-function takeTask(state: MusterState, task: Task, agent: Agent): void {
+export function takeTask(state: MusterState, task: Task, agent: Agent): void {
   task.assignee = agent.id;
   task.status = depsMet(state, task) ? 'in_progress' : 'blocked';
   task.reviewedSha = undefined;
@@ -147,7 +147,7 @@ export function untake(state: MusterState, task: Task, agent: Agent, reason: str
   recomputeReadiness(state);
 }
 
-function release(state: MusterState, task: Task): void {
+export function release(state: MusterState, task: Task): void {
   const holder = task.assignee ? findAgent(state, task.assignee) : undefined;
   if (holder?.taskId === task.id) holder.taskId = undefined;
 }
@@ -194,7 +194,7 @@ function requireHolder(state: MusterState, task: Task, actor: string): void {
 }
 
 /** Moves the task to its review station, held by the Captain. */
-function toReview(state: MusterState, task: Task, from: string, text: string): void {
+export function toReview(state: MusterState, task: Task, from: string, text: string): void {
   release(state, task);
   const captain = captainOf(state);
   task.stationIndex = task.stations.length - 1;
@@ -204,7 +204,7 @@ function toReview(state: MusterState, task: Task, from: string, text: string): v
 }
 
 /** Tell free agents of the station's role, so the task doesn't wait for the Captain to route it. */
-function announceReady(state: MusterState, task: Task, actor: string, roles?: Record<string, Role>): void {
+export function announceReady(state: MusterState, task: Task, actor: string, roles?: Record<string, Role>): void {
   const station = currentStation(task);
   const role = stationRole(station, roles);
   let told = 0;
@@ -267,11 +267,12 @@ function arrive(state: MusterState, task: Task, actor: string, text: string, rol
 }
 
 /** You approve the task at a 'human' station; it moves on to the next station (or the Captain's review). Only you. */
-export function approveTask(state: MusterState, taskId: string, actor: string, note: string, roles?: Record<string, Role>): Task {
+export function approveTask(state: MusterState, taskId: string, actor: string, note: string, roles?: Record<string, Role>, opts: QaOpts = {}): Task {
   const task = requireAwaitingApproval(state, taskId, actor, 'approve');
   const text = note?.trim() || 'Approved';
   closeApprovals(state, task);
   task.stationIndex = Math.min(task.stationIndex + 1, task.stations.length - 1);
+  skipQa(task, actor, opts);
   const station = currentStation(task);
   event(task, actor, 'handoff', `approved, to ${station === 'review' ? 'review' : 'any ' + stationRole(station, roles)}: ${text}`);
   addFeed(state, { kind: 'event', from: actor, taskId: task.id, text: `approved ${task.id} ${task.title}: ${text}` });
@@ -410,7 +411,8 @@ export function requestReview(state: MusterState, taskId: string, actor: string,
   if (!isCaptain(state, actor)) throw forbidden('Only the Captain can request review');
   const task = requireTask(state, taskId);
   if (!REVIEWABLE.has(task.status)) throw conflict(`${task.id} is ${task.status}; only work in review or in progress can be flagged ready for merge`);
-  if (opts.requireEvidence && !task.evidence?.length) {
+  if (task.qa?.escalated) throw conflict(`${task.id} failed QA ${task.qa.round} times. Send it back with guidance (send_back) or cancel it; it can't be flagged ready for merge as it is.`);
+  if (opts.requireEvidence && !task.evidence?.some((e) => e.station !== 'qa')) {
     throw conflict(`${task.id} has no evidence yet. Send it back so its last station attaches proof with add_evidence (screenshots, test output, numbers), or test it yourself and call add_evidence(task: "${task.id}", files, summary) before request_review.`);
   }
   release(state, task);
@@ -517,6 +519,7 @@ export function sendBack(state: MusterState, taskId: string, actor: string, note
   task.reviewedSha = undefined;
   task.mergeApproval = undefined;
   task.stationIndex = Math.max(0, task.stations.indexOf('build'));
+  if (task.qa) task.qa = { ...task.qa, round: 0, escalated: undefined }; // a fresh QA budget for the next pass
   for (const n of state.notes) if ((n.type === 'review' || n.type === 'approval') && n.taskId === task.id) closeNoteIfOpen(n);
   event(task, actor, 'note', `sent back: ${text}`);
 
