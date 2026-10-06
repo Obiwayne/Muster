@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { captainPrompt, crewPrompt, designPrompt, researchPrompt, type PromptContext } from './index.js';
+import { captainPrompt, crewPrompt, designPrompt, qaPrompt, researchPrompt, type PromptContext } from './index.js';
 
 const ctx: PromptContext = {
   agentId: 'crew-2',
@@ -100,6 +100,10 @@ describe('crewPrompt', () => {
     expect(p).not.toMatch(/Vellum/);
     expect(p).toContain('Tasks belong to roadmap goals');
     expect(p).not.toContain('set_roadmap');
+  });
+  it('tells crew their work passes a QA gate that needs 5/5', () => {
+    expect(p).toContain('Your work passes a QA gate that needs 5/5');
+    expect(designPrompt(ctx)).not.toContain('QA gate');
   });
   it('is reasonably tight', () => expect(lines(p)).toBeLessThan(130));
   it('tells crew to ask for help instead of sitting idle', () => {
@@ -262,4 +266,32 @@ describe('reactions guidance', () => {
     expect(r).not.toContain('react(');
     expect(r).not.toContain('👍');
   });
+});
+
+describe('qaPrompt', () => {
+  const qa = qaPrompt({ ...ctx, agentId: 'qa', branch: '', worktree: 'F:/Proj/.muster/worktrees/qa' });
+  it('is review-only and strict', () => {
+    expect(qa).toContain('the QA agent (qa)');
+    expect(qa).toContain('F:/Proj/.muster/worktrees/qa');
+    expect(qa).toMatch(/never edit code/);
+    expect(qa).toMatch(/only 5\/5 passes/i);
+    expect(qa).toMatch(/overall score is the lowest/);
+    expect(qa).toContain('git diff main...HEAD');
+    expect(qa).toContain('npm test');
+  });
+  it('names the verdict tool, its rubric items and the finding shape', () => {
+    expect(qa).toContain('qa_verdict(task, rubric, findings, summary)');
+    for (const k of ['correct', 'tested', 'clean', 'scoped', 'safe']) expect(qa).toContain(k);
+    expect(qa).toContain('{ file, line?, problem, fix }');
+  });
+  it('says three failed rounds go to the Captain and the user, and not to bend scores', () => {
+    expect(qa).toMatch(/never pass work to end the loop/i);
+    expect(qa).toMatch(/Captain and the user decide/);
+  });
+  it('does not offer the builder tools or Vellum', () => {
+    expect(qa).not.toContain('handoff(');
+    expect(qa).not.toContain('report_done');
+    expect(qa).not.toMatch(/Vellum/);
+  });
+  it('is tight', () => expect(lines(qa)).toBeLessThan(80));
 });

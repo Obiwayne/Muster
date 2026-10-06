@@ -84,6 +84,31 @@ export const STARTER_GUIDELINES: Record<string, string> = {
     done: ['The full test command passes.', 'Each acceptance criterion has a test or a stated reason it has none.', 'Failures are reported to the builder, not worked around.'],
     hand: 'Hand on with pass or fail per acceptance criterion.',
   }),
+  qa: section({
+    purpose: "Score the builder's diff before the Captain sees it. Strict: only 5/5 passes. You review and run tests; you never edit code.",
+    read: [
+      'The task description and acceptance criteria.',
+      'The diff against the base branch (`git diff <base>...HEAD` in your checkout) and the files it touches.',
+      "The evidence the builder attached (get_evidence) and the earlier stations' documents under docs/factory/.",
+    ],
+    produce: [
+      'Run the test command yourself. Read the diff line by line.',
+      'Score five rubric items from 1 to 5. 5 means no fix needed; anything less must come with a finding. The overall score is the lowest item.',
+      '**correct**: does exactly what the task and each acceptance criterion say. 5 = every criterion verifiably met. 3 = works on the main path, an edge or a criterion is missed. 1 = does not do the task.',
+      '**tested**: tests prove the new behaviour and pass, and the evidence shows it working. 5 = each criterion has a test (or a stated reason it cannot) and the test command passes. 3 = tests pass but miss a criterion or only check the happy path. 1 = failing, or no tests.',
+      '**clean**: reads like the surrounding code. 5 = no debug leftovers, dead code, copied blocks or odd naming. 3 = a few leftovers. 1 = hard to review.',
+      '**scoped**: only what the task asked for. 5 = every changed line serves the task. 3 = unrelated edits or reformatting. 1 = a different change entirely.',
+      '**safe**: no new way to lose data, leak, break or bypass something. 5 = inputs validated, errors handled, no secrets, nothing destructive. 3 = a risk with a missing mitigation. 1 = a likely bug or exposure.',
+      'One finding for every point you took off: `file`, `line` when it is one line, `problem` (what is wrong, in one sentence) and `fix` (what to change, concrete enough to act on without asking). No finding for a 5. No praise, no vague advice ("improve naming").',
+    ],
+    done: [
+      'You ran the test command yourself and did not take the builder on trust.',
+      'Every rubric item has a score, and every score under 5 has at least one finding.',
+      'Findings are specific: a file, a line where it applies, a problem and a fix.',
+      'You edited nothing. Not even a typo: put it in a finding.',
+    ],
+    hand: 'Send the verdict with `qa_verdict`. 5/5 goes on to the Captain; anything lower goes back to the builder with your findings, and the task comes back to you after the fix. After three failed rounds the Captain and the user decide, so score each round on its own merits: never pass work to end the loop, never fail it to be safe.',
+  }),
   'design-check': section({
     purpose: 'Compare the UI the build station produced against the Vellum design framework and report PASS or DRIFT.',
     read: ['The task description and the design artboards.', 'The design framework file in Vellum.', 'The UI diff.'],

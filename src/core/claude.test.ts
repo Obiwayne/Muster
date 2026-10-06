@@ -125,6 +125,16 @@ describe('rolePrompt vellumFile', () => {
   });
 });
 
+describe('rolePrompt qa', () => {
+  const c = { url: 'http://x', token: 't', repoRoot: 'F:/r', config: { ...DEFAULT_CONFIG, projectName: 'demo' } };
+  it('gives the QA agent its own review-only prompt, not the crew one', () => {
+    const p = rolePrompt(makeAgent('qa', 'qa', { worktree: 'F:/r/.muster/worktrees/qa' }), c);
+    expect(p).toContain('the QA agent (qa)');
+    expect(p).toContain('qa_verdict');
+    expect(p).not.toContain('report_done');
+  });
+});
+
 describe('Vellum edit permissions', () => {
   it('denies Vellum editing tools only to the design crew, only when vellumEdit is never', () => {
     const base = { ...DEFAULT_CONFIG };

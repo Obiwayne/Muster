@@ -4,7 +4,7 @@ import { homedir } from 'node:os';
 import { delimiter, dirname, join } from 'node:path';
 import { defaultLineName, listLines } from './lines.js';
 import { listStations } from './stations.js';
-import { captainPrompt, crewPrompt, designPrompt, researchPrompt, type PromptContext } from '../prompts/index.js';
+import { captainPrompt, crewPrompt, designPrompt, qaPrompt, researchPrompt, type PromptContext } from '../prompts/index.js';
 import type { Agent, MusterConfig, Role } from '../types.js';
 import { MUSTER_HOME, musterPaths, PLUGIN_DIR, posix, type MusterPaths } from './paths.js';
 import { deriveAgentToken } from './tokens.js';
@@ -160,6 +160,8 @@ export function rolePrompt(agent: Agent, ctx: LaunchContext): string {
       return designPrompt(p);
     case 'research':
       return researchPrompt(p);
+    case 'qa':
+      return qaPrompt(p);
     default:
       return crewPrompt(p);
   }
