@@ -1,14 +1,15 @@
 // Dashboard → Ship: the crew as pixel sailors on a pirate ship (design: Vellum "Muster" › Ship).
 // Anything that needs you is loud (Captain's bubble, treasure chest, fire, a sailor stuck in the rigging); the rest is ambient.
-// The scene is a 1220×720 canvas; overlays are HTML placed in % of the scene so their text stays crisp at any size.
+// The scene is drawn at its true pixel size (470×277) and scaled up evenly; overlays are HTML placed in % of the scene so
+// their text stays crisp at any size.
 import type { MusterState } from '../../../src/types';
 import { h, icon, setChildren, toast } from '../dom';
 import type { Snapshot } from '../events';
 import { api } from '../api';
 import { approveAllMerges, commitCheckout, run, stashCheckout } from '../actions';
 import { agentStatusLong, ageShort, taskById } from '../util';
-import { SCENE_H, SCENE_W, shipView, type Sailor, type ShipView } from '../shipmodel';
-import { chestSprite, drawBolt, drawClouds, drawHalo, drawRain, drawSea, drawSky, drawSmoke, fireSprite, foot, sailorSprite } from '../shipart';
+import { SCENE_H, SCENE_W, SHIP_X, SHIP_Y, WATERLINE, shipView, type Sailor, type ShipView } from '../shipmodel';
+import { chestSprite, drawBolt, drawClouds, drawHalo, drawRain, drawSea, drawSky, drawSmoke, drawWater, fireSprite, foot, sailorSprite } from '../shipart';
 import shipPng from '../assets/ship/ship.png';
 import flagPng from '../assets/ship/flag.png';
 import wheelPng from '../assets/ship/wheel.png';
@@ -18,7 +19,7 @@ import anchorPng from '../assets/ship/anchor.png';
 import './ship.css';
 
 const FPS = 8;
-const SPRITE_H = 60; // a sailor is ~15 grid rows of 4px
+const SPRITE_H = 21; // a sailor is ~21 art pixels tall
 
 function img(src: string): HTMLImageElement {
   const i = new Image();
@@ -85,31 +86,34 @@ export function createShipView(): ShipView$ {
     const frame = Math.floor(t * 2);
     drawSky(g, SCENE_W, weather, t);
     if (weather !== 'clear') drawClouds(g);
-    if (weather === 'storm' && t % 6 < 0.35) drawBolt(g, 1010, 110);
+    if (weather === 'storm' && t % 6 < 0.35) drawBolt(g, 393, 43);
     drawSea(g, SCENE_W, SCENE_H, weather, t);
     if (!v) return;
 
-    const bob = reduced ? 0 : Math.round(Math.sin(t * 1.3)) * 2; // gentle swell, moves everything aboard
+    const bob = reduced ? 0 : Math.round(Math.sin(t * 1.3)); // gentle swell: everything aboard rises and falls one pixel
+    const X = SHIP_X;
+    const Y = SHIP_Y;
     g.save();
     g.translate(0, bob);
-    if (ready(IMG.ship)) g.drawImage(IMG.ship, 150, 9);
-    if (ready(IMG.flag)) foot(g, IMG.flag, 172, 452);
-    if (ready(IMG.wheel)) foot(g, IMG.wheel, 312, 514);
-    if (ready(IMG.cannon)) foot(g, IMG.cannon, 700, 503);
-    if (ready(IMG.barrel)) foot(g, IMG.barrel, 762, 494);
+    if (ready(IMG.ship)) g.drawImage(IMG.ship, X, Y);
+    drawWater(g, SCENE_W, SCENE_H + 2, WATERLINE, weather, reduced ? 0 : t);
+    if (ready(IMG.flag)) foot(g, IMG.flag, X + 10, Y + 184);
+    if (ready(IMG.wheel)) foot(g, IMG.wheel, X + 100, Y + 206);
+    if (ready(IMG.cannon)) foot(g, IMG.cannon, X + 236, Y + 202);
+    if (ready(IMG.barrel)) foot(g, IMG.barrel, X + 262, Y + 198);
     if (v.chest.length) {
-      drawHalo(g, 512, 545, 110, reduced ? 1 : (Math.sin(t * 3) + 1) / 2);
-      foot(g, chestSprite(), 512, 562);
+      drawHalo(g, X + 154, Y + 220, 44, reduced ? 1 : (Math.sin(t * 3) + 1) / 2);
+      foot(g, chestSprite(), X + 154, Y + 227);
     }
     for (const s of v.sailors) foot(g, sailorSprite(s.pose, s.role, reduced ? 0 : frame, s.flip), s.x, s.feet);
     if (v.fire) {
-      drawSmoke(g, 590, 470, reduced ? 0 : t);
-      [570, 600, 628].forEach((x, i) => foot(g, fireSprite((reduced ? 0 : frame) + i), x, 562));
+      drawSmoke(g, X + 194, Y + 190, reduced ? 0 : t);
+      [X + 186, X + 197, X + 208].forEach((x, i) => foot(g, fireSprite((reduced ? 0 : frame) + i), x, Y + 224));
     }
     if (v.anchored && ready(IMG.anchor)) {
       g.fillStyle = 'rgb(120,122,134)';
-      g.fillRect(862, 470, 4, 92);
-      foot(g, IMG.anchor, 864, 600);
+      g.fillRect(X + 316, Y + 180, 1, 52);
+      foot(g, IMG.anchor, X + 317, Y + 250);
     }
     g.restore();
     if (weather === 'storm') drawRain(g, SCENE_W, SCENE_H, reduced ? 0 : t);
@@ -125,7 +129,7 @@ export function createShipView(): ShipView$ {
   // ---------------------------------------------------------------- overlays
 
   function tag(s: Sailor): HTMLElement {
-    return h('div.ship-tag', { class: [`r-${s.role}`, s.pose === 'sit' && 'quiet'], style: { left: pctX(s.x), top: pctY(s.feet - SPRITE_H - 6 - (s.tagLift ?? 0)) } },
+    return h('div.ship-tag', { class: [`r-${s.role}`, s.pose === 'sit' && 'quiet'], style: { left: pctX(s.x), top: pctY(s.feet - SPRITE_H - 3 - (s.tagLift ?? 0)) } },
       h('span.dot'), h('b', null, s.id), h('span', null, s.word));
   }
 
@@ -133,7 +137,7 @@ export function createShipView(): ShipView$ {
     const a = st.agents.find((x) => x.id === s.id);
     const task = taskById(st, a?.taskId);
     const where = task ? `${a?.branch} · ${task.stations.slice(task.stationIndex).join(' → ')}` : a?.branch ?? '';
-    return h('div.ship-card', { class: `r-${s.role}`, style: { left: pctX(s.x), top: pctY(s.feet - SPRITE_H - 10) } },
+    return h('div.ship-card', { class: `r-${s.role}`, style: { left: pctX(s.x), top: pctY(s.feet - SPRITE_H - 4) } },
       h('div.row', null, h('span.badge', { class: `b-${s.role}` }, s.role), h('b', null, s.id), h('span.grow'), h('span.mono.faint', null, a ? ageShort(a.lastActivityAt) : '')),
       task ? h('div.title', null, `${task.id} · ${task.title}`) : h('div.title.faint', null, a ? agentStatusLong(st, a).text : ''),
       where && h('div.mono.faint', null, where),
@@ -143,7 +147,7 @@ export function createShipView(): ShipView$ {
   function hit(s: Sailor): HTMLElement {
     return h('button.ship-hit', {
       title: `${s.id}: open terminal`,
-      style: { left: pctX(s.x - 26), top: pctY(s.feet - SPRITE_H - 4), width: pctX(52), height: pctY(SPRITE_H + 8) },
+      style: { left: pctX(s.x - 10), top: pctY(s.feet - SPRITE_H - 2), width: pctX(20), height: pctY(SPRITE_H + 4) },
       onmouseenter: () => { hovered = s.id; renderOverlay(); },
       onmouseleave: () => { if (hovered === s.id) { hovered = null; renderOverlay(); } },
       onclick: () => openTerminal(s.id),
@@ -159,7 +163,7 @@ export function createShipView(): ShipView$ {
     const answer = (label: string) => {
       void run(api.answerAsk(n.id, [{ choices: [label] }])).then((r) => r && toast(`Answered the Captain: ${label}`));
     };
-    return h('div.ship-bubble', { style: { left: pctX(cap.x), top: pctY(cap.feet - SPRITE_H - 18) } },
+    return h('div.ship-bubble', { style: { left: pctX(cap.x), top: pctY(cap.feet - SPRITE_H - 8) } },
       h('div.row', null, h('span.pill', null, 'CAPTAIN ASKS'), h('span.grow'), h('span.mono', null, `${n.id} · ${ageShort(n.createdAt)}`)),
       h('div.q', null, text.length > 180 ? `${text.slice(0, 179)}…` : text),
       h('div.actions', null,
@@ -170,7 +174,7 @@ export function createShipView(): ShipView$ {
 
   function chestCallout(v: ShipView): HTMLElement | null {
     if (!v.chest.length) return null;
-    return h('div.ship-callout.crew', { style: { left: pctX(512), top: pctY(596) } },
+    return h('div.ship-callout.crew', { style: { left: pctX(SHIP_X + 154), top: pctY(SHIP_Y + 234) } },
       h('div.txt', null, h('b', null, `${v.chest.length} ready to approve`), h('span', null, `${v.chest.map((t) => t.id).join(' · ')} · reviewed by the Captain`)),
       h('button.go.crew', { onclick: () => void approveAllMerges(v.chest) }, icon('ticks', 14, 2.4), v.chest.length > 1 ? 'Approve all' : 'Approve'));
   }
@@ -178,7 +182,7 @@ export function createShipView(): ShipView$ {
   function fireCallout(v: ShipView): HTMLElement | null {
     if (!v.fire) return null;
     const first = v.fire.text.split('\n')[0];
-    return h('div.ship-callout.warm', { style: { left: pctX(760), top: pctY(598) } },
+    return h('div.ship-callout.warm', { style: { left: pctX(SHIP_X + 270), top: pctY(SHIP_Y + 236) } },
       h('div.txt', null, h('b', null, 'Merge blocked · fire on deck'), h('span', null, first.length > 70 ? `${first.slice(0, 69)}…` : first)),
       h('button.go.warm', { onclick: () => void commitCheckout() }, 'Commit & merge'),
       h('button.ghost', { onclick: () => void stashCheckout() }, 'Stash'));
@@ -187,18 +191,14 @@ export function createShipView(): ShipView$ {
   function stuckCallout(e: ShipView['stuck'][number]): HTMLElement {
     const s = e.sailor;
     const said = e.note?.text.replace(/\s+/g, ' ');
-    const right = s.x > 400;
-    return h('div.ship-callout.stuck.col', { class: right ? 'right' : 'left', style: { left: pctX(right ? s.x + 30 : s.x - 34), top: pctY(right ? s.feet - SPRITE_H + 6 : s.feet - SPRITE_H / 2) } },
-      h('div.row', null, h('span.bang', null, '!'), h('b', null, `${s.id} is stuck`), h('span.grow'), h('span.mono.faint', null, ageShort(e.note?.createdAt))),
-      said && h('div.said', null, `“${said.length > 110 ? `${said.slice(0, 109)}…` : said}”`),
-      h('button.link', { onclick: () => openTerminal(s.id) }, 'Open terminal →'));
-  }
-
-  function weatherCallout(v: ShipView): HTMLElement | null {
-    if (v.weather === 'clear') return null;
-    return h('div.ship-callout.storm.col', { style: { left: pctX(1010), top: pctY(336) } },
-      h('div.row', null, h('b', null, `${v.weather === 'storm' ? 'Storm' : 'Clouds'} · weekly usage ${v.weeklyPct}%`)),
-      h('div.said', null, 'Clouds roll in at your weekly warning, rain and lightning from 90%. Clears when usage resets.'));
+    const right = s.x > SHIP_X + 110;
+    return h('button.ship-chip.stuck', {
+      class: right ? 'right' : 'left',
+      title: said ? `${s.id}: “${said}”
+Click to open their terminal` : `Open ${s.id}'s terminal`,
+      style: { left: pctX(right ? s.x + 9 : s.x - 9), top: pctY(s.feet - SPRITE_H + 4) },
+      onclick: () => openTerminal(s.id),
+    }, h('span.bang', null, '!'), h('b', null, `${s.id} is stuck`), h('span.faint', null, ageShort(e.note?.createdAt)), h('span.go', null, 'Open →'));
   }
 
   let overlayKey = '';
@@ -215,9 +215,8 @@ export function createShipView(): ShipView$ {
     setChildren(overlay,
       v.sailors.map(hit),
       v.sailors.filter((s) => s.id !== hovered && !stuckIds.has(s.id) && !(s.role === 'captain' && captainAsking)).map(tag),
-      v.below > 0 && h('div.ship-tag.quiet', { style: { left: pctX(512), top: pctY(660) } }, h('b', null, `+${v.below}`), h('span', null, 'below deck')),
-      v.anchored && h('div.ship-tag.quiet', { style: { left: pctX(864), top: pctY(632) } }, h('b', null, 'Anchored'), h('span', null, 'paused until the 5-hour reset')),
-      weatherCallout(v),
+      v.below > 0 && h('div.ship-tag.quiet', { style: { left: pctX(SHIP_X + 154), top: pctY(SHIP_Y + 262) } }, h('b', null, `+${v.below}`), h('span', null, 'below deck')),
+      v.anchored && h('div.ship-tag.quiet', { style: { left: pctX(SHIP_X + 317), top: pctY(SHIP_Y + 262) } }, h('b', null, 'Anchored'), h('span', null, 'paused until the 5-hour reset')),
       v.stuck.map(stuckCallout),
       chestCallout(v),
       fireCallout(v),

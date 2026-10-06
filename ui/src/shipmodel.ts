@@ -1,10 +1,15 @@
 // Ship view (Dashboard → Ship): turns the state into who stands where on the pirate ship and which signs are up.
-// Pure, so it is tested without a DOM. Coordinates are in the 1220×720 scene (see pages/ship.ts). Design: Vellum "Muster" › Ship.
+// Pure, so it is tested without a DOM. Coordinates are art pixels in the 470×277 scene (see shipart.ts, pages/ship.ts). Design: Vellum "Muster" › Ship.
 import type { Agent, FeedItem, MusterConfig, MusterState, Note, Role, Task } from '../../src/types';
 import { YOU, awaitingApproval, hhmm, taskById } from './util';
 
-export const SCENE_W = 1220;
-export const SCENE_H = 720;
+export const SCENE_W = 470;
+export const SCENE_H = 277;
+/** Where the ship sprite's top-left sits in the scene; deck spots below are measured on the sprite from here. */
+export const SHIP_X = 70;
+export const SHIP_Y = 0;
+/** Below this line the hull is under water (the keel is hidden by the sea). */
+export const WATERLINE = SHIP_Y + 262;
 
 export type Pose = 'stand' | 'hammer' | 'haul' | 'sit' | 'stuck' | 'captain' | 'captain_wave';
 export type Weather = 'clear' | 'clouds' | 'storm';
@@ -39,17 +44,18 @@ export interface ShipView {
 
 interface Spot { x: number; feet: number; pose?: Pose; flip?: boolean; tagLift?: number }
 
-const HELM: Spot = { x: 268, feet: 512 };
-const NEST: Spot = { x: 422, feet: 186 };
+const at = (x: number, y: number): { x: number; feet: number } => ({ x: SHIP_X + x, feet: SHIP_Y + y });
+const HELM: Spot = at(82, 206);
+const NEST: Spot = at(110, 70);
 const MAIN_DECK: Spot[] = [
-  { x: 468, feet: 560, pose: 'hammer' },
-  { x: 548, feet: 560, pose: 'haul', flip: true, tagLift: 30 },
-  { x: 508, feet: 560, pose: 'hammer', flip: true, tagLift: 60 },
+  { ...at(134, 226), pose: 'hammer' },
+  { ...at(174, 226), pose: 'haul', flip: true, tagLift: 12 },
+  { ...at(154, 226), pose: 'hammer', flip: true, tagLift: 24 },
 ];
-const CANNON: Spot[] = [{ x: 650, feet: 505 }, { x: 616, feet: 507 }];
-const STERN: Spot[] = [{ x: 222, feet: 500, pose: 'hammer' }];
-const RIGGING: Spot[] = [{ x: 540, feet: 432 }, { x: 300, feet: 372 }]; // right rope first: the left one sits under the Captain's bubble
-const REST: Spot[] = [{ x: 762, feet: 470 }, { x: 222, feet: 500 }];
+const CANNON: Spot[] = [at(212, 203), at(196, 204)];
+const STERN: Spot[] = [{ ...at(58, 206), pose: 'hammer' }];
+const RIGGING: Spot[] = [at(159, 190), at(60, 150)]; // right rope first: the left one sits under the Captain's bubble
+const REST: Spot[] = [at(262, 186), at(58, 206)];
 
 /** Agents doing nothing for you right now sit and rest. */
 function resting(a: Agent): boolean {
