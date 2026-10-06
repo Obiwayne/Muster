@@ -1,7 +1,7 @@
 import { describe, expect, it } from 'vitest';
 import type { Agent, MusterState, Note, Task } from '../../src/types';
 import { emptyState } from '../../src/core/store';
-import { captainQuestion, shipView, weatherFor } from './shipmodel';
+import { BARREL_LANE, PUSHER_GAP, captainQuestion, shipView, weatherFor } from './shipmodel';
 
 const CFG = { warnAtWeeklyPct: 75 };
 const T0 = '2026-10-06T10:00:00.000Z';
@@ -120,5 +120,54 @@ describe('weatherFor', () => {
     expect(weatherFor(74, 75)).toBe('clear');
     expect(weatherFor(75, 75)).toBe('clouds');
     expect(weatherFor(90, 75)).toBe('storm');
+  });
+});
+
+describe('the barrel game', () => {
+  const idleCrew = (n: number) => Array.from({ length: n }, (_, i) => agent(`crew-${i + 2}`, 'crew', 'idle'));
+
+  it('three idle sailors roll the third along the main deck in a barrel; the rest still sit', () => {
+    const s = state({ agents: [agent('captain', 'captain', 'working'), ...idleCrew(4)] });
+    const v = shipView(s, CFG);
+    const at = (id: string) => v.sailors.find((x) => x.id === id)!;
+    expect(v.barrel).toEqual({ x: BARREL_LANE.x, feet: BARREL_LANE.feet });
+    expect(at('crew-2')).toMatchObject({ pose: 'push', x: BARREL_LANE.x - PUSHER_GAP, word: 'idle · rolling' });
+    expect(at('crew-3')).toMatchObject({ pose: 'push', x: BARREL_LANE.x + PUSHER_GAP, flip: true });
+    expect(at('crew-4')).toMatchObject({ pose: 'barrel', x: BARREL_LANE.x, word: 'idle · in the barrel' });
+    expect(at('crew-5')).toMatchObject({ pose: 'sit' });
+    expect(v.sub).toBe('1 working · 4 idle · nothing needs you');
+  });
+
+  it('two idle sailors just sit', () => {
+    const v = shipView(state({ agents: [agent('captain', 'captain', 'working'), ...idleCrew(2)] }), CFG);
+    expect(v.barrel).toBeNull();
+    expect(v.sailors.filter((x) => x.pose === 'sit')).toHaveLength(2);
+  });
+
+  it('waiting agents do not play: only idle or done ones', () => {
+    const v = shipView(state({ agents: [...idleCrew(2), agent('crew-9', 'crew', 'waiting')] }), CFG);
+    expect(v.barrel).toBeNull();
+  });
+
+  it('not while the chest is on the main deck', () => {
+    const s = state({ agents: [agent('captain', 'captain', 'working'), ...idleCrew(3)], tasks: [task('T1', ['build', 'review'], 1, 'ready_for_merge')],
+      notes: [note('N1', { type: 'review', taskId: 'T1' })] });
+    expect(shipView(s, CFG).chest).toHaveLength(1);
+    expect(shipView(s, CFG).barrel).toBeNull();
+  });
+
+  it('not when a working sailor would lose their spot to it', () => {
+    const busy = Array.from({ length: 4 }, (_, i) => agent(`busy-${i}`, 'crew', 'working'));
+    const v = shipView(state({ agents: [agent('captain', 'captain', 'working'), ...busy, ...idleCrew(3)] }), CFG);
+    expect(v.barrel).toBeNull();
+    expect(v.sailors.map((x) => x.id)).toEqual(expect.arrayContaining(busy.map((a) => a.id)));
+    expect(v.sailors.some((x) => x.pose === 'push')).toBe(false);
+  });
+
+  it('plays alongside a couple of working sailors who fit at the cannon and the stern', () => {
+    const busy = [agent('busy-1', 'crew', 'working'), agent('busy-2', 'crew', 'working')];
+    const v = shipView(state({ agents: [agent('captain', 'captain', 'working'), ...busy, ...idleCrew(3)] }), CFG);
+    expect(v.barrel).not.toBeNull();
+    expect(v.below).toBe(0);
   });
 });

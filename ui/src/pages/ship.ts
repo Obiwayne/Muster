@@ -9,7 +9,9 @@ import { api } from '../api';
 import { approveAllMerges, commitCheckout, run, stashCheckout } from '../actions';
 import { agentStatusLong, ageShort, taskById } from '../util';
 import { SCENE_H, SCENE_W, SHIP_X, SHIP_Y, WATERLINE, shipView, type Sailor, type ShipView } from '../shipmodel';
-import { chestSprite, drawBolt, drawClouds, drawHalo, drawRain, drawSea, drawSky, drawSmoke, drawWater, fireSprite, foot, sailorSprite } from '../shipart';
+import { barrelSprite, chestSprite, drawBolt, drawCannonball, drawClouds, drawHalo, drawHit, drawMuzzle, drawRain, drawSea, drawSky, drawSmoke, drawSplash,
+  drawTentacle, drawWater, fireSprite, foot, HORIZON as HORIZON_Y, sailorSprite, type SpinePoint, type Tentacle } from '../shipart';
+import { SHOT_FLIGHT, krakenFrame } from '../kraken';
 import shipPng from '../assets/ship/ship.png';
 import flagPng from '../assets/ship/flag.png';
 import wheelPng from '../assets/ship/wheel.png';
@@ -29,6 +31,19 @@ function img(src: string): HTMLImageElement {
 const IMG = { ship: img(shipPng), flag: img(flagPng), wheel: img(wheelPng), cannon: img(cannonPng), barrel: img(barrelPng), anchor: img(anchorPng) };
 const ready = (i: HTMLImageElement) => i.complete && i.naturalWidth > 0;
 const onImagesLoaded = (cb: () => void) => Object.values(IMG).forEach((i) => i.addEventListener('load', cb));
+
+/** The Kraken's two tentacles, off the bow (art pixels). */
+const TENTACLES: Tentacle[] = [
+  { x: 418, sea: 238, len: 118, thick: 8, lean: -0.3, bend: 0.5, curl: 3.6, dir: -1, phase: 0 },
+  { x: 452, sea: 246, len: 74, thick: 5.5, lean: -0.15, bend: 0.6, curl: 4.2, dir: -1, phase: 2 },
+];
+/** Where the bow cannon's mouth is, and where on each tentacle it aims (0 base … 1 tip). */
+const MUZZLE = { x: SHIP_X + 250, y: SHIP_Y + 187 };
+const AIM = [0.42, 0.5];
+/** Lightning during a visit: where each strike comes down. */
+const STRIKES = [30, 440, 408, 52, 462, 18]; // clear of the ship, so a bolt never seems to hit the crew
+/** The barrel rolls this far either side of the middle of the main deck. */
+const ROLL = 10;
 
 const pctX = (x: number) => `${(x / SCENE_W) * 100}%`;
 const pctY = (y: number) => `${(y / SCENE_H) * 100}%`;
@@ -64,6 +79,7 @@ export function createShipView(): ShipView$ {
   let raf = 0;
   let last = 0;
   let hovered: string | null = null;
+  let shownAt = 0; // the Kraken keeps its own clock from when the Ship view opened
   const reduced = matchMedia('(prefers-reduced-motion: reduce)').matches;
 
   // Fit the 1220×720 stage inside the space left above the strip.
@@ -84,28 +100,47 @@ export function createShipView(): ShipView$ {
     g.clearRect(0, 0, SCENE_W, SCENE_H);
     const weather = v?.weather ?? 'clear';
     const frame = Math.floor(t * 2);
-    drawSky(g, SCENE_W, weather, t);
-    if (weather !== 'clear') drawClouds(g);
+    const k = v && !reduced ? krakenFrame(t - shownAt) : null;
+    const gloom = k?.gloom ?? 0;
+    drawSky(g, SCENE_W, weather, t, gloom);
+    drawClouds(g, weather !== 'clear' ? 1 : gloom);
     if (weather === 'storm' && t % 6 < 0.35) drawBolt(g, 393, 43);
-    drawSea(g, SCENE_W, SCENE_H, weather, t);
+    if (k?.bolt != null) drawBolt(g, STRIKES[k.bolt], 34, k.bolt + 1, HORIZON_Y - 34);
+    drawSea(g, SCENE_W, SCENE_H, weather, t, gloom);
     if (!v) return;
 
-    const bob = reduced ? 0 : Math.round(Math.sin(t * 1.3)); // gentle swell: everything aboard rises and falls one pixel
+    // the Kraken, off the bow
+    const spines: SpinePoint[][] = [];
+    if (k) {
+      TENTACLES.forEach((T, i) => {
+        spines.push(drawTentacle(g, T, k.rise[i], t, k.flinch[i]));
+        drawSplash(g, T.x, T.sea, T.thick + 2, k.rise[i], t);
+      });
+    }
+
+    const bob = reduced ? 0 : Math.round(Math.sin(t * 1.3) * (k && gloom > 0.5 ? 2 : 1)); // the swell; rougher while the Kraken is here
     const X = SHIP_X;
     const Y = SHIP_Y;
     g.save();
     g.translate(0, bob);
     if (ready(IMG.ship)) g.drawImage(IMG.ship, X, Y);
-    drawWater(g, SCENE_W, SCENE_H + 2, WATERLINE, weather, reduced ? 0 : t);
+    drawWater(g, SCENE_W, SCENE_H + 2, WATERLINE, weather, reduced ? 0 : t, gloom);
     if (ready(IMG.flag)) foot(g, IMG.flag, X + 10, Y + 184);
     if (ready(IMG.wheel)) foot(g, IMG.wheel, X + 100, Y + 206);
-    if (ready(IMG.cannon)) foot(g, IMG.cannon, X + 236, Y + 202);
+    if (ready(IMG.cannon)) foot(g, IMG.cannon, X + 236 - Math.round((k?.recoil ?? 0) * 2), Y + 202);
     if (ready(IMG.barrel)) foot(g, IMG.barrel, X + 262, Y + 198);
     if (v.chest.length) {
       drawHalo(g, X + 154, Y + 220, 44, reduced ? 1 : (Math.sin(t * 3) + 1) / 2);
       foot(g, chestSprite(), X + 154, Y + 227);
     }
-    for (const s of v.sailors) foot(g, sailorSprite(s.pose, s.role, reduced ? 0 : frame, s.flip), s.x, s.feet);
+    // the barrel game: the pushers first so the barrel rolls in front of their legs
+    const roll = reduced ? 0 : Math.round(ROLL * Math.sin(t * 0.9));
+    const moving = !reduced && Math.abs(Math.cos(t * 0.9)) > 0.2;
+    for (const s of v.sailors) if (s.pose === 'push') foot(g, sailorSprite('push', s.role, moving ? Math.floor(roll / 2) : 0, s.flip), s.x + roll, s.feet);
+    for (const s of v.sailors) if (s.pose === 'barrel') foot(g, barrelSprite(roll, s.role), s.x + roll, s.feet);
+    g.fillStyle = 'rgb(236,186,144)'; // the pushers' hands on top of the barrel
+    for (const s of v.sailors) if (s.pose === 'push') g.fillRect(s.x + roll + (s.flip ? -7 : 5), s.feet - 14, 3, 2);
+    for (const s of v.sailors) if (s.pose !== 'push' && s.pose !== 'barrel') foot(g, sailorSprite(s.pose, s.role, reduced ? 0 : frame, s.flip), s.x, s.feet);
     if (v.fire) {
       drawSmoke(g, X + 194, Y + 190, reduced ? 0 : t);
       [X + 186, X + 197, X + 208].forEach((x, i) => foot(g, fireSprite((reduced ? 0 : frame) + i), x, Y + 224));
@@ -115,8 +150,28 @@ export function createShipView(): ShipView$ {
       g.fillRect(X + 316, Y + 180, 1, 52);
       foot(g, IMG.anchor, X + 317, Y + 250);
     }
+    for (const s of k?.shots ?? []) drawMuzzle(g, MUZZLE.x, MUZZLE.y, s.since);
     g.restore();
-    if (weather === 'storm') drawRain(g, SCENE_W, SCENE_H, reduced ? 0 : t);
+
+    // cannonballs on their way to the tentacles, and the sparks where they land
+    for (const s of k?.shots ?? []) {
+      const spine = spines[s.target];
+      if (!spine?.length) continue;
+      const aim = spine[Math.floor((spine.length - 1) * AIM[s.target])];
+      if (s.fly < 1) {
+        const path = (f: number) => [MUZZLE.x + (aim.x - MUZZLE.x) * f, MUZZLE.y + bob + (aim.y - MUZZLE.y - bob) * f - 26 * 4 * f * (1 - f)]; // a high arc, clear of the barrel on the bow
+        const [x, y] = path(s.fly);
+        const [px, py] = path(Math.max(0, s.fly - 0.15));
+        drawCannonball(g, x, y, px, py);
+      } else if (s.since - SHOT_FLIGHT < 0.5) {
+        drawHit(g, aim.x, aim.y, (s.since - SHOT_FLIGHT) / 0.5);
+      }
+    }
+    if (weather === 'storm' || gloom > 0.6) drawRain(g, SCENE_W, SCENE_H, reduced ? 0 : t);
+    if (k?.flash) {
+      g.fillStyle = `rgba(226,232,255,${0.22 * k.flash})`;
+      g.fillRect(0, 0, SCENE_W, SCENE_H);
+    }
   }
 
   function loop(now: number): void {
@@ -247,6 +302,7 @@ Click to open their terminal` : `Open ${s.id}'s terminal`,
     show() {
       if (visible) return;
       visible = true;
+      shownAt = performance.now() / 1000;
       requestAnimationFrame(fit);
       if (reduced) draw(0);
       else raf = requestAnimationFrame(loop);
