@@ -8,8 +8,8 @@ import { api, ApiError } from '../api';
 import { errToast } from '../actions';
 import { hhmm, roleOf } from '../util';
 import {
-  answerViews, askedAgo, exactLabel, failedText, fmtLeft, forProject, heldTitle, isExpired, isWarm, KIND_LABEL, lockText, msLeft,
-  projectKeyInput, recipients, rowMeta, rowText, sendLabel, sortHeld, targetNote, type HeldStatus, type PendingRemote,
+  answerViews, askedAgo, exactLabel, failedText, fmtLeft, forProject, heldTitle, isOverdue, isWarm, KIND_LABEL, lockText, msLeft,
+  overdueText, projectKeyInput, recipients, rowMeta, rowText, sendLabel, sortHeld, targetNote, type HeldStatus, type PendingRemote,
 } from '../heldmodel';
 
 export const POLL_MS = 5_000;
@@ -45,10 +45,14 @@ export function createHeldStore(onChange: () => void) {
   let retryAt = 0;
   let sig = '';
 
-  const signature = () => [...entries.values()].map((e) => `${e.p.pendingId}:${e.p.digest}:${e.p.expiresAt}:${e.status}:${e.error ?? ''}`).join('|');
-  const changed = () => {
+  // overdue-ness is in it so a failed card re-renders when its countdown gives way to "Waiting since"
+  const signature = () => [...entries.values()].map((e) => `${e.p.pendingId}:${e.p.digest}:${e.p.expiresAt}:${e.status}:${isOverdue(e.p)}:${e.error ?? ''}`).join('|');
+  const changed = (): boolean => {
     const s = signature();
-    if (s !== sig) { sig = s; onChange(); }
+    if (s === sig) return false;
+    sig = s;
+    onChange();
+    return true;
   };
 
   async function setProject(root: string, name: string): Promise<void> {
@@ -69,16 +73,14 @@ export function createHeldStore(onChange: () => void) {
         if (dismissed.has(p.pendingId)) continue;
         seen.add(p.pendingId);
         const e = entries.get(p.pendingId);
-        if (!e) entries.set(p.pendingId, { p, status: isExpired(p) ? 'expired' : 'idle' });
+        if (!e) entries.set(p.pendingId, { p, status: isOverdue(p) ? 'overdue' : 'idle' });
         else if (e.status !== 'sending') e.p = p; // a held write never changes; take the server's copy anyway
       }
       for (const [id, e] of entries) {
         if (seen.has(id) || e.status === 'sending') continue;
-        // gone from the gateway: an expired card stays (greyed) until you dismiss it, so it doesn't vanish mid-read;
-        // one sent or discarded from the phone just goes
-        if (e.status === 'expired' || e.status === 'gone') continue;
-        if (isExpired(e.p)) e.status = 'expired';
-        else entries.delete(id);
+        // gone from the gateway: sent or discarded from the phone, so it just goes (a 'gone' card stays until dismissed)
+        if (e.status === 'gone') continue;
+        entries.delete(id);
       }
     } catch {
       retryAt = Date.now() + BACKOFF_MS; // nothing to show; no toast, no error
@@ -88,14 +90,10 @@ export function createHeldStore(onChange: () => void) {
     changed();
   }
 
-  /** Once a second: cards whose time ran out turn expired. True when something changed. */
+  /** Once a second: waiting cards past their 15 minutes turn overdue (still sendable). True when something changed. */
   function tick(now = Date.now()): boolean {
-    let any = false;
-    for (const e of entries.values()) {
-      if ((e.status === 'idle' || e.status === 'failed') && isExpired(e.p, now)) { e.status = 'expired'; any = true; }
-    }
-    if (any) changed();
-    return any;
+    for (const e of entries.values()) if (e.status === 'idle' && isOverdue(e.p, now)) e.status = 'overdue';
+    return changed();
   }
 
   /** Send exactly the card you saw: `shown` is the write as rendered (its digest goes back to the gateway). */
@@ -111,10 +109,10 @@ export function createHeldStore(onChange: () => void) {
       toast(r.summary ? `Sent: ${r.summary}` : `Sent ${shown.pendingId}`);
     } catch (err) {
       if (err instanceof ApiError && err.status === 404) {
-        e.status = isExpired(e.p) ? 'expired' : 'gone';
+        e.status = 'gone'; // already sent or discarded (a held write never times out)
         e.error = err.message;
       } else {
-        e.status = isExpired(e.p) ? 'expired' : 'failed';
+        e.status = 'failed';
         e.error = err instanceof Error ? err.message : String(err);
       }
     }
@@ -134,7 +132,7 @@ export function createHeldStore(onChange: () => void) {
     changed();
   }
 
-  /** Expired or gone: client-side only (the gateway already dropped it). */
+  /** Gone: client-side only (the gateway no longer holds it). */
   function dismiss(id: string): void {
     dismissed.add(id);
     entries.delete(id);
@@ -148,23 +146,25 @@ export function createHeldStore(onChange: () => void) {
     send,
     discard,
     dismiss,
-    /** Soonest to expire first; finished cards (expired, gone) after the live ones. */
+    /** Oldest first (overdue ones lead); gone cards after the held ones. */
     list(): HeldEntry[] {
       const all = [...entries.values()];
-      const live = all.filter((e) => e.status !== 'expired' && e.status !== 'gone');
-      const over = all.filter((e) => e.status === 'expired' || e.status === 'gone');
+      const live = all.filter((e) => e.status !== 'gone');
+      const over = all.filter((e) => e.status === 'gone');
       return [...sortHeld(live.map((e) => ({ ...e.p, e }))).map((x) => x.e), ...over];
     },
     get(id: string): HeldEntry | undefined { return entries.get(id); },
-    /** Held writes still waiting on you (they count in Needs you). */
-    waiting(): number { return [...entries.values()].filter((e) => e.status !== 'expired' && e.status !== 'gone').length; },
+    /** Held writes still waiting on you, overdue ones too (they count in Needs you). */
+    waiting(): number { return [...entries.values()].filter((e) => e.status !== 'gone').length; },
   };
 }
 
 export type HeldStore = ReturnType<typeof createHeldStore>;
 
 const captainOf = (state: MusterState) => state.agents.find((a) => a.role === 'captain')?.id ?? 'captain';
-const over = (s: HeldStatus) => s === 'expired' || s === 'gone';
+const over = (s: HeldStatus) => s === 'gone';
+/** Overdue by the clock (a failed send can be overdue too): the countdown gives way to "Waiting since". */
+const late = (e: HeldEntry) => e.status !== 'gone' && isOverdue(e.p);
 
 /** Updates every live countdown under `root` (rows and the card's chip) without re-rendering. */
 export function tickCountdowns(root: ParentNode, now = Date.now()): void {
@@ -182,14 +182,17 @@ export function heldRow(state: MusterState, e: HeldEntry, selected: boolean, onS
   const captain = captainOf(state);
   const done = over(e.status);
   const left = msLeft(p);
-  return h('button.note-row.held-row', { class: [selected && 'sel', done && 'over'], onclick: onSelect },
-    h('div.type', null, h('span.held-badge', { class: done && 'over' }, done ? (e.status === 'gone' ? 'GONE' : 'EXPIRED') : 'HELD')),
+  return h('button.note-row.held-row', { class: [selected && 'sel', done && 'over', late(e) && 'late'], onclick: onSelect },
+    h('div.type', null, h('span.held-badge', { class: done && 'over' }, done ? 'GONE' : 'HELD')),
     h('div.body', null,
       h('div.held-text', null, done ? heldTitle(p, { captain, past: true }) + (p.text ? `: ${p.text}` : '') : rowText(p, captain)),
       h('div.meta', null, rowMeta(p, captain))),
     h('div.side', null,
       done
-        ? h('span.faint', null, e.status === 'gone' ? 'gone' : 'expired')
+        ? h('span.faint', null, 'gone')
+        : late(e)
+        ? [h('span.held-left.warm', null, `since ${hhmm(p.createdAt)}`),
+          e.status === 'failed' ? h('span.held-failed', null, 'failed') : h('span.faint', null, 'not sent')]
         : [h('span.held-left', { class: isWarm(left) && 'warm', dataset: { expires: p.expiresAt } }, fmtLeft(left)),
           e.status === 'failed' ? h('span.held-failed', null, 'failed') : h('span.faint', null, 'left')]));
 }
@@ -204,14 +207,16 @@ export function heldCard(state: MusterState, e: HeldEntry, store: HeldStore): HT
 
   // ---- header
   const countdown = done
-    ? h('span.cd-chip.over', null, icon('timer', 13), h('span.cd-t', null, e.status === 'gone' ? 'no longer held' : `expired ${hhmm(p.expiresAt)}`))
+    ? h('span.cd-chip.over', null, icon('timer', 13), h('span.cd-t', null, 'no longer held'))
+    : late(e)
+    ? h('span.cd-chip.warm', null, icon('timer', 13), h('span.cd-t', null, overdueText(p)))
     : h('span.cd-chip', { class: isWarm(left) && 'warm', dataset: { expires: p.expiresAt, suffix: ' left' } }, icon('timer', 13), h('span.cd-t', null, `${fmtLeft(left)} left`));
   const chips = recipients(p, captain).map((r) => r.kind === 'task'
     ? h('span.to-chip.task', null, h('span.mono', null, r.id), state.tasks.find((t) => t.id === r.id)?.title ?? p.taskTitle ?? '')
     : h('span.to-chip', { class: `r-${roleOf(state, r.id)}` }, h('span.dot6'), r.label));
   const head = h('div.hc-head', null,
     h('div.hc-top', null,
-      h('span.held-badge', { class: done && 'over' }, done ? (e.status === 'gone' ? 'GONE' : 'EXPIRED') : `HELD · ${KIND_LABEL[p.kind]}`),
+      h('span.held-badge', { class: done && 'over' }, done ? 'GONE' : `HELD · ${KIND_LABEL[p.kind]}`),
       h('span.hc-ref', null, [p.pendingId, `from ${p.client}`, askedAgo(p.createdAt)].join(' · ')),
       h('span.flex1'),
       countdown),
@@ -267,10 +272,8 @@ export function heldCard(state: MusterState, e: HeldEntry, store: HeldStore): HT
   if (done) {
     callout = h('div.hc-callout.neutral', null, icon('timer', 16),
       h('div.cc', null,
-        h('div.cb', null, e.status === 'gone' ? 'No longer held. Nothing was sent from here.' : 'Expired after 15 minutes. Nothing was sent.'),
-        h('div.cs', null, e.status === 'gone'
-          ? `${e.error ? `${e.error.replace(/\.?$/, '.')} ` : ''}It may have been sent or discarded on your phone.`
-          : `It can't be sent any more. If you still want it, ask ${p.client} again and it comes back as a new card.`)));
+        h('div.cb', null, 'No longer held. Nothing was sent from here.'),
+        h('div.cs', null, `${e.error ? `${e.error.replace(/\.?$/, '.')} ` : ''}It may have been sent or discarded on your phone.`)));
     actions = h('div.hc-actions', null, h('button.hc-btn', { onclick: () => store.dismiss(p.pendingId) }, 'Dismiss'));
   } else {
     const failed = e.status === 'failed';

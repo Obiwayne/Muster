@@ -18,7 +18,7 @@ import { repoKey, sameToken } from '../core/tokens.js';
 import { clonePrefs, mergePrefs, needsFromState, shouldNotify, type NeedItem, type Prefs } from './needs.js';
 import { hostsFor, lanHosts as realLanHosts, tailscaleInfo as realTailscale, type TailscaleInfo } from './net.js';
 import { displayCode, Pairing } from './pairing.js';
-import { digestOf, PENDING_TTL_MS, pendingSummary, pendingTitle, pendingToNeed, pendingView, sweepExpired, type PendingWrite } from './pending.js';
+import { digestOf, PENDING_TTL_MS, pendingSummary, pendingTitle, pendingToNeed, pendingView, newlyOverdue, type PendingWrite } from './pending.js';
 import { RemoteAuth } from './oauth.js';
 import { DEFAULT_REMOTE_PORT, startRemote, type Remote, type RemoteSettings, type Tunnel, type WriteInput, type WriteOutcome } from './remote.js';
 import { desktopSettingsFile, listProjects, orchestratorFetch, orchestratorJson, OrchestratorError, recentRoots, type Project } from './projects.js';
@@ -228,7 +228,7 @@ export async function startGateway(opts: GatewayOptions = {}): Promise<Gateway> 
           }
         }),
     );
-    items.push(...livePending().map(pendingToNeed)); // held remote writes wait on you too
+    items.push(...heldPending().map(pendingToNeed)); // held remote writes wait on you too
     items.sort((a, b) => b.createdAt.localeCompare(a.createdAt));
     return { projects: list, items, polled };
   };
@@ -275,15 +275,15 @@ export async function startGateway(opts: GatewayOptions = {}): Promise<Gateway> 
       log(`remote audit log: ${e instanceof Error ? e.message : e}`);
     }
   };
-  /** Pending writes still in time; expired ones are dropped (and logged) on the way. */
-  const livePending = (): PendingWrite[] => {
-    const { live, expired } = sweepExpired(state.remote.pending, now().getTime());
-    if (expired.length) {
-      state.remote.pending = live;
+  /** Every held write. None is ever dropped on time: past 15 minutes it is only overdue, logged once on the way. */
+  const heldPending = (): PendingWrite[] => {
+    const late = newlyOverdue(state.remote.pending, now().getTime());
+    if (late.length) {
+      for (const w of late) w.overdueLogged = true;
       save();
-      for (const w of expired) auditRemote({ event: 'write_expired', id: w.id, kind: w.kind, project: w.projectName, client: w.client });
+      for (const w of late) auditRemote({ event: 'write_overdue', id: w.id, kind: w.kind, project: w.projectName, client: w.client });
     }
-    return live;
+    return state.remote.pending;
   };
   const remoteSettings = (): RemoteSettings => ({ confirmWrites: state.remote.confirmWrites, allowApprove: state.remote.allowApprove });
   /** Saved config, else what the flags/env gave this process, else off. */
@@ -449,8 +449,8 @@ export async function startGateway(opts: GatewayOptions = {}): Promise<Gateway> 
   };
 
   const pendingById = (id: string, pid?: string): PendingWrite => {
-    const w = livePending().find((x) => x.id.toUpperCase() === id.toUpperCase() && (!pid || x.projectId === pid));
-    if (!w) throw new HttpError(404, `Nothing held as ${id}: it was already sent, discarded or has expired`);
+    const w = heldPending().find((x) => x.id.toUpperCase() === id.toUpperCase() && (!pid || x.projectId === pid));
+    if (!w) throw new HttpError(404, `Nothing held as ${id}: it was already sent or discarded`);
     return w;
   };
   const dropPending = (w: PendingWrite) => {
@@ -644,7 +644,7 @@ export async function startGateway(opts: GatewayOptions = {}): Promise<Gateway> 
   });
   admin('DELETE', '/admin/remote/apps', () => ({ ok: true, ...appsAuth().removeApp() }));
   /** Held writes, and your tap on Send / Discard from the desktop. */
-  admin('GET', '/admin/remote/pending', () => livePending().map((w) => ({ id: w.id, projectId: w.projectId, noteId: w.noteId, ...pendingView(w), title: pendingTitle(w), summary: pendingSummary(w) })));
+  admin('GET', '/admin/remote/pending', () => heldPending().map((w) => ({ id: w.id, projectId: w.projectId, noteId: w.noteId, ...pendingView(w), title: pendingTitle(w), summary: pendingSummary(w) })));
   admin('POST', '/admin/remote/pending/:id/send', ({ params, body }) => sendPending(params.id, 'desktop', body.digest));
   admin('POST', '/admin/remote/pending/:id/discard', ({ params }) => discardPending(params.id, 'desktop'));
   /** Desktop-only switches. Turning the hold off needs `confirm: true` (the desktop's warning dialog): with it off, an

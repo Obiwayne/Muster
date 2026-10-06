@@ -3,7 +3,7 @@ import { createHash } from 'node:crypto';
 import type { AskQuestion } from '../../src/types';
 import { repoKey } from '../../src/core/tokens';
 import {
-  answerViews, askedAgo, exactLabel, failedText, fmtLeft, forProject, heldTitle, isExpired, isWarm, lockText, msLeft, projectKeyInput,
+  answerViews, askedAgo, exactLabel, failedText, fmtLeft, forProject, heldTitle, isOverdue, isWarm, lockText, msLeft, overdueText, projectKeyInput,
   recipients, recipientText, rowMeta, rowText, sendLabel, sortHeld, type PendingRemote,
 } from './heldmodel';
 
@@ -24,14 +24,20 @@ describe('countdown', () => {
     expect(fmtLeft(-5000)).toBe('0:00');
   });
 
-  it('turns warm under 3 minutes and expires at 0', () => {
+  it('turns warm under 3 minutes and is overdue (not dead) at 0', () => {
     const p = held();
     expect(msLeft(p, NOW)).toBe(120_000);
     expect(isWarm(msLeft(p, NOW))).toBe(true);
     expect(isWarm(3 * 60_000)).toBe(false);
     expect(isWarm(0)).toBe(false);
-    expect(isExpired(p, NOW)).toBe(false);
-    expect(isExpired(p, NOW + 120_000)).toBe(true);
+    expect(isOverdue(p, NOW)).toBe(false);
+    expect(isOverdue(p, NOW + 120_000)).toBe(true);
+    expect(isOverdue(p, NOW + 6 * 60 * 60_000)).toBe(true); // hours later: still overdue, never anything else
+  });
+
+  it('says how long an overdue one has waited instead of counting down', () => {
+    const asked = new Date(2026, 9, 5, 21, 47).toISOString(); // local 21:47
+    expect(overdueText({ createdAt: asked })).toBe('Waiting since 21:47 · still not sent');
   });
 
   it('says when it was asked', () => {
@@ -79,7 +85,7 @@ describe('what the card says', () => {
       .toBe('These answers are locked. They reach the Captain, and show in crew chat as yours via Claude, only when you press Send.');
     expect(exactLabel(held())).toBe('WILL SEND EXACTLY THIS');
     expect(exactLabel(held({ kind: 'answer', answers: [{}, {}, {}] }))).toBe('WILL SEND EXACTLY THESE 3 ANSWERS');
-    expect(exactLabel(held(), true)).toBe('WAS NOT SENT');
+    expect(exactLabel(held(), true)).toBe('NOT SENT FROM HERE');
   });
 
   it('shows every answer with its question from the note menu, keeping free text as is', () => {
@@ -101,8 +107,9 @@ describe('what the card says', () => {
       .toBe("P8 is not what your screen showed; reload and check it again. Nothing was sent. It's still held, unchanged. Try again, or discard it.");
   });
 
-  it('sorts soonest-to-expire first', () => {
+  it('sorts oldest first, so overdue ones lead', () => {
     expect(sortHeld([held({ pendingId: 'P1', expiresAt: at(9) }), held({ pendingId: 'P2', expiresAt: at(1) })]).map((p) => p.pendingId)).toEqual(['P2', 'P1']);
+    expect(sortHeld([held({ pendingId: 'P3', expiresAt: at(1) }), held({ pendingId: 'P4', expiresAt: at(-40) })]).map((p) => p.pendingId)).toEqual(['P4', 'P3']);
   });
 });
 

@@ -325,7 +325,8 @@ export function logLine(e: RemoteLogEntry): { text: string; tone: LogTone } {
         ? { text: join(`sent ${item}`, 'not held'), tone: 'warm' }
         : { text: join(`sent ${item}`, e.approvedOn ? `approved on ${str(e.approvedOn)}` : ''), tone: 'text' };
     case 'write_discarded': return { text: join(`discarded ${item}`, e.on ? `on ${str(e.on)}` : ''), tone: 'muted' };
-    case 'write_expired': return { text: join(`expired ${item}`, 'nothing sent'), tone: 'muted' };
+    case 'write_overdue': return { text: join(`overdue ${item}`, 'still held'), tone: 'warm' };
+    case 'write_expired': return { text: join(`expired ${item}`, 'nothing sent'), tone: 'muted' }; // older logs: held writes no longer expire
     case 'write_send_refused': return { text: join(`send refused ${id}`, str(e.reason).replace(/_/g, ' ')), tone: 'warm' };
     case 'login_failed': {
       const what = LOGIN_REASON[str(e.reason)] ?? `sign-in failed${e.reason ? `: ${str(e.reason)}` : ''}`;

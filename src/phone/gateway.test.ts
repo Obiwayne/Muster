@@ -676,13 +676,25 @@ describe('phone gateway: held remote writes (docs/REMOTE.md, confirmation gate)'
     await phone3('POST', `/api/projects/${pid}/pending/${id}/discard`);
   });
 
-  it('held writes expire after 15 minutes unsent', async () => {
-    const id = /as (P\d+)/.exec((await tool('muster_send_goal', { text: 'Too late' })).text)![1];
-    expect(await remoteItems()).toHaveLength(1);
+  it('a held write past 15 minutes is only overdue: still listed, still sendable with its digest, logged once', async () => {
+    const id = /as (P\d+)/.exec((await tool('muster_send_goal', { text: 'Still wanted' })).text)![1];
+    const shown = await dig(id);
     t3 += 15 * 60_000 + 1;
-    expect(await remoteItems()).toHaveLength(0);
-    expect((await phone3('POST', `/api/projects/${pid}/pending/${id}/send`, { digest: 'x' })).status).toBe(404);
-    expect(audit3().some((l) => l.event === 'write_expired' && l.id === id)).toBe(true);
+    expect((await remoteItems()).map((i) => i.remote.pendingId)).toEqual([id]);
+    t3 += 60 * 60_000; // an hour later still
+    expect((await admin3('GET', '/admin/remote/pending')).data.map((w: any) => w.id)).toEqual([id]);
+    expect(audit3().filter((l) => l.event === 'write_overdue' && l.id === id)).toEqual([
+      expect.objectContaining({ id, kind: 'goal', project: 'Fake Project', client: expect.any(String) }),
+    ]);
+    expect((await phone3('POST', `/api/projects/${pid}/pending/${id}/send`, { digest: 'x' })).status).toBe(409); // the digest check stays
+    const before = calls.length;
+    expect((await phone3('POST', `/api/projects/${pid}/pending/${id}/send`, { digest: shown })).data.ok).toBe(true);
+    expect(orchCalls('/api/ask', before)).toHaveLength(1);
+    const gone = await phone3('POST', `/api/projects/${pid}/pending/${id}/send`, { digest: shown });
+    expect(gone.status).toBe(404);
+    expect(gone.data.error).toBe(`Nothing held as ${id}: it was already sent or discarded`);
+    expect(audit3().filter((l) => l.event === 'write_overdue')).toHaveLength(1);
+    expect(audit3().some((l) => l.event === 'write_expired')).toBe(false);
   });
 
   it('turning the hold off needs confirm: true from the desktop; then writes run at once as "not held"', async () => {

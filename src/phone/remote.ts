@@ -221,11 +221,9 @@ export function auditArgs(v: unknown): unknown {
   return v;
 }
 
-const hhmm = (iso: string) => new Date(iso).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
-
 export function formatWriteOutcome(o: WriteOutcome): string {
   return o.held
-    ? `Held for your OK as ${o.id} (${o.projectName}). Nothing has been sent: tap Send in Muster on your phone or desktop. It expires at ${hhmm(o.expiresAt)} if you don't.`
+    ? `Held for your OK as ${o.id} (${o.projectName}). Nothing has been sent: tap Send in Muster on your phone or desktop. It waits there until you Send or Discard it.`
     : `Sent to ${o.projectName}: ${o.summary}`;
 }
 

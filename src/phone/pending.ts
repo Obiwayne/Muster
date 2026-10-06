@@ -1,11 +1,13 @@
 // Held remote writes (docs/REMOTE.md, "Confirmation gate"): what Claude asked to send through the connector, waiting for
-// your tap on Send (phone or desktop). Kept in the gateway's state.json; 15 minutes, then they expire unsent.
+// your tap on Send (phone or desktop). Kept in the gateway's state.json until you Send or Discard them: never dropped on
+// time. After 15 minutes (`expiresAt`, the name kept for the wire) a write is only overdue, and still sendable.
 // A held write never changes. Its `digest` covers everything that would be sent, the card shows it, and Send must
 // quote it back, so a tap always sends exactly what was on screen (a stale or different card gets 409).
 import { createHash } from 'node:crypto';
 import type { NeedItem, RemoteWriteView } from './needs.js';
 import type { WriteInput, WriteKind } from './remote.js';
 
+/** After this a held write is overdue: still held and sendable, the cards just say it has waited a while. */
 export const PENDING_TTL_MS = 15 * 60_000;
 
 export interface PendingWrite {
@@ -24,7 +26,10 @@ export interface PendingWrite {
   /** The connector client that asked (the OAuth client's name). */
   client: string;
   createdAt: string;
+  /** When it turns overdue (createdAt + PENDING_TTL_MS). Not an expiry: it stays held until Send or Discard. */
   expiresAt: string;
+  /** Set once `write_overdue` has been logged for it, so it logs once. Not part of the digest. */
+  overdueLogged?: boolean;
   /** sha256 of what would be sent (see digestOf). */
   digest: string;
 }
@@ -96,10 +101,7 @@ export function pendingToNeed(w: PendingWrite): NeedItem {
   };
 }
 
-/** Splits off the writes whose time ran out. */
-export function sweepExpired(list: PendingWrite[], now: number): { live: PendingWrite[]; expired: PendingWrite[] } {
-  const live: PendingWrite[] = [];
-  const expired: PendingWrite[] = [];
-  for (const w of list) (Date.parse(w.expiresAt) > now ? live : expired).push(w);
-  return { live, expired };
+/** The writes that have just gone overdue (past `expiresAt`, not yet logged). Nothing is dropped. */
+export function newlyOverdue(list: PendingWrite[], now: number): PendingWrite[] {
+  return list.filter((w) => !w.overdueLogged && Date.parse(w.expiresAt) <= now);
 }

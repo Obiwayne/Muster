@@ -22,7 +22,7 @@ import { createBranches } from './pages/branches';
 import { createVellum } from './pages/vellum';
 import { createSettings } from './pages/settings';
 import { projectId as heldProjectId } from './pages/heldcard';
-import { forProject, isExpired } from './heldmodel';
+import { forProject } from './heldmodel';
 
 type RouteId = 'dashboard' | 'roadmap' | 'research' | 'intel' | 'board' | 'chat' | 'tasks' | 'branches' | 'vellum' | 'settings';
 type NavId = Exclude<RouteId, 'research'>;
@@ -340,7 +340,7 @@ async function pollHeld(): Promise<void> {
     if (s) {
       if (heldProject === undefined) heldProject = await heldProjectId(s.state.repoRoot);
       const name = s.config.projectName || s.state.repoRoot.split(/[\/]/).filter(Boolean).pop() || '';
-      const n = forProject(await api.remotePending(), { id: heldProject, name }).filter((p) => !isExpired(p)).length;
+      const n = forProject(await api.remotePending(), { id: heldProject, name }).length; // overdue ones still wait on you
       if (n !== heldWaiting) {
         heldWaiting = n;
         renderShell(s);
