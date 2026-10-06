@@ -1257,10 +1257,11 @@ a.rs-evq:hover, a.rs-evrow:hover { border-color: color-mix(in oklab, var(--color
 .held-badge.over { color: var(--color-muted); background: var(--color-surface-2); }
 .note-row.held-row { box-shadow: inset 2px 0 0 color-mix(in oklab, var(--color-glow-blue) 45%, transparent); }
 .note-row.held-row.sel { background: color-mix(in oklab, var(--color-glow-blue) 8%, var(--color-surface)); box-shadow: inset 2px 0 0 var(--color-glow-blue); }
+.note-row.held-row.late { box-shadow: inset 2px 0 0 color-mix(in oklab, var(--color-warm) 55%, transparent); } /* overdue: still held, still sendable */
 .note-row.held-row.over { box-shadow: none; opacity: .65; }
 .note-row.held-row.over.sel { background: var(--color-surface); box-shadow: inset 2px 0 0 var(--color-muted); }
 .held-text { font-size: 14px; line-height: 20px; overflow-wrap: anywhere; } /* full text; line breaks fold in the list, the card keeps them */
-.held-left { font-family: var(--font-mono); font-size: 11px; color: var(--color-muted); }
+.held-left { font-family: var(--font-mono); font-size: 11px; color: var(--color-muted); white-space: nowrap; }
 .held-left.warm { color: var(--color-warm); }
 .held-failed { color: var(--color-stuck); }
 

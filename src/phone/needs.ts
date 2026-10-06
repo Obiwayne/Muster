@@ -23,7 +23,8 @@ export interface NeedItem {
   actions: NeedAction[];
 }
 
-/** A held remote write as the Send card shows it (docs/REMOTE.md): nothing clipped, plus when it expires. */
+/** A held remote write as the Send card shows it (docs/REMOTE.md): nothing clipped, plus when it turns overdue
+ *  (`expiresAt`; it stays held and sendable after that). */
 export interface RemoteWriteView {
   pendingId: string;
   kind: 'goal' | 'reply' | 'answer' | 'approve';

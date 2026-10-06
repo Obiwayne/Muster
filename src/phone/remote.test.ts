@@ -137,8 +137,7 @@ describe('remote connector', () => {
     const r = await c.callTool({ name: 'muster_send_goal', arguments: { project: 'StarCut', text: 'Add a dark mode' } });
     expect(writes).toEqual([{ input: { kind: 'goal', project: 'StarCut', text: 'Add a dark mode' }, client: 'dev token' }]);
     expect(r.isError).toBeFalsy();
-    const expires = new Date(clock + 15 * 60_000).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
-    expect(textOf(r)).toBe(`Held for your OK as P1 (StarCut). Nothing has been sent: tap Send in Muster on your phone or desktop. It expires at ${expires} if you don't.`);
+    expect(textOf(r)).toBe(`Held for your OK as P1 (StarCut). Nothing has been sent: tap Send in Muster on your phone or desktop. It waits there until you Send or Discard it.`);
     await c.close();
   });
 

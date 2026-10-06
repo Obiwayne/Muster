@@ -93,7 +93,8 @@ until the owner trusts the connector.
 2. **Server-side hold** (default on, setting `remote.confirmWrites`, replaces `confirmGoals`): `muster_send_goal`,
    `muster_reply` and `muster_answer` do **not** call the orchestrator. Each creates a pending item and returns "Waiting for your OK on your phone/desktop (id P3)". The pending goal shows as
    an approval in Needs you (phone M04, desktop board) with the goal text and "Send to Captain / Discard". Only that tap
-   makes the real call (`POST /api/ask`, reply or answer). It expires after 15 min. This is what actually stops a prompt-injected or mistaken call.
+   makes the real call (`POST /api/ask`, reply or answer). It is never dropped on time: it waits until you Send or
+   Discard it (after 15 min it is only marked overdue). This is what actually stops a prompt-injected or mistaken call.
    Pending items live in gateway `state.json` (`pending: [{ id, project, kind, text, createdAt }]`). Add a new `NeedItem`
    kind `'remote_write'` (goal, reply or answer, shown with its target note) with actions `['send','discard']`.
 
@@ -174,7 +175,9 @@ The Send button is the only thing between a held item and the Captain, so the ca
 2. **Send sends exactly what's shown**: the card holds `remote.digest` and Send posts it back
    (`{ digest }` on `.../pending/:id/send`). The gateway refuses (409, nothing sent) if it doesn't match, so a stale card
    can never send something else. Held writes never change (built in milestone 3).
-3. **Visible countdown**: "Expires in 12 min" from `remote.expiresAt`, ticking; at 0 the card greys out and goes.
+3. **Visible countdown**: "12:00 left" from `remote.expiresAt`, ticking. At 0 the write is only *overdue*: the card
+   stays as it is (not greyed, Send and Discard unchanged) and says "Waiting since HH:MM · still not sent" in the warm
+   colour. A held write never expires; `expiresAt` keeps its name on the wire but means "overdue from".
 4. **Discard is one tap and as easy to hit as Send**: same size, side by side, no confirm dialog on either. (Send is
    the primary colour, Discard the neutral one; neither is hidden in a menu.)
 5. Says who asked (`remote.client`) and when.
@@ -183,9 +186,8 @@ The Send button is the only thing between a held item and the Captain, so the ca
    and a "scroll to read the rest" hint; they never scroll out of reach. The callout is the card's most prominent
    sentence after the title, not a footnote: "Nothing has been sent yet. … only when you press Send."
 7. **Other states**: *send failed* keeps the card held and unchanged, shows a red "Send failed. Nothing was sent."
-   callout with the orchestrator's reason, and offers Try again / Discard at equal size; *expired* greys the card, says
-   "Expired after 15 minutes. Nothing was sent.", labels the text "Was not sent", and offers only Dismiss (the gateway
-   already dropped it; the card stays until dismissed so it doesn't vanish mid-read).
+   callout with the orchestrator's reason, and offers Try again / Discard at equal size; *overdue* is described in 3 and counts in Needs you like any held write;
+   *gone* (Send got 404: it was already sent or discarded, e.g. on the phone) greys the card and offers only Dismiss.
 
 Crew chat: a message sent via the connector is identical to one you typed except for the "via Claude" chip (and the
 `↳ N12` link for replies); hovering the chip says "Sent from the Claude app · held as P8 · you approved it on your
@@ -252,7 +254,7 @@ its own orchestrator as `/api/phone/remote/...` (handlePhone forwards `/api/phon
 | `POST /admin/remote/code` | `{ code, display, expiresAt }` (the only place the code appears). `DELETE` cancels: `{ ok, cancelled }`. |
 | `DELETE /admin/remote/connections[/:id]` | `{ ok, revoked }` |
 | `GET /admin/remote/pending` | `[{ id, projectId, noteId?, ...RemoteWriteView, title, summary }]` |
-| `POST /admin/remote/pending/:id/send` | body `{ digest }` → `{ ok, id, summary }`; 400 no digest, 409 mismatch / failed send (`{ error }`), 404 gone. `.../discard` → `{ ok, id }`. |
+| `POST /admin/remote/pending/:id/send` | body `{ digest }` → `{ ok, id, summary }`; 400 no digest, 409 mismatch / failed send (`{ error }`), 404 already sent or discarded. `.../discard` → `{ ok, id }`. |
 | `GET/PUT /admin/remote/settings` | `{ confirmWrites, allowApprove }`; PUT `{ confirmWrites: false }` needs `confirm: true` (400 otherwise). |
 
 Phone API (bearer = device key): `GET /api/needs` → `{ pcName, projects, items, hold: { on, offSince, sentWithoutTap } }`;
@@ -260,7 +262,7 @@ held items are `kind: 'remote_write'`, `actions: ['send','discard']`, with `remo
 `expiresAt`, `replyTo` = { id, from, type, text, questions?: [{ header, question, multiSelect, options: string[] }] } (questions
 only for a question menu, so each answer shows under its question), `answers`, `taskTitle`). `POST /api/projects/:pid/pending/:id/send` `{ digest }` and
 `.../discard`. Push: the events socket sends `{ type: 'need', item }` for new held items (pref "question", ignores quiet
-hours) and `{ type: 'resolved', id }` when sent/discarded/expired.
+hours) and `{ type: 'resolved', id }` when sent or discarded.
 
 Crew chat: `FeedItem.via = { client, approvedOn, approvedAt }` on goal messages (`kind: 'message'`, from you) and on
 replies/answers (`kind: 'reply'`, from you, `noteId`).
@@ -341,14 +343,16 @@ the client stores and sends at sign-in and on every token request; every `/mcp` 
      answers, task actually waiting for approval), so you're never asked to approve something that can't run.
    - With the hold on it is stored in state.json `remote.pending` as `P1, P2…` (ids survive restarts), shown in Needs
      you as `kind: 'remote_write'` with `actions: ['send','discard']` (phone push uses the "question" pref and ignores
-     quiet hours, since you just asked for it), and expires unsent after 15 minutes.
+     quiet hours, since you just asked for it), and stays held until Send or Discard, however long that takes. After 15
+     minutes (`expiresAt`) it is only overdue: still listed, still sendable with its digest.
    - Send: phone `POST /api/projects/:pid/pending/:id/send|discard`; desktop `GET /admin/remote/pending`,
      `POST /admin/remote/pending/:id/send|discard` (reachable from the desktop as `/api/phone/remote/pending/...`).
      Send runs the write as you with `via`; a failed send stays held. Approve goes to approve-merge (or approve at a
      human station), like the phone's Approve.
    - `GET/PUT /admin/remote/settings` `{ confirmWrites, allowApprove }`; turning the hold off needs `confirm: true`,
      turning it back on doesn't. Desktop only (no phone or MCP route).
-   - Audit: `write_held`, `write_sent` (with approvedOn), `write_discarded`, `write_expired`, `settings_changed`; tool
+   - Audit: `write_held`, `write_sent` (with approvedOn), `write_discarded`, `write_overdue` (once per write, the first time it is seen past 15 minutes; older logs may
+     have `write_expired`), `settings_changed`; tool
      lines carry `held`/`pendingId` and text cut to 200 characters.
    **Not usable end to end until milestone 4**: the desktop has no Send/Discard button yet and the installed phone app
    doesn't know `remote_write` (it reads `kind` as a plain string, so nothing breaks; the item just has no buttons).

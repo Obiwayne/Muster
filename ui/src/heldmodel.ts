@@ -2,6 +2,7 @@
 // for the HELD rows and the Send card. Rendered by pages/heldcard.ts. The hold is the protection: the card shows
 // exactly what Send will send, in full, and Send quotes back the digest of what was rendered.
 import type { AskQuestion, Note } from '../../src/types';
+import { hhmm } from './util';
 
 export type HeldKind = 'goal' | 'reply' | 'answer' | 'approve';
 
@@ -20,26 +21,34 @@ export interface PendingRemote {
   taskId?: string;
   taskTitle?: string;
   createdAt: string;
+  /** When it turns overdue. Not an expiry: it stays held, and sendable, until you Send or Discard it. */
   expiresAt: string;
   digest: string;
   title: string;
   summary: string;
 }
 
-/** idle: waiting for your tap · sending · failed (still held; `error` from the server) · expired · gone (404). */
-export type HeldStatus = 'idle' | 'sending' | 'failed' | 'expired' | 'gone';
+/** idle: waiting for your tap · sending · failed (still held; `error` from the server) · overdue (waited past 15 min,
+ *  still held and sendable) · gone (404: already sent or discarded). */
+export type HeldStatus = 'idle' | 'sending' | 'failed' | 'overdue' | 'gone';
 
 export const WARM_MS = 3 * 60_000;
 
 const tms = (iso: string) => { const t = Date.parse(iso); return Number.isNaN(t) ? 0 : t; };
 
-/** Milliseconds left before it expires (never negative). */
+/** Milliseconds left before it turns overdue (never negative). */
 export function msLeft(p: Pick<PendingRemote, 'expiresAt'>, now = Date.now()): number {
   return Math.max(0, tms(p.expiresAt) - now);
 }
 
-export function isExpired(p: Pick<PendingRemote, 'expiresAt'>, now = Date.now()): boolean {
+/** Past its 15 minutes: still held and sendable, the card just stops counting down. */
+export function isOverdue(p: Pick<PendingRemote, 'expiresAt'>, now = Date.now()): boolean {
   return msLeft(p, now) <= 0;
+}
+
+/** What an overdue card says instead of the countdown: "Waiting since 21:47 · still not sent". */
+export function overdueText(p: Pick<PendingRemote, 'createdAt'>): string {
+  return `Waiting since ${hhmm(p.createdAt)} · still not sent`;
 }
 
 /** "m:ss" (rounded up, so it reads 0:01 until it really is over). */
@@ -66,7 +75,7 @@ export const KIND_LABEL: Record<HeldKind, string> = { goal: 'GOAL', reply: 'REPL
 const who = (id: string, captain: string) => (id === captain ? 'the Captain' : id);
 const theirs = (id: string, captain: string) => (id === captain ? "the Captain's" : `${id}'s`);
 
-/** "Claude wants to reply on N12" (or "wanted to" once it is over). */
+/** "Claude wants to reply on N12" (or "wanted to" once it is gone). */
 export function heldTitle(p: PendingRemote, opts: { captain?: string; past?: boolean } = {}): string {
   const captain = opts.captain ?? 'captain';
   const v = opts.past ? 'wanted to' : 'wants to';
@@ -142,9 +151,9 @@ export function lockText(p: PendingRemote, captain = 'captain'): string {
   }
 }
 
-/** "WILL SEND EXACTLY THIS" / "… THESE 3 ANSWERS"; "WAS NOT SENT" once it is over. */
+/** "WILL SEND EXACTLY THIS" / "… THESE 3 ANSWERS"; "NOT SENT FROM HERE" once it is gone. */
 export function exactLabel(p: PendingRemote, over = false): string {
-  if (over) return 'WAS NOT SENT';
+  if (over) return 'NOT SENT FROM HERE';
   if (p.kind === 'answer') {
     const n = p.answers?.length ?? 0;
     return n === 1 ? 'WILL SEND EXACTLY THIS ANSWER' : `WILL SEND EXACTLY THESE ${n} ANSWERS`;
@@ -169,7 +178,7 @@ export function failedText(error: string): string {
   return `${e ? (/[.!?]$/.test(e) ? e : `${e}.`) + ' ' : ''}It's still held, unchanged. Try again, or discard it.`;
 }
 
-/** Order on the board: soonest to expire first. */
+/** Order on the board: oldest first (by expiresAt, so overdue ones lead). */
 export function sortHeld<T extends Pick<PendingRemote, 'expiresAt' | 'pendingId'>>(list: T[]): T[] {
   return [...list].sort((a, b) => tms(a.expiresAt) - tms(b.expiresAt) || a.pendingId.localeCompare(b.pendingId));
 }

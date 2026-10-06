@@ -195,6 +195,7 @@ describe('activity', () => {
     expect(t({ event: 'write_sent', id: 'P9', kind: 'reply', approvedOn: 'not held' })).toEqual({ text: 'sent P9 reply · not held', tone: 'warm' });
     expect(t({ event: 'write_held', id: 'P6', kind: 'goal', client: 'Claude' })).toEqual({ text: 'held P6 goal · Claude', tone: 'muted' });
     expect(t({ event: 'write_discarded', id: 'P5', kind: 'reply', on: 'desktop' }).text).toBe('discarded P5 reply · on desktop');
+    expect(t({ event: 'write_overdue', id: 'P4', kind: 'answer', client: 'Claude' })).toEqual({ text: 'overdue P4 answer · still held', tone: 'warm' });
     expect(t({ event: 'write_expired', id: 'P4', kind: 'answer' }).text).toBe('expired P4 answer · nothing sent');
     expect(t({ event: 'login_failed', reason: 'wrong', client: 'Claude', ip: '86.12.44.170' })).toEqual({ text: 'wrong code · Claude · 86.12.44.170', tone: 'red' });
     expect(t({ event: 'login_failed', reason: 'wrong', ip: '1.2.3.4', lockedUntil: local(14, 52) }).text).toBe('wrong code · 1.2.3.4 · locked sign-ins until 14:52');
