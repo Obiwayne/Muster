@@ -202,7 +202,7 @@ export function showStationEditor(opts: StationEditorOpts): void {
         h('button.icon-btn', { title: 'Move up', disabled: i === 0, onclick: (e: Event) => { e.stopPropagation(); void move(i, -1); } }, '↑'),
         h('button.icon-btn', { title: 'Move down', disabled: i === order.length - 1, onclick: (e: Event) => { e.stopPropagation(); void move(i, 1); } }, '↓'))));
     const gateItems = gates.map((n) => h('div.se-item.r-qa.pinned', { class: n === current && 'on', onclick: () => { current = n; draw(); } },
-      h('span.dot'), h('span.nm', null, n), isDirty(n) ? h('span.unsaved', { title: 'Unsaved changes' }) : null, h('span.se-lock', { title: 'Locked: always just before review' }, icon('lock', 12))));
+      h('span.dot'), h('span.nm', null, n), isDirty(n) ? h('span.unsaved', { title: 'Unsaved changes' }) : null, h('span.se-lock', { title: 'Permanent QA gate: every code change needs 5/5' }, icon('lock', 12))));
     const review = h('div.se-item.r-captain.pinned', { class: current === 'review' && 'on', onclick: () => { current = 'review'; draw(); } },
       h('span.dot'), h('span.nm', null, 'review'), isDirty('review') ? h('span.unsaved', { title: 'Unsaved changes' }) : null, h('span.pin', { title: 'Always last' }, icon('pin', 12)));
     let add: HTMLElement;
