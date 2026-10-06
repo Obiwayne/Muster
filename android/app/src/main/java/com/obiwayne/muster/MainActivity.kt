@@ -94,7 +94,7 @@ class MainActivity : ComponentActivity() {
         // Debug builds: `adb shell am start -n com.obiwayne.muster/.MainActivity --ez demo true --es screen review`
         // (screens: needs, crew, settings, review, answer, ask, held; `--ez notify true [--es screen ask|held]` posts demo
         // notifications). Held writes from Claude (M10–M12): `--es screen held` adds goal, reply and answer cards, or pick
-        // with `--es held goal,reply,answer,expired`; `--ez sendfail true` makes Send fail (409); `--ez holdoff true`
+        // with `--es held goal,reply,answer,overdue`; `--ez sendfail true` makes Send fail (409); `--ez holdoff true`
         // shows the "hold is off" banner (M13/M14) on Needs you and Crew.
         if (BuildConfig.DEBUG && intent.hasExtra("notify") && !intent.getBooleanExtra("notify", false)) {
             Notifier.cancelAll(this)

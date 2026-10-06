@@ -61,7 +61,7 @@ class ActionReceiver : BroadcastReceiver() {
                             }
                         } != null
                         if (ok) {
-                            state.removeNeed(itemId, keep = false)
+                            state.removeNeed(itemId)
                             Notifier.postStatus(app, itemId, kind, projectName, "Discarded $pendingId", "Nothing was sent.", 4000)
                         } else {
                             Notifier.postStatus(app, itemId, kind, projectName, "Couldn't discard $pendingId", error ?: "Open Muster to discard it.", null)

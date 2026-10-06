@@ -111,9 +111,7 @@ fun NeedsScreen(
     val scope = rememberCoroutineScope()
     val busy = remember { mutableStateListOf<String>() }
     var blockedSheet by remember { mutableStateOf<NeedItem?>(null) }
-    val expiredKept by state.expiredHeld.collectAsState()
     val heldErrors by state.heldErrors.collectAsState()
-    val maybeSent by state.heldMaybeSent.collectAsState()
     val focus by state.focusHeld.collectAsState()
     val heldBusy = remember { mutableStateMapOf<String, String>() } // id -> "send" | "discard"
     val ctx = LocalContext.current
@@ -126,11 +124,10 @@ fun NeedsScreen(
 
     val all = needs?.items.orEmpty().sortedByDescending { it.createdAt }
     val items = filtered(all, selected)
-    val heldLive = items.filter { it.isHeld }
-    val held = (heldLive + filtered(expiredKept, selected).filter { e -> heldLive.none { it.id == e.id } }).sortedByDescending { it.createdAt }
+    val held = items.filter { it.isHeld }
     val reviews = items.filter { it.isReview }
     val questions = items.filter { it.isQuestion || it.kind == Kind.STUCK && "answer" in it.actions }
-    val other = items - reviews.toSet() - questions.toSet() - heldLive.toSet()
+    val other = items - reviews.toSet() - questions.toSet() - held.toSet()
     val project = needs?.projects?.firstOrNull { it.id == selected }
     val pcName = state.pcName
     val hold = needs?.hold
@@ -163,9 +160,16 @@ fun NeedsScreen(
         scope.launch {
             val out = state.sendHeld(item)
             heldBusy.remove(item.id)
-            if (out is SendOutcome.Sent) {
-                Notifier.cancel(ctx, item.id)
-                snack(out.summary.ifBlank { "Sent ${item.remote?.pendingId ?: ""}".trim() })
+            when (out) {
+                is SendOutcome.Sent -> {
+                    Notifier.cancel(ctx, item.id)
+                    snack(out.summary.ifBlank { "Sent ${item.remote?.pendingId ?: ""}".trim() })
+                }
+                SendOutcome.Gone -> {
+                    Notifier.cancel(ctx, item.id)
+                    snack("${item.remote?.pendingId ?: "It"} was already sent or discarded".trim())
+                }
+                is SendOutcome.Failed -> Unit
             }
         }
     }
@@ -180,11 +184,6 @@ fun NeedsScreen(
                 snack("Discarded ${item.remote?.pendingId ?: ""} · nothing was sent".replace("  ", " "))
             }
         }
-    }
-
-    fun dismiss(item: NeedItem) {
-        state.dismissHeld(item.id)
-        Notifier.cancel(ctx, item.id)
     }
 
     // A notification tap on a held item: scroll to its card once it's loaded.
@@ -282,11 +281,11 @@ fun NeedsScreen(
                             }
                         }
                         items(held, key = { "held-" + it.id }) { item ->
-                            val phase = heldPhase(item, expiredKept.any { it.id == item.id }, heldBusy[item.id], heldErrors[item.id], item.id in maybeSent)
+                            val phase = heldPhase(heldBusy[item.id], heldErrors[item.id])
                             SendCard(
                                 item, phase,
                                 showActions = !isTall(item.id),
-                                onSend = { send(item) }, onDiscard = { discard(item) }, onDismiss = { dismiss(item) },
+                                onSend = { send(item) }, onDiscard = { discard(item) },
                                 bodyModifier = Modifier.onSizeChanged { bodyH[item.id] = it.height },
                             )
                         }
@@ -340,9 +339,9 @@ fun NeedsScreen(
             }
         }
         pinned?.let { item ->
-            val phase = heldPhase(item, expiredKept.any { it.id == item.id }, heldBusy[item.id], heldErrors[item.id], item.id in maybeSent)
-            PinnedSendBar(expired = phase is HeldPhase.Expired) {
-                SendCardActions(item, phase, onSend = { send(item) }, onDiscard = { discard(item) }, onDismiss = { dismiss(item) })
+            val phase = heldPhase(heldBusy[item.id], heldErrors[item.id])
+            PinnedSendBar {
+                SendCardActions(item, phase, onSend = { send(item) }, onDiscard = { discard(item) })
             }
         }
     }

@@ -69,14 +69,16 @@ class HeldTest {
         assertEquals("""{"digest":"abc123"}""", Parse.digestBody("abc123"))
     }
 
-    @Test fun countdownAndExpiry() {
+    @Test fun countdownAndOverdue() {
         val r = Parse.needs(json).items[0].remote!!
         assertEquals("2:18 left", Held.countdown(r, at))
         assertEquals(138L, Held.secondsLeft(r, at))
         assertTrue(Held.secondsLeft(r, at)!! < Held.WARN_SECONDS)
-        assertFalse(Held.isExpired(r, at))
-        assertTrue(Held.isExpired(r, Instant.parse("2026-10-05T14:15:00Z")))
+        assertFalse(Held.isOverdue(r, at))
+        assertTrue(Held.isOverdue(r, Instant.parse("2026-10-05T14:15:00Z")))
         assertEquals("0:00 left", Held.countdown(r, Instant.parse("2026-10-05T14:20:00Z")))
+        assertEquals("Waiting since 14:00 · still not sent", Held.waitingSince(r, ZoneOffset.UTC))
+        assertEquals("Still not sent", Held.waitingSince(r.copy(createdAt = ""), ZoneOffset.UTC))
     }
 
     @Test fun titlesRoutesAndText() {
@@ -84,7 +86,6 @@ class HeldTest {
         val reply = items[0]
         val answer = items[1]
         assertEquals("Claude wants to reply on N12", Held.title(reply, reply.remote!!))
-        assertEquals("Claude wanted to reply on N12", Held.title(reply, reply.remote!!, expired = true))
         assertEquals("StarCut · note N12", Held.route(reply, reply.remote!!))
         assertEquals("HELD · REPLY", Held.chip(reply.remote!!))
         assertEquals("Locked. It reaches ada and the Captain, as yours via Claude, only when you tap Send.", Held.lockText(reply.remote!!))

@@ -6,7 +6,6 @@ import com.obiwayne.muster.data.Api
 import com.obiwayne.muster.data.ApiException
 import com.obiwayne.muster.data.Backend
 import com.obiwayne.muster.data.DemoBackend
-import com.obiwayne.muster.data.Held
 import com.obiwayne.muster.data.Link
 import com.obiwayne.muster.data.NeedItem
 import com.obiwayne.muster.data.NeedsResponse
@@ -28,7 +27,7 @@ data class OpenTarget(val kind: String, val projectId: String, val taskId: Strin
 sealed interface SendOutcome {
     data class Sent(val summary: String) : SendOutcome
 
-    /** 404: the gateway already dropped it (expired). */
+    /** 404: it was already sent or discarded elsewhere (the gateway never drops a held write on time). */
     data object Gone : SendOutcome
 
     /** 409 or no answer: still held, nothing was sent. */
@@ -54,21 +53,11 @@ class AppState(private val app: Application) {
     /** Tablet list + detail: the open item as "task:pid:tid" or "note:pid:nid" (see ui.openKey); null = the first one. */
     val selectedNeed = MutableStateFlow<String?>(null)
 
-    /** Held remote writes that expired while shown: kept greyed out until dismissed, so a card never vanishes mid-read. */
-    val expiredHeld = MutableStateFlow<List<NeedItem>>(emptyList())
-
     /** Send failures per held item id (the gateway's reason); the card stays held and shows Try again / Discard. */
     val heldErrors = MutableStateFlow<Map<String, String>>(emptyMap())
 
-    /** Held items whose Send got no answer: if a retry then gets 404, the first Send may have gone through. */
-    private val sendUnanswered = mutableSetOf<String>()
-
-    /** Expired cards that may in fact have been sent ("check crew chat"), from [sendUnanswered] + 404. */
-    val heldMaybeSent = MutableStateFlow<Set<String>>(emptySet())
-
     /** A held item to scroll to (from a notification tap). */
     val focusHeld = MutableStateFlow<String?>(null)
-    private val dismissedHeld = mutableSetOf<String>()
 
     /** Debug builds: a pairing URI handed in by adb, consumed by the scan screen as if it had been scanned. */
     val debugPairUri = MutableStateFlow<String?>(null)
@@ -129,10 +118,10 @@ class AppState(private val app: Application) {
         }
     }
 
-    fun setNeeds(fresh: NeedsResponse) {
-        // A dismissed expired card stays gone even if a poll lands before the gateway's sweep.
-        val res = fresh.copy(items = fresh.items.filter { it.id !in dismissedHeld })
-        keepExpired(needs.value?.items.orEmpty(), res.items)
+    fun setNeeds(res: NeedsResponse) {
+        // A held write missing from /needs was sent or discarded elsewhere: its card just goes.
+        val ids = res.items.map { it.id }.toSet()
+        heldErrors.update { m -> m.filterKeys { it in ids } }
         needs.value = res
         val now = System.currentTimeMillis()
         lastSync.value = now
@@ -155,34 +144,14 @@ class AppState(private val app: Application) {
         n?.copy(items = n.items.filter { it.id != item.id } + item)
     }
 
-    /** Removes an item. A held write that went away because its time ran out stays as an expired card ([keep]). */
-    fun removeNeed(id: String, keep: Boolean = true) {
-        val before = needs.value?.items.orEmpty()
+    fun removeNeed(id: String) {
         needs.update { n -> n?.copy(items = n.items.filter { it.id != id }) }
-        if (keep) keepExpired(before, needs.value?.items.orEmpty())
     }
 
-    private fun keepExpired(before: List<NeedItem>, after: List<NeedItem>) {
-        val now = java.time.Instant.now().plusSeconds(5) // the gateway's sweep may run a moment before our clock
-        val ids = after.map { it.id }.toSet()
-        val gone = before.filter { it.isHeld && it.id !in ids && it.id !in dismissedHeld && Held.isExpired(it.remote!!, now) }
-        if (gone.isNotEmpty()) expiredHeld.update { list -> list + gone.filter { g -> list.none { it.id == g.id } } }
-    }
-
-    /** Dismiss on an expired card. */
-    fun dismissHeld(id: String) {
-        dismissedHeld += id
-        expiredHeld.update { list -> list.filter { it.id != id } }
-        heldMaybeSent.update { it - id }
+    /** Drops a held item's card (sent, discarded, or already gone from the gateway). */
+    private fun dropHeld(id: String) {
         heldErrors.update { it - id }
-        removeNeed(id, keep = false)
-    }
-
-    /** Marks a held item expired now (its send got 404). */
-    fun expireHeld(item: NeedItem) {
-        expiredHeld.update { list -> if (list.any { it.id == item.id }) list else list + item }
-        heldErrors.update { it - item.id }
-        removeNeed(item.id, keep = false)
+        removeNeed(id)
     }
 
     /** Send on a held card: posts the digest exactly as received. */
@@ -196,24 +165,14 @@ class AppState(private val app: Application) {
             SendOutcome.Failed(e.message ?: "Unlinked")
         } catch (e: OfflineException) {
             offline.value = true
-            sendUnanswered += item.id
             SendOutcome.Failed("Couldn't reach ${e.pcName}. It's still held; try again when the PC answers.")
         } catch (e: ApiException) {
-            if (e.code != 404) sendUnanswered -= item.id // the gateway still had it held, so nothing went through earlier
             if (e.code == 404) SendOutcome.Gone else SendOutcome.Failed(e.message ?: "HTTP ${e.code}")
         } catch (e: Exception) {
             SendOutcome.Failed(e.message ?: "Something went wrong")
         }
         when (out) {
-            is SendOutcome.Sent -> {
-                sendUnanswered -= item.id
-                heldErrors.update { it - item.id }
-                removeNeed(item.id, keep = false)
-            }
-            SendOutcome.Gone -> {
-                if (sendUnanswered.remove(item.id)) heldMaybeSent.update { it + item.id }
-                expireHeld(item)
-            }
+            is SendOutcome.Sent, SendOutcome.Gone -> dropHeld(item.id)
             is SendOutcome.Failed -> heldErrors.update { it + (item.id to out.error) }
         }
         return out
@@ -231,10 +190,7 @@ class AppState(private val app: Application) {
                 gone = true
             }
         } != null || gone
-        if (ok) {
-            heldErrors.update { it - item.id }
-            removeNeed(item.id, keep = false)
-        }
+        if (ok) dropHeld(item.id)
         return ok
     }
 
@@ -296,15 +252,11 @@ class AppState(private val app: Application) {
     }
 
     private fun clearHeld() {
-        expiredHeld.value = emptyList()
         heldErrors.value = emptyMap()
-        heldMaybeSent.value = emptySet()
-        sendUnanswered.clear()
-        dismissedHeld.clear()
         focusHeld.value = null
     }
 
-    /** Debug demo. [held] adds held remote writes (goal, reply, answer, expired); [holdOff] shows the hold-off banner. */
+    /** Debug demo. [held] adds held remote writes (goal, reply, answer, overdue); [holdOff] shows the hold-off banner. */
     fun enterDemo(held: Set<String> = emptySet(), holdOff: Boolean = false, sendFails: Boolean = false) {
         demoBackend = DemoBackend(held, holdOff, sendFails)
         demo.value = true

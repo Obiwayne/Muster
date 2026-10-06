@@ -9,7 +9,8 @@ import java.time.temporal.TemporalAdjusters
 
 /**
  * Debug-only sample data that mirrors the Vellum designs (M03–M14), so the UI can be checked without a PC.
- * [held] picks the held remote writes to show (`goal`, `reply`, `answer`, `expired`: M10–M12 and the expired state);
+ * [held] picks the held remote writes to show (`goal`, `reply`, `answer`, `overdue`: M10–M12 and a card past its 15
+ * minutes, still held; `expired` is an old name for `overdue`);
  * [holdOff] turns the server-side hold off (M13/M14 banner); [sendFails] makes Send answer 409 (the failed state).
  */
 class DemoBackend(
@@ -175,7 +176,7 @@ class DemoBackend(
                 ),
             )
         }
-        if ("expired" in held) {
+        if ("overdue" in held || "expired" in held) {
             extra += heldItem(
                 "P6", WriteKind.REPLY, 15 * 60 + 40, "Claude wants to reply on N12", noteId = "N12",
                 text = "Go with 30 days, and a plain 404 is fine for revoked links.",
@@ -205,10 +206,6 @@ class DemoBackend(
         delay(500)
         val item = items.firstOrNull { it.projectId == pid && it.remote?.pendingId == pendingId } ?: throw ApiException(404, "$pendingId is gone")
         val r = item.remote!!
-        if (Held.isExpired(r)) {
-            items.remove(item)
-            throw ApiException(404, "$pendingId expired")
-        }
         if (digest != r.digest) throw ApiException(409, "$pendingId is not what your screen showed; reload and check it again. Nothing was sent.")
         if (sendFails) {
             throw ApiException(409, "StarCut's Captain isn't running (Muster said: captain is not running). It's still held, unchanged. Start the Captain and try again, or discard it.")

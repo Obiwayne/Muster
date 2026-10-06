@@ -21,7 +21,7 @@ interface Backend {
 
     /**
      * Sends a held remote write (`POST /api/projects/:pid/pending/:id/send` with the card's digest, unchanged). Returns
-     * the gateway's summary. 409 = not what the card showed, or the send failed (still held); 404 = gone (expired).
+     * the gateway's summary. 409 = not what the card showed, or the send failed (still held); 404 = gone (already sent or discarded).
      */
     suspend fun sendPending(pid: String, pendingId: String, digest: String): String
 
