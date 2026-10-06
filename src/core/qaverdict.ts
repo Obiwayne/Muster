@@ -48,7 +48,7 @@ export function parseVerdict(body: { score?: unknown; rubric?: unknown; findings
     return { file: text(f.file, `findings[${i}].file`), ...(f.line !== undefined ? { line: f.line as number } : {}), problem: text(f.problem, `findings[${i}].problem`), fix: text(f.fix, `findings[${i}].fix`) };
   });
   if (score < 5 && !findings.length) throw badRequest('A score below 5 needs at least one finding (file, problem, fix)');
-  if (score === 5 && findings.length) throw badRequest('A 5/5 has no findings: if something needs fixing, score it lower');
+  if (score === 5 && findings.length) throw badRequest('a 5/5 has no findings; score lower or drop them');
   return { score, rubric, findings, summary: text(body.summary, 'summary') };
 }
 
