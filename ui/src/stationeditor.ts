@@ -11,6 +11,7 @@ const ROLES: { value: StationRole; label: string }[] = [
   { value: 'design', label: 'Vellum design crew' },
   { value: 'captain', label: 'Captain' },
   { value: 'human', label: 'You (approval)' },
+  { value: 'qa', label: 'QA gate' },
 ];
 const MAX_GUIDELINE = 20_000; // characters
 const NAME_RE = /^[a-z0-9][a-z0-9-]{0,29}$/;
@@ -43,6 +44,7 @@ export function showStationEditor(opts: StationEditorOpts): void {
   let defaultLine = '';
   let viewLine = ''; // the preset the line was last applied from or matches
   let others: string[] = []; // saved stations that are not in the line
+  let gates: string[] = []; // locked stations (qa) on the line: they always sit just before review and can't be moved or removed
   let presetsErr = false;
   let skills: SkillInfo[] = []; // Muster's plugin skills (GET /api/skills); empty on an older server
 
@@ -65,8 +67,10 @@ export function showStationEditor(opts: StationEditorOpts): void {
       try { skills = await api.skills(); } catch { skills = []; }
       const list = await api.stations();
       saved = Object.fromEntries(list.map((s) => [s.name, s]));
-      order = opts.lineOrder().filter((n) => n !== 'review' && saved[n]);
-      others = list.map((s) => s.name).filter((n) => n !== 'review' && !order.includes(n));
+      const onLine = opts.lineOrder().filter((n) => n !== 'review' && saved[n]);
+      gates = onLine.filter((n) => saved[n].locked);
+      order = onLine.filter((n) => !saved[n].locked);
+      others = list.map((s) => s.name).filter((n) => n !== 'review' && !onLine.includes(n) && !saved[n].locked);
       for (const s of list) if (!isDirty(s.name)) drafts[s.name] = { role: s.role, guideline: s.guideline, skills: [...(s.skills ?? [])] };
       for (const n of Object.keys(drafts)) if (!saved[n]) delete drafts[n];
       current = select && saved[select] ? select : saved[current] ? current : order[0] ?? 'review';
@@ -103,6 +107,7 @@ export function showStationEditor(opts: StationEditorOpts): void {
 
   /** Persist a new line order, and the preset it was edited from. */
   async function persistOrder(next: string[]): Promise<void> {
+    next = [...next, ...gates];
     await opts.setOrder(next);
     const l = lines.find((x) => x.name === viewLine);
     if (l) {
@@ -138,7 +143,7 @@ export function showStationEditor(opts: StationEditorOpts): void {
 
   function presetBar(): HTMLElement | null {
     if (!lines.length) return presetsErr ? h('div.se-presets.muted', null, 'Presets need the latest Muster build.') : null;
-    const cur = [...order, 'review'].join('>');
+    const cur = [...order, ...gates, 'review'].join('>');
     const match = lines.find((l) => [...l.stations.filter((n) => n !== 'review'), 'review'].join('>') === cur);
     if (match && viewLine !== match.name) viewLine = match.name;
     if (!match) viewLine = '';
@@ -196,6 +201,8 @@ export function showStationEditor(opts: StationEditorOpts): void {
       h('span.mv', null,
         h('button.icon-btn', { title: 'Move up', disabled: i === 0, onclick: (e: Event) => { e.stopPropagation(); void move(i, -1); } }, '↑'),
         h('button.icon-btn', { title: 'Move down', disabled: i === order.length - 1, onclick: (e: Event) => { e.stopPropagation(); void move(i, 1); } }, '↓'))));
+    const gateItems = gates.map((n) => h('div.se-item.r-qa.pinned', { class: n === current && 'on', onclick: () => { current = n; draw(); } },
+      h('span.dot'), h('span.nm', null, n), isDirty(n) ? h('span.unsaved', { title: 'Unsaved changes' }) : null, h('span.se-lock', { title: 'Permanent QA gate: every code change needs 5/5' }, icon('lock', 12))));
     const review = h('div.se-item.r-captain.pinned', { class: current === 'review' && 'on', onclick: () => { current = 'review'; draw(); } },
       h('span.dot'), h('span.nm', null, 'review'), isDirty('review') ? h('span.unsaved', { title: 'Unsaved changes' }) : null, h('span.pin', { title: 'Always last' }, icon('pin', 12)));
     let add: HTMLElement;
@@ -210,7 +217,7 @@ export function showStationEditor(opts: StationEditorOpts): void {
     } else {
       add = h('button.st-add', { onclick: () => { adding = true; draw(); } }, '+ station');
     }
-    return h('div.se-list', null, presetBar(), h('div.section-label', null, `Line${viewLine ? ' · ' + (lines.find((l) => l.name === viewLine)?.label ?? viewLine) : ''}`), items, review,
+    return h('div.se-list', null, presetBar(), h('div.section-label', null, `Line${viewLine ? ' · ' + (lines.find((l) => l.name === viewLine)?.label ?? viewLine) : ''}`), items, gateItems, review,
       others.length ? h('div.section-label', null, 'Other stations') : null,
       others.map((n) => h('div.se-item', { class: [n === current && 'on', `r-${drafts[n]?.role ?? saved[n]?.role ?? 'crew'}`], onclick: () => { current = n; draw(); } },
         h('span.dot'), h('span.nm', null, n), isDirty(n) ? h('span.unsaved', { title: 'Unsaved changes' }) : null,
@@ -247,6 +254,7 @@ export function showStationEditor(opts: StationEditorOpts): void {
     const d = drafts[current];
     const s = saved[current];
     if (!d || !s) return h('div.se-edit', null, h('div.muted', null, 'No station selected.'));
+    const locked = !!s.locked;
     const isReview = current === 'review';
     const ta = h('textarea.se-text', { value: d.guideline, spellcheck: false, placeholder: '# What this station does\n\nMarkdown the agent at this station reads before it starts.' }) as HTMLTextAreaElement;
     ta.addEventListener('input', () => { d.guideline = ta.value; counter.textContent = size(); counter.classList.toggle('over', d.guideline.length > MAX_GUIDELINE); refreshChrome(); });
@@ -254,7 +262,7 @@ export function showStationEditor(opts: StationEditorOpts): void {
     const counter = h('span.se-count', { class: d.guideline.length > MAX_GUIDELINE && 'over' }, size());
     const preview = h('div.se-preview.md');
     preview.innerHTML = d.guideline.trim() ? renderMarkdown(d.guideline) : '<p class="muted">Nothing to preview yet.</p>';
-    const roleSel = h('select', { disabled: isReview, onchange: (e: Event) => { d.role = (e.target as HTMLSelectElement).value as StationRole; draw(); } },
+    const roleSel = h('select', { disabled: isReview || locked, onchange: (e: Event) => { d.role = (e.target as HTMLSelectElement).value as StationRole; draw(); } },
       ROLES.map((r) => h('option', { value: r.value, selected: r.value === d.role }, r.label))) as HTMLSelectElement;
     const canSave = () => isDirty(current) && d.guideline.length <= MAX_GUIDELINE;
     const saveBtn = h('button.btn.primary', { disabled: !canSave(), onclick: () => void save() }, 'Save') as HTMLButtonElement;
@@ -264,8 +272,9 @@ export function showStationEditor(opts: StationEditorOpts): void {
       h('div.se-head', null,
         h('div.se-title', null, current, isDirty(current) ? h('span.unsaved', { title: 'Unsaved changes' }) : null),
         h('label.se-role', null, h('span.muted', null, 'Role'), h('div.select-wrap', null, roleSel, icon('chevron', 14))),
-        isReview ? null : order.includes(current) ? h('button.btn', { title: 'Takes it off the line; the station and its guideline stay on this machine', onclick: () => void removeFromLine(current) }, 'Remove from line') : h('button.btn', { onclick: () => void addToLine(current) }, 'Add to line'),
-        isReview ? null : h('button.btn.danger', { onclick: () => void removeStation(current) }, s.builtin ? 'Reset' : 'Delete')),
+        isReview || locked ? null : order.includes(current) ? h('button.btn', { title: 'Takes it off the line; the station and its guideline stay on this machine', onclick: () => void removeFromLine(current) }, 'Remove from line') : h('button.btn', { onclick: () => void addToLine(current) }, 'Add to line'),
+        isReview || locked ? null : h('button.btn.danger', { onclick: () => void removeStation(current) }, s.builtin ? 'Reset' : 'Delete')),
+      locked ? h('div.se-locked', null, icon('lock', 14), 'QA gate: every task is scored here before the Captain reviews it. It stays just before review, and only a QA agent works it. You can edit its guideline.') : null,
       skillsRow(d),
       h('div.se-tabs', null,
         h('button', { class: tab === 'edit' && 'on', onclick: () => { tab = 'edit'; draw(); } }, 'Edit'),

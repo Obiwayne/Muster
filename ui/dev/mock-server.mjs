@@ -51,6 +51,7 @@ const stationDefs = {
   'design-check': { role: 'design', builtin: true, guideline: GUIDE('Design check', ['Compare the built UI with the Vellum framework.', '', 'Post PASS or DRIFT with the task and file:line.']) },
   reproduce: { role: 'crew', builtin: true, guideline: GUIDE('Reproduce', ['Write a failing test that shows the bug.']) },
   fix: { role: 'crew', builtin: true, guideline: GUIDE('Fix', ['Make the failing test pass with the smallest change.']) },
+  qa: { role: 'qa', builtin: true, locked: true, guideline: GUIDE('QA', ['Score the task against the rubric. Only 5/5 passes.', '', '- correct, tested, clean, scoped, safe: one point each', '- List every miss as file:line, the problem and the fix', '- Review only: never edit the code']) },
   review: { role: 'captain', builtin: true, guideline: '' },
 };
 const SKILLS = [
@@ -71,7 +72,7 @@ const config = {
   pauseAtFiveHourPct: 80,
   warnAtWeeklyPct: 75,
   shutdownIdleCrew: true,
-  defaultStations: ['plan', 'build', 'test', 'review'],
+  defaultStations: ['plan', 'build', 'test', 'qa', 'review'],
   defaultLine: 'feature',
   vellumFile: 'muster',
   vellumEdit: 'ask',
@@ -91,7 +92,7 @@ const config = {
 
 const lineDefs = [
   { name: 'new-app', label: 'New app / big feature', stations: ['discover', 'concept', 'design', 'plan', 'approval', 'review'], builtin: true },
-  { name: 'feature', label: 'Feature', stations: ['plan', 'build', 'test', 'review'], builtin: true },
+  { name: 'feature', label: 'Feature', stations: ['plan', 'build', 'test', 'qa', 'review'], builtin: true },
   { name: 'ui', label: 'UI change', stations: ['design', 'build', 'design-check', 'review'], builtin: true },
   { name: 'bugfix', label: 'Bug fix', stations: ['reproduce', 'fix', 'test', 'review'], builtin: true },
 ];
@@ -105,7 +106,7 @@ const agent = (id, role, branch, status, taskId, minAgo, model) => ({
 
 const task = (id, title, status, stations, stationIndex, extra = {}) => ({
   id, title, description: extra.description ?? `${title}.`, dependsOn: extra.dependsOn ?? [], stations, stationIndex, status,
-  assignee: extra.assignee, branch: extra.branch, evidence: extra.evidence, createdBy: 'captain', createdAt: iso(extra.created ?? 40), updatedAt: iso(extra.updated ?? 5),
+  assignee: extra.assignee, branch: extra.branch, evidence: extra.evidence, qa: extra.qa, createdBy: 'captain', createdAt: iso(extra.created ?? 40), updatedAt: iso(extra.updated ?? 5),
   history: extra.history ?? [{ at: iso(extra.created ?? 40), agentId: 'captain', kind: 'created' }],
 });
 
@@ -122,6 +123,8 @@ const evidence = (id, station, by, summary, names, minAgo) => ({
 });
 
 const S4 = ['plan', 'build', 'test', 'review'];
+const S5 = ['plan', 'build', 'test', 'qa', 'review'];
+const RUBRIC_OK = { correct: 5, tested: 5, clean: 5, scoped: 5, safe: 5 };
 const SUI = ['design', 'build', 'design-check', 'review'];
 const state = {
   version: 1,
@@ -135,11 +138,18 @@ const state = {
   ],
   tasks: EMPTY ? [] : [
     task('T1', 'Invites table + migration', 'ready_for_merge', ['build', 'review'], 1, { branch: 'ada/invites-db', assignee: 'captain', created: 44, updated: 3,
+      qa: { round: 1, last: { score: 5, at: iso(5), findings: [], rubric: RUBRIC_OK } },
       evidence: [evidence('E1', 'build', 'ada', 'Migration applies and rolls back; 12 invite tests pass.', ['01-after-token-copy.png', 'tests.txt', 'assertions.md'], 6)],
       history: [{ at: iso(44), agentId: 'captain', kind: 'created' }, { at: iso(3), agentId: 'captain', kind: 'review_requested', text: 'Migration adds the invites table with a unique token index. Tests pass. Safe to merge.' }] }),
-    task('T2', 'Invite token generator', 'review', S4, 3, { branch: 'ada/tokens', assignee: 'captain', created: 43,
+    task('T2', 'Invite token generator', 'review', S5, 4, { branch: 'ada/tokens', assignee: 'captain', created: 43,
+      qa: { round: 3, escalated: true, history: [{ round: 1, score: 2, at: iso(40) }, { round: 2, score: 4, at: iso(22) }, { round: 3, score: 3, at: iso(7) }], last: { score: 3, at: iso(7), rubric: { correct: 4, tested: 3, clean: 5, scoped: 5, safe: 3 }, findings: [
+        { file: 'src/core/tokens.ts', line: 41, problem: 'Tokens come from Math.random(), so they can be guessed.', fix: 'Use crypto.randomBytes and encode as base62.' },
+        { file: 'src/core/tokens.test.ts', problem: 'No test covers a collision on the unique index.', fix: 'Add a test that inserts the same token twice and expects the second to be rejected.' },
+        { file: 'src/core/tokens.ts', line: 18, problem: 'The expiry default is read from process.env without a fallback.', fix: 'Fall back to 7 days when INVITE_TTL_DAYS is unset.' }] } },
       evidence: [evidence('E1', 'test', 'bea', '22-char base62 tokens, 14 tests pass.', ['tests.txt', 'assertions.md'], 8)] }),
-    task('T3', 'Invite API endpoints', 'in_progress', S4, 2, { branch: 'ada/invite-api', assignee: 'cleo', created: 42, dependsOn: ['T2'] }),
+    task('T3', 'Invite API endpoints', 'in_progress', S5, 1, { branch: 'ada/invite-api', assignee: 'cleo', created: 42, dependsOn: ['T2'],
+      qa: { round: 2, last: { score: 4, at: iso(3), rubric: { correct: 5, tested: 5, clean: 4, scoped: 5, safe: 5 }, findings: [
+        { file: 'src/api/invites.ts', line: 87, problem: 'A commented-out handler is left in.', fix: 'Delete the dead code.' }] } } }),
     task('T4', 'Share dialog UI', 'in_progress', SUI, 1, { branch: 'bea/share-dialog', assignee: 'bea', created: 41, dependsOn: ['T3'] }),
     task('T5', 'Revoke invite link', 'ready', S4, 0, { created: 30 }),
     task('T6', 'Invite email template', 'blocked', SUI, 0, { dependsOn: ['T3', 'T4'], created: 30 }),
@@ -158,6 +168,7 @@ const state = {
         { at: iso(1), from: 'ada', text: 'tokens.ts is on ada/invite-api now. The fixture helper is makeInviteToken() in test/fixtures.ts, use that instead of a hard-coded string.' },
         { at: iso(0.6), from: 'you', text: 'Use makeInviteToken() from test/fixtures.ts and rerun the share fixture; no hard-coded tokens.' }] },
     { id: 'N15', type: 'waiting', from: 'design', to: 'bea', taskId: 'T4', branch: 'design/check', text: 'Design check on T4 once bea hands off.', createdAt: iso(6), open: true, replies: [] },
+    { id: 'N27', type: 'escalation', from: 'captain', to: 'you', taskId: 'T2', branch: 'ada/tokens', text: 'T2 failed QA three rounds (3/5: guessable tokens, no collision test). Send it back with new instructions, or accept it as is?', createdAt: iso(6), open: true, replies: [] },
     { id: 'N16', type: 'escalation', from: 'captain', text: 'Should a revoked invite link show a friendly "link expired" page or a plain 404? This is a product call (N12 is related).', createdAt: iso(2), open: true, replies: [] },
     // The Captain's AskUserQuestion menu (docs/ASK.md): one open, one answered.
     { id: 'N23', type: 'escalation', from: 'captain', to: 'you', text: 'Which model should draw the wall thumbnails?\n\nWhich caption sizes should a post offer?', createdAt: iso(1.5), open: true, replies: [],
@@ -194,7 +205,7 @@ const state = {
     updatedAt: iso(0.2), perAgentCostUsd: {}, paused: false, weeklyWarned: false,
   },
   goal: EMPTY ? undefined : { text: 'Build the invite-link sharing flow', at: iso(42) },
-  nextIds: { agent: 6, task: 10, note: 26, feed: 1, inbox: 1, stage: 6, goal: 15, idea: 12, run: 2 },
+  nextIds: { agent: 6, task: 10, note: 28, feed: 1, inbox: 1, stage: 6, goal: 15, idea: 12, run: 2 },
 };
 if (!EMPTY && WEEKLY >= config.warnAtWeeklyPct) {
   state.usage.weeklyWarned = true;
