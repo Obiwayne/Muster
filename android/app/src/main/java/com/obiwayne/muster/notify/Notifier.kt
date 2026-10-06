@@ -14,7 +14,6 @@ import androidx.core.app.RemoteInput
 import androidx.core.content.ContextCompat
 import com.obiwayne.muster.MainActivity
 import com.obiwayne.muster.R
-import com.obiwayne.muster.data.Ago
 import com.obiwayne.muster.data.AskText
 import com.obiwayne.muster.data.Held
 import com.obiwayne.muster.data.Kind
@@ -188,7 +187,7 @@ object Notifier {
                             .build(),
                     )
                 }
-                Ago.parse(item.remote!!.expiresAt)?.let { b.setTimeoutAfter((it.toEpochMilli() - System.currentTimeMillis()).coerceAtLeast(1000L)) }
+                // No timeout at expiresAt: the write stays held (overdue) until Send or Discard, so the notification stays too.
             }
             item.isReview && item.canApprove -> {
                 val approve = NotificationCompat.Action.Builder(0, "Approve", actionIntent(ctx, ActionReceiver.ACTION_APPROVE, item, false))

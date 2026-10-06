@@ -64,12 +64,22 @@ object Held {
     fun secondsLeft(r: RemoteWrite, now: Instant = Instant.now()): Long? =
         Ago.parse(r.expiresAt)?.let { Duration.between(now, it).seconds }
 
-    fun isExpired(r: RemoteWrite, now: Instant = Instant.now()): Boolean = (secondsLeft(r, now) ?: 1) <= 0
+    /**
+     * Past `expiresAt`: still held (the gateway never drops a held write on time), just overdue. Send and Discard
+     * both still work; the card shows [waitingSince] instead of the countdown.
+     */
+    fun isOverdue(r: RemoteWrite, now: Instant = Instant.now()): Boolean = (secondsLeft(r, now) ?: 1) <= 0
 
     /** "12:41 left"; "0:00 left" at the end. Empty when the time can't be read. */
     fun countdown(r: RemoteWrite, now: Instant = Instant.now()): String {
         val s = secondsLeft(r, now)?.coerceAtLeast(0) ?: return ""
         return "%d:%02d left".format(s / 60, s % 60)
+    }
+
+    /** "Waiting since 14:00 · still not sent" for an overdue card (the time Claude asked). */
+    fun waitingSince(r: RemoteWrite, zone: ZoneId = ZoneId.systemDefault()): String {
+        val t = clockTime(r.createdAt.ifBlank { null }, zone)
+        return if (t.isEmpty()) "Still not sent" else "Waiting since $t · still not sent"
     }
 
     fun clockTime(iso: String?, zone: ZoneId = ZoneId.systemDefault()): String =
@@ -80,10 +90,10 @@ object Held {
 
     private fun questions(n: Int) = if (n == 1) "question" else "$n questions"
 
-    /** "Claude wants to give the Captain a goal" (or "wanted to", once expired). */
-    fun title(item: NeedItem, r: RemoteWrite, expired: Boolean = false): String {
+    /** "Claude wants to give the Captain a goal". */
+    fun title(item: NeedItem, r: RemoteWrite): String {
         val who = r.client.ifBlank { "Claude" }
-        val verb = if (expired) "wanted to" else "wants to"
+        val verb = "wants to"
         val note = r.replyTo?.id?.ifBlank { null } ?: item.noteId ?: "a note"
         return when (r.kind) {
             WriteKind.GOAL -> "$who $verb give the Captain a goal"

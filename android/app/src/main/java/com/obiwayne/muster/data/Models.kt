@@ -90,6 +90,7 @@ data class RemoteWrite(
     val taskId: String? = null,
     val taskTitle: String? = null,
     val createdAt: String = "",
+    /** Overdue after this. The gateway never drops a held write on time; it stays until Send or Discard. */
     val expiresAt: String = "",
     val digest: String = "",
 )

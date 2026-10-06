@@ -29,11 +29,8 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.draw.drawBehind
-import androidx.compose.ui.geometry.CornerRadius
 import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.graphics.Color
-import androidx.compose.ui.graphics.PathEffect
-import androidx.compose.ui.graphics.drawscope.Stroke
 import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.Dp
@@ -49,10 +46,14 @@ import java.time.Instant
 
 /*
  * The Needs-you Send card for a write from the Claude app held for your tap (REMOTE.md, "Needs-you Send card"; Vellum
- * M10–M12 and "Send card — failed and expired states"). Two pieces, so another layout (a tablet list + detail pane) can
+ * M10–M12 and "Send card — failed state"). Two pieces, so another layout (a tablet list + detail pane) can
  * host them apart: [SendCardBody] (what will be sent, never truncated) and [SendCardActions] (the "Nothing has been sent
  * yet" callout with Send / Discard at equal width). [SendCard] stacks both in one card; the phone's Needs tab pins the
  * actions above the tab bar when the card is taller than the screen.
+ *
+ * A held write never runs out: past `expiresAt` it is only overdue (amber "Waiting since … · still not sent" instead of
+ * the countdown) and Send / Discard keep working until you tap one. A card that vanishes from /needs was sent or
+ * discarded elsewhere.
  */
 
 /** What a held card is doing. */
@@ -63,12 +64,6 @@ sealed interface HeldPhase {
 
     /** 409 or no answer: still held and unchanged; offers Try again / Discard. */
     data class Failed(val error: String) : HeldPhase
-
-    /**
-     * Time ran out (or the gateway said 404): greyed, Dismiss only. [maybeSent]: a Send got no answer and the retry got
-     * 404, so the first one may have gone through.
-     */
-    data class Expired(val maybeSent: Boolean = false) : HeldPhase
 }
 
 /** The current time, ticking once a second (aligned to the second, so countdowns change together). */
@@ -84,13 +79,9 @@ fun rememberNow(): Instant {
     return now
 }
 
-/** The card's phase: expired by time or by [expiredKept], else busy, failed or held. */
-@Composable
-fun heldPhase(item: NeedItem, expiredKept: Boolean, busy: String?, error: String?, maybeSent: Boolean = false): HeldPhase {
-    val now = rememberNow()
-    val r = item.remote
+/** The card's phase: busy, failed or held (an overdue card is still held). */
+fun heldPhase(busy: String?, error: String?): HeldPhase {
     return when {
-        expiredKept || (r != null && Held.isExpired(r, now)) -> HeldPhase.Expired(maybeSent && expiredKept)
         busy == "send" -> HeldPhase.Sending
         busy == "discard" -> HeldPhase.Discarding
         error != null -> HeldPhase.Failed(error)
@@ -106,66 +97,52 @@ fun SendCard(
     showActions: Boolean,
     onSend: () -> Unit,
     onDiscard: () -> Unit,
-    onDismiss: () -> Unit,
     modifier: Modifier = Modifier,
     bodyModifier: Modifier = Modifier,
 ) {
-    val expired = phase is HeldPhase.Expired
     Column(
-        modifier.fillMaxWidth().card(
-            bg = if (expired) C.surface else C.mix(C.glowBlue, 7, C.surface),
-            border = if (expired) C.line else C.tint(C.glowBlue, 45),
-        ).padding(14.dp),
+        modifier.fillMaxWidth().card(bg = C.mix(C.glowBlue, 7, C.surface), border = C.tint(C.glowBlue, 45)).padding(14.dp),
         verticalArrangement = Arrangement.spacedBy(12.dp),
     ) {
-        SendCardBody(item, expired, bodyModifier, maybeSent = (phase as? HeldPhase.Expired)?.maybeSent == true)
-        if (showActions) SendCardActions(item, phase, onSend, onDiscard, onDismiss)
+        SendCardBody(item, bodyModifier)
+        if (showActions) SendCardActions(item, phase, onSend, onDiscard)
     }
 }
 
 /** Meta row, title, route, the quoted note (reply/answer) and the exact text. Never truncated. */
 @OptIn(ExperimentalLayoutApi::class)
 @Composable
-fun SendCardBody(item: NeedItem, expired: Boolean, modifier: Modifier = Modifier, maybeSent: Boolean = false) {
+fun SendCardBody(item: NeedItem, modifier: Modifier = Modifier) {
     val r = item.remote ?: return
     val now = rememberNow()
+    val overdue = Held.isOverdue(r, now)
     Column(modifier.fillMaxWidth(), verticalArrangement = Arrangement.spacedBy(12.dp)) {
         // HELD · GOAL   P7 ………… ⏱ 12:41 left
         Row(Modifier.fillMaxWidth().height(24.dp), verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-            if (expired) {
-                Tag("EXPIRED", C.muted, C.surface2)
-            } else {
-                Tag(Held.chip(r), C.heldInk, C.tint(C.glowBlue, 18))
-            }
-            Txt(r.pendingId, ts(12, 16, color = if (expired) C.faint else C.muted, mono = true))
+            Tag(Held.chip(r), C.heldInk, C.tint(C.glowBlue, 18))
+            Txt(r.pendingId, ts(12, 16, color = C.muted, mono = true))
             Spacer(Modifier.weight(1f))
-            val left = Held.secondsLeft(r, now)
-            val warn = !expired && left != null && left < Held.WARN_SECONDS
-            Row(
-                Modifier.clip(RoundedCornerShape(50)).background(if (warn) C.tint(C.warm, 12) else Color.Transparent)
-                    .border(1.dp, if (warn) C.tint(C.warm, 55) else C.line, RoundedCornerShape(50))
-                    .padding(horizontal = 8.dp, vertical = 3.dp),
-                verticalAlignment = Alignment.CenterVertically,
-                horizontalArrangement = Arrangement.spacedBy(5.dp),
-            ) {
-                Icon(Ic.timer, null, tint = if (expired) C.faint else C.muted, modifier = Modifier.size(12.dp))
-                val label = if (expired) "expired " + Held.clockTime(r.expiresAt) else Held.countdown(r, now)
-                Txt(label.trim(), ts(12, 16, color = if (expired) C.faint else if (warn) C.warm else C.text, mono = true))
+            if (!overdue) {
+                val left = Held.secondsLeft(r, now)
+                TimePill(Held.countdown(r, now), warn = left != null && left < Held.WARN_SECONDS)
             }
         }
+        // Overdue: still held, so no countdown; how long it has waited, in the same amber as the last 3 minutes. On
+        // its own line, as it's too long to share the meta row on a phone.
+        if (overdue) TimePill(Held.waitingSince(r), warn = true)
         // Title, route, who asked and when.
         Column(verticalArrangement = Arrangement.spacedBy(6.dp)) {
-            Txt(Held.title(item, r, expired), ts(16, 22, FontWeight.SemiBold, if (expired) C.muted else C.text))
+            Txt(Held.title(item, r), ts(16, 22, FontWeight.SemiBold, C.text))
             FlowRow(horizontalArrangement = Arrangement.spacedBy(6.dp), verticalArrangement = Arrangement.spacedBy(4.dp)) {
-                Txt(if (expired) "Would have gone to" else "To", ts(13, 18, color = if (expired) C.faint else C.muted), Modifier.align(Alignment.CenterVertically))
+                Txt("To", ts(13, 18, color = C.muted), Modifier.align(Alignment.CenterVertically))
                 Row(
                     Modifier.align(Alignment.CenterVertically).clip(RoundedCornerShape(50)).background(C.surface2).padding(horizontal = 8.dp, vertical = 2.dp),
                     verticalAlignment = Alignment.CenterVertically,
                     horizontalArrangement = Arrangement.spacedBy(5.dp),
                 ) {
                     val dot = if (r.kind == WriteKind.REPLY) agentColor(r.replyTo?.from ?: "captain") else C.captain
-                    Dot(if (expired) dot.copy(alpha = 0.6f) else dot, 6.dp)
-                    Txt(Held.route(item, r), ts(13, 18, FontWeight.Medium, if (expired) C.muted else C.text))
+                    Dot(dot, 6.dp)
+                    Txt(Held.route(item, r), ts(13, 18, FontWeight.Medium, C.text))
                 }
                 Txt(Held.asked(r, now), ts(13, 18, color = C.faint), Modifier.align(Alignment.CenterVertically))
             }
@@ -174,15 +151,29 @@ fun SendCardBody(item: NeedItem, expired: Boolean, modifier: Modifier = Modifier
         // the quote is left out (M12).
         val ask = r.replyTo?.questions.orEmpty()
         val inlineQuestions = r.kind == WriteKind.ANSWER && ask.isNotEmpty()
-        val notSent = if (maybeSent) "MAY HAVE BEEN SENT" else "WAS NOT SENT"
         if ((r.kind == WriteKind.REPLY || r.kind == WriteKind.ANSWER) && r.replyTo != null && !inlineQuestions) {
             ReplyingTo(r)
         }
         when (r.kind) {
-            WriteKind.ANSWER -> AnswersBox(r, ask, expired, notSent)
-            WriteKind.APPROVE -> ExactBox(if (expired) notSent else "WILL APPROVE THIS FOR MERGE", listOfNotNull(r.taskId, r.taskTitle).joinToString(" · "), expired)
-            else -> ExactBox(if (expired) notSent else "WILL SEND EXACTLY THIS", r.text.orEmpty(), expired)
+            WriteKind.ANSWER -> AnswersBox(r, ask)
+            WriteKind.APPROVE -> ExactBox("WILL APPROVE THIS FOR MERGE", listOfNotNull(r.taskId, r.taskTitle).joinToString(" · "))
+            else -> ExactBox("WILL SEND EXACTLY THIS", r.text.orEmpty())
         }
+    }
+}
+
+/** The timer pill: the countdown, or the overdue line; warm (amber) when [warn]. */
+@Composable
+private fun TimePill(label: String, warn: Boolean) {
+    Row(
+        Modifier.clip(RoundedCornerShape(50)).background(if (warn) C.tint(C.warm, 12) else Color.Transparent)
+            .border(1.dp, if (warn) C.tint(C.warm, 55) else C.line, RoundedCornerShape(50))
+            .padding(horizontal = 8.dp, vertical = 3.dp),
+        verticalAlignment = Alignment.CenterVertically,
+        horizontalArrangement = Arrangement.spacedBy(5.dp),
+    ) {
+        Icon(Ic.timer, null, tint = C.muted, modifier = Modifier.size(12.dp))
+        Txt(label.trim(), ts(12, 16, color = if (warn) C.warm else C.text, mono = true))
     }
 }
 
@@ -197,13 +188,6 @@ private fun Tag(text: String, fg: Color, bg: Color) {
 private fun Modifier.leftRule(color: Color = C.line, width: Dp = 2.dp) = this.drawBehind {
     val w = width.toPx()
     drawLine(color, Offset(w / 2, 0f), Offset(w / 2, size.height), w)
-}
-
-private fun Modifier.dashedBox(color: Color, radius: Dp) = this.drawBehind {
-    drawRoundRect(
-        color, cornerRadius = CornerRadius(radius.toPx()),
-        style = Stroke(1.dp.toPx(), pathEffect = PathEffect.dashPathEffect(floatArrayOf(4.dp.toPx(), 3.dp.toPx()))),
-    )
 }
 
 /** The agent-written note a reply/answer goes to, as a quote (data, not a heading). */
@@ -221,33 +205,27 @@ private fun ReplyingTo(r: RemoteWrite) {
     }
 }
 
-/** "WILL SEND EXACTLY THIS" with the full text; dashed and muted as "WAS NOT SENT" once expired. */
+/** "WILL SEND EXACTLY THIS" with the full text. */
 @Composable
-private fun ExactBox(label: String, text: String, expired: Boolean) {
+private fun ExactBox(label: String, text: String) {
     val shape = RoundedCornerShape(10.dp)
     Column(
-        Modifier.fillMaxWidth().clip(shape).background(C.term)
-            .then(if (expired) Modifier.dashedBox(C.line, 10.dp) else Modifier.border(1.dp, C.line, shape))
-            .padding(12.dp),
+        Modifier.fillMaxWidth().clip(shape).background(C.term).border(1.dp, C.line, shape).padding(12.dp),
         verticalArrangement = Arrangement.spacedBy(8.dp),
     ) {
         Txt(label, Type.label)
-        SelectionContainer { Txt(text, ts(14, 21, color = if (expired) C.muted else C.text)) }
+        SelectionContainer { Txt(text, ts(14, 21, color = C.text)) }
     }
 }
 
 /** Every answer, under its question when the note's questions are known: chips for choices, then the free text. */
 @OptIn(ExperimentalLayoutApi::class)
 @Composable
-private fun AnswersBox(r: RemoteWrite, ask: List<RemoteQuestion>, expired: Boolean, notSentLabel: String) {
+private fun AnswersBox(r: RemoteWrite, ask: List<RemoteQuestion>) {
     val shape = RoundedCornerShape(10.dp)
     val n = r.answers.size
-    Column(
-        Modifier.fillMaxWidth().clip(shape).background(C.term)
-            .then(if (expired) Modifier.dashedBox(C.line, 10.dp) else Modifier.border(1.dp, C.line, shape)),
-    ) {
+    Column(Modifier.fillMaxWidth().clip(shape).background(C.term).border(1.dp, C.line, shape)) {
         val label = when {
-            expired -> notSentLabel
             n == 1 -> "WILL SEND EXACTLY THIS ANSWER"
             else -> "WILL SEND EXACTLY THESE $n ANSWERS"
         }
@@ -266,14 +244,14 @@ private fun AnswersBox(r: RemoteWrite, ask: List<RemoteQuestion>, expired: Boole
                 if (a.choices.isNotEmpty()) {
                     FlowRow(horizontalArrangement = Arrangement.spacedBy(6.dp), verticalArrangement = Arrangement.spacedBy(6.dp)) {
                         a.choices.forEach { c ->
-                            Box(Modifier.clip(RoundedCornerShape(6.dp)).background(C.tint(if (expired) C.muted else C.glowBlue, 16)).padding(horizontal = 9.dp, vertical = 3.dp)) {
-                                Txt(c, ts(14, 20, FontWeight.Medium, if (expired) C.muted else C.text))
+                            Box(Modifier.clip(RoundedCornerShape(6.dp)).background(C.tint(C.glowBlue, 16)).padding(horizontal = 9.dp, vertical = 3.dp)) {
+                                Txt(c, ts(14, 20, FontWeight.Medium, C.text))
                             }
                         }
                     }
                 }
                 val other = a.other?.trim().orEmpty()
-                if (other.isNotEmpty()) SelectionContainer { Txt(other, ts(14, 21, color = if (expired) C.muted else C.text)) }
+                if (other.isNotEmpty()) SelectionContainer { Txt(other, ts(14, 21, color = C.text)) }
                 if (a.choices.isEmpty() && other.isEmpty()) Txt("(no answer)", ts(14, 21, color = C.faint))
             }
         }
@@ -281,31 +259,14 @@ private fun AnswersBox(r: RemoteWrite, ask: List<RemoteQuestion>, expired: Boole
 }
 
 /**
- * The "Nothing has been sent yet." callout with Send and Discard (equal width, no confirm), or the failed / expired
- * states. Shown at the bottom of the card, or pinned above the tab bar for a tall card.
+ * The "Nothing has been sent yet." callout with Send and Discard (equal width, no confirm), or the failed state. The
+ * same once overdue. Shown at the bottom of the card, or pinned above the tab bar for a tall card.
  */
 @Composable
-fun SendCardActions(item: NeedItem, phase: HeldPhase, onSend: () -> Unit, onDiscard: () -> Unit, onDismiss: () -> Unit, modifier: Modifier = Modifier) {
+fun SendCardActions(item: NeedItem, phase: HeldPhase, onSend: () -> Unit, onDiscard: () -> Unit, modifier: Modifier = Modifier) {
     val r = item.remote ?: return
     Column(modifier.fillMaxWidth(), verticalArrangement = Arrangement.spacedBy(12.dp)) {
         when (phase) {
-            is HeldPhase.Expired -> {
-                if (phase.maybeSent) {
-                    // A Send got no answer, then the retry got 404: it may have gone through the first time.
-                    Callout(
-                        Ic.alertSmall, C.warm, C.surface, C.line,
-                        "It may already have been sent; check crew chat.",
-                        "Your earlier Send got no answer from the PC, and now it isn't held any more.",
-                    )
-                } else {
-                    Callout(
-                        Ic.timer, C.muted, C.surface, C.line,
-                        "Expired after 15 minutes. Nothing was sent.",
-                        "It can't be sent any more. If you still want it, ask Claude again and it comes back as a new card.",
-                    )
-                }
-                HeldButton("Dismiss", null, C.surface2, C.text, C.line, Modifier.fillMaxWidth(), onClick = onDismiss)
-            }
             is HeldPhase.Failed -> {
                 Callout(Ic.alertSmall, C.stuck, C.tint(C.stuck, 10), C.tint(C.stuck, 45), "Send failed. Nothing was sent.", phase.error)
                 Row(Modifier.padding(top = 2.dp), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
@@ -379,10 +340,10 @@ private fun HeldButton(
 
 /** The bar that holds [SendCardActions] above the tab bar while a tall card is on screen (M12). */
 @Composable
-fun PinnedSendBar(expired: Boolean, content: @Composable () -> Unit) {
-    val line = if (expired) C.line else C.tint(C.glowBlue, 45)
+fun PinnedSendBar(content: @Composable () -> Unit) {
+    val line = C.tint(C.glowBlue, 45)
     Box(
-        Modifier.fillMaxWidth().background(if (expired) C.surface else C.mix(C.glowBlue, 6, C.bg))
+        Modifier.fillMaxWidth().background(C.mix(C.glowBlue, 6, C.bg))
             .drawBehind { drawLine(line, Offset(0f, 0f), Offset(size.width, 0f), 1.dp.toPx()) }
             .padding(horizontal = 16.dp, vertical = 12.dp),
     ) { content() }
