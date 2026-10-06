@@ -3,7 +3,7 @@ import { InMemoryTransport } from '@modelcontextprotocol/sdk/inMemory.js';
 import { describe, expect, it } from 'vitest';
 import type { Role } from '../types.js';
 import { PROGRESS, ROADMAP } from './roadmap.fixture.js';
-import { CAPTAIN_TOOLS, CREW_TOOLS, createMusterServer, RESEARCH_TOOLS, type Api } from './server.js';
+import { CAPTAIN_TOOLS, CREW_TOOLS, createMusterServer, QA_TOOLS, RESEARCH_TOOLS, type Api } from './server.js';
 
 type Call = { path: string; method?: string; body?: unknown };
 
@@ -38,6 +38,19 @@ describe('muster-mcp tools by role', () => {
       const names = (await client.listTools()).tools.map((t) => t.name).sort();
       expect(names).toEqual([...CREW_TOOLS].sort());
     }
+  });
+});
+
+describe('qa agent tools', () => {
+  it('has qa_verdict instead of handoff / report_done, and posts the verdict to the qa route', async () => {
+    const { client, calls, call } = await connect('qa', (c) => (c.path === '/api/state' ? { state: { agents: [{ id: 'crew-2', taskId: 'T9' }], tasks: [{ id: 'T9', status: 'in_progress', assignee: 'crew-2' }] } } : { task: { id: 'T9' }, outcome: 'sent_back', round: 1 }));
+    expect((await client.listTools()).tools.map((t) => t.name).sort()).toEqual([...QA_TOOLS].sort());
+    expect(QA_TOOLS).toContain('qa_verdict');
+    expect(QA_TOOLS).not.toContain('handoff');
+    const rubric = { correct: 3, tested: 5, clean: 5, scoped: 5, safe: 5 };
+    const r = await call('qa_verdict', { score: 3, rubric, findings: [{ file: 'a.ts', problem: 'p', fix: 'f' }], summary: 'one fix' });
+    expect(r.text).toContain('sent back to its builder (QA round 1/3, 3/5)');
+    expect(calls.at(-1)).toEqual({ path: '/api/tasks/T9/qa', method: 'POST', body: { actor: 'crew-2', score: 3, rubric, findings: [{ file: 'a.ts', problem: 'p', fix: 'f' }], summary: 'one fix' } });
   });
 });
 

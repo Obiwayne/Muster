@@ -86,7 +86,7 @@ const ok = async <T = any>(method: string, path: string, body?: unknown): Promis
 /** The QA agent (started when a task reaches the qa station) takes the task and passes it to review. */
 const qaPass = async (id: string) => {
   await ok('POST', `/api/tasks/${id}/assign`, { agentId: 'qa', actor: 'you' });
-  await ok('POST', `/api/tasks/${id}/done`, { actor: 'qa', summary: 'qa ok' });
+  await ok('POST', `/api/tasks/${id}/qa`, { actor: 'qa', score: 5, rubric: { correct: 5, tested: 5, clean: 5, scoped: 5, safe: 5 }, summary: 'qa ok' });
 };
 const state = async () => (await ok<{ state: MusterState }>('GET', '/api/state')).state;
 const agent = async (id: string) => (await state()).agents.find((a) => a.id === id)!;

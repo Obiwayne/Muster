@@ -74,6 +74,8 @@ export const CREW_TOOLS = [
   'claim_task', 'list_agents', 'list_tasks', 'post_note', 'read_board', 'reply', 'ask_captain',
   'message_crew', 'handoff', 'report_done', 'read_inbox', 'add_evidence', 'react',
 ] as const;
+/** The QA agent: the crew tools minus handoff / report_done, plus its verdict. */
+export const QA_TOOLS = [...CREW_TOOLS.filter((t) => t !== 'handoff' && t !== 'report_done'), 'qa_verdict'] as const;
 /** The research agent (scout): research runs and intel jobs; no board, task or code tools. */
 export const RESEARCH_TOOLS = [
   'research_brief', 'add_idea', 'finish_research', 'read_inbox',
@@ -960,26 +962,50 @@ ${r.note}` : ''}`;
       return `Sent to ${agent}.`;
     });
 
-    tool(
-      'handoff',
-      'Commit first, then hand your task to the next station. agent = a specific agent id, or omit to let any agent of the next station claim it. note = what you did and what is next.',
-      { agent: z.string().optional(), note: z.string().min(1) },
-      async ({ agent, note }) => {
-        const task = await myTask();
-        const t = await api<Task>(`/api/tasks/${enc(task.id)}/handoff`, { method: 'POST', body: { actor: me, to: agent, note } });
-        return `Handed ${t.id} on: now at station ${stationLabel(t)}${t.assignee ? ` with ${t.assignee}` : ''} [${t.status}].`;
-      },
-    );
+    if (role === 'qa') {
+      const score = z.number().int().min(1).max(5);
+      tool(
+        'qa_verdict',
+        'Give your verdict on the task you hold at the qa station. rubric = correct, tested, clean, scoped, safe (each 1-5); score = the LOWEST rubric score (5 passes it to review; anything lower sends it back to its builder, and the third failed round escalates to the Captain and the user). A score below 5 needs at least one finding: file, line, what is wrong, how to fix it.',
+        {
+          task: z.string().optional().describe('Defaults to the task you hold'),
+          score,
+          rubric: z.object({ correct: score, tested: score, clean: score, scoped: score, safe: score }),
+          findings: z.array(z.object({ file: z.string().min(1), line: z.number().int().min(1).optional(), problem: z.string().min(1), fix: z.string().min(1) })).optional(),
+          summary: z.string().min(1).describe('The verdict in a line or two'),
+        },
+        async ({ task, score: s, rubric, findings, summary }) => {
+          const t = task ? await findTask(task) : await myTask();
+          const r = await api<{ task: Task; outcome: 'passed' | 'sent_back' | 'escalated'; round: number }>(`/api/tasks/${enc(t.id)}/qa`, { method: 'POST', body: { actor: me, score: s, rubric, findings: findings ?? [], summary } });
+          if (r.outcome === 'passed') return `${r.task.id} passed QA (5/5, round ${r.round}) and is with the Captain for review. Call claim_task for more work.`;
+          if (r.outcome === 'escalated') return `${r.task.id} failed QA ${r.round} times: parked with the Captain and the user. Call claim_task for more work.`;
+          return `${r.task.id} sent back to its builder (QA round ${r.round}/3, ${s}/5). It returns to you when they hand it off again. Call claim_task for more work.`;
+        },
+      );
+    }
 
-    tool(
-      'report_done',
-      'Commit first, then report your task finished; it goes to the Captain for review. summary = what changed, how you tested it, anything left open.',
-      { summary: z.string().min(1) },
-      async ({ summary }) => {
-        const task = await myTask();
-        const t = await api<Task>(`/api/tasks/${enc(task.id)}/done`, { method: 'POST', body: { actor: me, summary } });
-        return `${t.id} reported done (${clip(t.title, 60)}), now with ${t.assignee ?? 'the Captain'} for review. Call claim_task for more work.`;
-      },
-    );
+    if (role !== 'qa') {
+      tool(
+        'handoff',
+        'Commit first, then hand your task to the next station. agent = a specific agent id, or omit to let any agent of the next station claim it. note = what you did and what is next.',
+        { agent: z.string().optional(), note: z.string().min(1) },
+        async ({ agent, note }) => {
+          const task = await myTask();
+          const t = await api<Task>(`/api/tasks/${enc(task.id)}/handoff`, { method: 'POST', body: { actor: me, to: agent, note } });
+          return `Handed ${t.id} on: now at station ${stationLabel(t)}${t.assignee ? ` with ${t.assignee}` : ''} [${t.status}].`;
+        },
+      );
+
+      tool(
+        'report_done',
+        'Commit first, then report your task finished; it goes to the Captain for review. summary = what changed, how you tested it, anything left open.',
+        { summary: z.string().min(1) },
+        async ({ summary }) => {
+          const task = await myTask();
+          const t = await api<Task>(`/api/tasks/${enc(task.id)}/done`, { method: 'POST', body: { actor: me, summary } });
+          return `${t.id} reported done (${clip(t.title, 60)}), now with ${t.assignee ?? 'the Captain'} for review. Call claim_task for more work.`;
+        },
+      );
+    }
   }
 }

@@ -1,7 +1,7 @@
 // HTTP API routes (see docs/ARCHITECTURE.md). Handlers return JSON-able values or throw HttpError.
 import type { IncomingMessage, ServerResponse } from 'node:http';
 import type { Agent, MusterConfig, NoteType, RemoteVia, Role, Task } from '../types.js';
-import { createReadStream, statSync } from 'node:fs';
+import { createReadStream, readFileSync, statSync } from 'node:fs';
 import * as board from '../core/board.js';
 import * as checkout from '../core/checkout.js';
 import type { ConfigPatch } from '../core/config.js';
@@ -15,6 +15,7 @@ import * as lines from '../core/lines.js';
 import * as research from '../core/research.js';
 import * as roadmap from '../core/roadmap.js';
 import * as stations from '../core/stations.js';
+import * as qaverdict from '../core/qaverdict.js';
 import * as tasks from '../core/tasks.js';
 import { readPartial } from '../core/config.js';
 import { ghStatus, realGh, validRepoName, type GhRunner } from '../core/github.js';
@@ -600,7 +601,56 @@ ${pushed ? `Pushed ${base} to origin.` : `Push to origin failed: ${(r.stderr || 
     attachGuideline(task.assignee, task, ['assignment']);
     return task;
   });
+  /** The QA agent's way off the qa station; handoff and done are for working stations. */
+  const refuseQaAgent = (actor: unknown) => {
+    if (board.findAgent(state(), String(actor))?.role === 'qa') throw conflict('The QA agent finishes a task with qa_verdict (score, rubric, findings), not handoff or report_done');
+  };
+  route('POST', '/api/tasks/:id/qa', async ({ params, body }) => {
+    const actor = str(body.actor, 'actor');
+    const current = tasks.requireTask(state(), params.id);
+    qaverdict.assertQaHolder(state(), current, actor);
+    const verdict = qaverdict.parseVerdict(body);
+    const round = (current.qa?.round ?? 0) + 1;
+    const from = verdict.score === 5 ? await agents.stationBranch(current) : undefined;
+    const record = evidence.attachEvidence(ctx.paths, {
+      task: current,
+      worktree: board.findAgent(state(), actor)!.worktree,
+      files: [],
+      extra: [
+        { name: 'findings.md', content: qaverdict.findingsMarkdown(current, round, verdict) },
+        { name: 'rubric.json', content: JSON.stringify({ score: verdict.score, rubric: verdict.rubric, findings: verdict.findings }, null, 2) + '\n' },
+      ],
+      summary: `QA round ${round}/${qaverdict.MAX_QA_ROUNDS}: ${verdict.score}/5. ${verdict.summary}`.slice(0, 600),
+      station: tasks.currentStation(current),
+      by: actor,
+      at: board.nowIso(),
+    });
+    const result = mutate(() => {
+      const t = tasks.requireTask(state(), params.id);
+      t.evidence = [...(t.evidence ?? []), record];
+      return qaverdict.recordQaVerdict(state(), params.id, actor, verdict, { from, roles: stations.stationRoles(ctx.paths) });
+    });
+    if (result.outcome === 'escalated') {
+      const reports = (result.task.evidence ?? [])
+        .filter((e) => e.station === 'qa' && e.files.some((f) => f.name === 'findings.md'))
+        .map((e) => {
+          try {
+            return readFileSync(evidence.evidencePath(ctx.paths, result.task, e.id, 'findings.md'), 'utf8').trim();
+          } catch {
+            return `${e.id}: ${e.summary}`;
+          }
+        });
+      const note = mutate(() => board.postNote(state(), { actor: board.SYSTEM, type: 'stuck', taskId: result.task.id, to: board.HUMAN, text: qaverdict.escalationText(result.task, reports) }));
+      ctx.notify('Muster: a task failed QA 3 times', note.text.split('\n')[0]);
+      ctx.toast('warn', note.text.split('\n')[0]);
+    } else if (result.outcome === 'sent_back') {
+      if (result.builder) await afterTake(result.builder, result.task);
+      attachGuideline(result.task.assignee, result.task, ['handoff']);
+    }
+    return { task: result.task, outcome: result.outcome, round: result.round };
+  });
   route('POST', '/api/tasks/:id/handoff', async ({ params, body }) => {
+    refuseQaAgent(body.actor);
     const current = tasks.requireTask(state(), params.id);
     const from = await agents.stationBranch(current); // 409 unless it contains the earlier stations' work
     if (body.to) await agents.assertCanTakeBranch(body.to, current);
@@ -613,6 +663,7 @@ ${pushed ? `Pushed ${base} to origin.` : `Push to origin failed: ${(r.stderr || 
     return r.task;
   });
   route('POST', '/api/tasks/:id/done', async ({ params, body }) => {
+    refuseQaAgent(body.actor);
     const current = tasks.requireTask(state(), params.id);
     const from = await agents.stationBranch(current);
     const qa = await agents.qaSkip(current, from);

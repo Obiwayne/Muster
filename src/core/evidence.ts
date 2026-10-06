@@ -73,6 +73,8 @@ export interface AttachInput {
   files: string[];
   /** Inline text saved as notes.md (for the Captain, who can't write files): test output, a checklist. */
   text?: string;
+  /** Named text files saved next to notes.md (the QA verdict's findings.md and rubric.json). */
+  extra?: { name: string; content: string }[];
   summary: string;
   station: string;
   by: string;
@@ -86,10 +88,11 @@ export function attachEvidence(p: MusterPaths, input: AttachInput): Evidence {
   if (!summary) throw badRequest('summary is required: what the evidence shows');
   if (summary.length > MAX_SUMMARY) throw badRequest(`summary is longer than ${MAX_SUMMARY} characters`);
   const text = input.text?.trim() ? input.text.trimEnd() + '\n' : '';
-  if (!input.files.length && !text) throw badRequest('Pass files (paths in your worktree) or text');
+  const extra = input.extra ?? [];
+  if (!input.files.length && !text && !extra.length) throw badRequest('Pass files (paths in your worktree) or text');
   const sources = input.files.length ? collectFiles(input.worktree, input.files) : [];
   const used = (input.task.evidence ?? []).reduce((n, e) => n + e.files.reduce((m, f) => m + f.bytes, 0), 0);
-  const adding = sources.reduce((n, f) => n + statSync(f).size, 0) + Buffer.byteLength(text);
+  const adding = sources.reduce((n, f) => n + statSync(f).size, 0) + Buffer.byteLength(text) + extra.reduce((n, x) => n + Buffer.byteLength(x.content), 0);
   if (used + adding > MAX_EVIDENCE_TASK) throw badRequest(`${input.task.id} would hold more than ${MAX_EVIDENCE_TASK / 1048576} MB of evidence; attach fewer or smaller files`);
 
   const id = `E${(input.task.evidence ?? []).reduce((n, e) => Math.max(n, Number(e.id.slice(1)) || 0), 0) + 1}`;
@@ -99,6 +102,10 @@ export function attachEvidence(p: MusterPaths, input: AttachInput): Evidence {
   if (text) {
     writeFileSync(join(dir, 'notes.md'), text);
     files.push({ name: 'notes.md', kind: 'text', bytes: Buffer.byteLength(text) });
+  }
+  for (const x of extra) {
+    writeFileSync(join(dir, x.name), x.content);
+    files.push({ name: x.name, kind: evidenceKind(x.name), bytes: Buffer.byteLength(x.content) });
   }
   for (const src of sources) {
     let name = basename(src).replace(/[^\w.@()+-]/g, '_');
