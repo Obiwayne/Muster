@@ -1,8 +1,8 @@
 // The QA gate on cards: a score badge ("QA 4/5 · round 2"), the failed rubric checks and the findings the builder has to fix.
-import type { QaFinding, Task } from '../../src/types';
+import type { Task } from '../../src/types';
 import { h, icon, showModal } from './dom';
 import { ago } from './util';
-import { CHECKS, failedChecks, qaHistory, qaLabel, qaTone } from './qamodel';
+import { CHECKS, failedChecks, qaHistory, qaLabel, qaOf, qaTone, type QaFinding } from './qamodel';
 
 const where = (f: QaFinding) => (f.line ? `${f.file}:${f.line}` : f.file);
 
@@ -11,9 +11,9 @@ export function qaBadge(task: Task, compact = false): HTMLElement | null {
   const label = qaLabel(task);
   const tone = qaTone(task);
   if (!label || !tone) return null;
-  const last = task.qa?.last;
+  const last = qaOf(task)?.last;
   const failed = last ? failedChecks(last.rubric) : [];
-  const tip = [label, last ? `Scored ${ago(last.at)}` : '', failed.length ? `Failed: ${failed.join(', ')}` : '', task.qa?.escalated ? 'Three failed rounds: the Captain and you decide.' : ''].filter(Boolean).join('\n');
+  const tip = [label, last ? `Scored ${ago(last.at)}` : '', failed.length ? `Failed: ${failed.join(', ')}` : '', qaOf(task)?.escalated ? 'Three failed rounds: the Captain and you decide.' : ''].filter(Boolean).join('\n');
   // a span, not a <button>: the board puts it inside a row that is itself a button
   const open = (e: Event) => { e.stopPropagation(); showQaFindings(task); };
   return h('span.qa-badge', {
@@ -30,7 +30,7 @@ export function qaBadge(task: Task, compact = false): HTMLElement | null {
 export function qaStrip(task: Task, max = 1, withHistory = false): HTMLElement | null {
   const badge = qaBadge(task);
   if (!badge) return null;
-  const findings = task.qa?.last?.findings ?? [];
+  const findings = qaOf(task)?.last?.findings ?? [];
   const shown = findings.slice(0, max);
   const history = withHistory ? qaHistory(task) : null;
   return h('div.qa-strip', null, badge, history ? h('div.qa-history', null, history) : null,
@@ -40,7 +40,7 @@ export function qaStrip(task: Task, max = 1, withHistory = false): HTMLElement |
 
 /** Full findings and rubric in a modal. */
 export function showQaFindings(task: Task): void {
-  const qa = task.qa;
+  const qa = qaOf(task);
   if (!qa) return;
   const last = qa.last;
   const body: (HTMLElement | null)[] = [];
@@ -48,7 +48,7 @@ export function showQaFindings(task: Task): void {
   const history = qaHistory(task);
   if (history) body.push(h('div.qa-history', null, history));
   if (last) {
-    body.push(h('div.qa-rubric', null, CHECKS.map((c) => h('span.qa-check', { class: last.rubric[c.key] ? 'ok' : 'bad' }, icon(last.rubric[c.key] ? 'check' : 'x', 12), c.label))));
+    body.push(h('div.qa-rubric', null, CHECKS.map((c) => h('span.qa-check', { class: last.rubric[c.key] >= 5 ? 'ok' : 'bad' }, icon(last.rubric[c.key] >= 5 ? 'check' : 'x', 12), `${c.label} ${last.rubric[c.key]}/5`))));
     body.push(last.findings.length
       ? h('div.qa-list', null, last.findings.map((f) => h('div.qa-item', null,
           h('div.qa-loc', null, where(f)),

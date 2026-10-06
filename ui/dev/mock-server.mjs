@@ -124,7 +124,7 @@ const evidence = (id, station, by, summary, names, minAgo) => ({
 
 const S4 = ['plan', 'build', 'test', 'review'];
 const S5 = ['plan', 'build', 'test', 'qa', 'review'];
-const RUBRIC_OK = { correct: true, tested: true, clean: true, scoped: true, safe: true };
+const RUBRIC_OK = { correct: 5, tested: 5, clean: 5, scoped: 5, safe: 5 };
 const SUI = ['design', 'build', 'design-check', 'review'];
 const state = {
   version: 1,
@@ -142,13 +142,13 @@ const state = {
       evidence: [evidence('E1', 'build', 'ada', 'Migration applies and rolls back; 12 invite tests pass.', ['01-after-token-copy.png', 'tests.txt', 'assertions.md'], 6)],
       history: [{ at: iso(44), agentId: 'captain', kind: 'created' }, { at: iso(3), agentId: 'captain', kind: 'review_requested', text: 'Migration adds the invites table with a unique token index. Tests pass. Safe to merge.' }] }),
     task('T2', 'Invite token generator', 'review', S5, 4, { branch: 'ada/tokens', assignee: 'captain', created: 43,
-      qa: { round: 3, escalated: true, history: [{ round: 1, score: 2, at: iso(40) }, { round: 2, score: 4, at: iso(22) }, { round: 3, score: 3, at: iso(7) }], last: { score: 3, at: iso(7), rubric: { correct: true, tested: false, clean: true, scoped: true, safe: false }, findings: [
+      qa: { round: 3, escalated: true, history: [{ round: 1, score: 2, at: iso(40) }, { round: 2, score: 4, at: iso(22) }, { round: 3, score: 3, at: iso(7) }], last: { score: 3, at: iso(7), rubric: { correct: 4, tested: 3, clean: 5, scoped: 5, safe: 3 }, findings: [
         { file: 'src/core/tokens.ts', line: 41, problem: 'Tokens come from Math.random(), so they can be guessed.', fix: 'Use crypto.randomBytes and encode as base62.' },
         { file: 'src/core/tokens.test.ts', problem: 'No test covers a collision on the unique index.', fix: 'Add a test that inserts the same token twice and expects the second to be rejected.' },
         { file: 'src/core/tokens.ts', line: 18, problem: 'The expiry default is read from process.env without a fallback.', fix: 'Fall back to 7 days when INVITE_TTL_DAYS is unset.' }] } },
       evidence: [evidence('E1', 'test', 'bea', '22-char base62 tokens, 14 tests pass.', ['tests.txt', 'assertions.md'], 8)] }),
     task('T3', 'Invite API endpoints', 'in_progress', S5, 1, { branch: 'ada/invite-api', assignee: 'cleo', created: 42, dependsOn: ['T2'],
-      qa: { round: 2, last: { score: 4, at: iso(3), rubric: { correct: true, tested: true, clean: false, scoped: true, safe: true }, findings: [
+      qa: { round: 2, last: { score: 4, at: iso(3), rubric: { correct: 5, tested: 5, clean: 4, scoped: 5, safe: 5 }, findings: [
         { file: 'src/api/invites.ts', line: 87, problem: 'A commented-out handler is left in.', fix: 'Delete the dead code.' }] } } }),
     task('T4', 'Share dialog UI', 'in_progress', SUI, 1, { branch: 'bea/share-dialog', assignee: 'bea', created: 41, dependsOn: ['T3'] }),
     task('T5', 'Revoke invite link', 'ready', S4, 0, { created: 30 }),
