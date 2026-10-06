@@ -84,11 +84,27 @@ export interface QaRubric {
   safe: number;
 }
 
+/** The QA agent's verdict on one pass: `score` is the lowest rubric score (1-5; 5 passes). */
+export interface QaVerdict {
+  score: 1 | 2 | 3 | 4 | 5;
+  at: string;
+  findings: QaFinding[];
+  rubric: QaRubric;
+}
+
+/** One finished QA round, kept in Task.qa.history. */
+export interface QaRound {
+  round: number;
+  score: number;
+  at: string;
+}
+
 /** The QA gate on a task: `round` counts QA passes, `escalated` is set when the builder and QA could not agree, `last` is the latest verdict. */
 export interface TaskQa {
   round: number;
   escalated?: boolean;
-  last?: { score: number; at: string; findings: QaFinding[]; rubric: QaRubric }; // score 1-5; 5 passes
+  last?: QaVerdict;
+  history: QaRound[]; // empty by default; one entry per verdict
 }
 
 /** One add_evidence call: files copied from the agent's worktree to .muster/evidence/<task>/<id>/. */
