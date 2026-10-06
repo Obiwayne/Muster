@@ -6,6 +6,8 @@ import type { Page } from '../page';
 import { api } from '../api';
 import { approveAllMerges, approveMerge, approveRoadmap, approveTask, commitCheckout, isRoadmapNote, mergeTask, run, sendBackApproval, sendBackRoadmap, showDiffModal, stashCheckout } from '../actions';
 import { evidenceStrip } from '../evidence';
+import { qaBadge, qaStrip } from '../qa';
+import { qaOf } from '../qamodel';
 import { NOTE_BADGE, ageShort, ago, displayName, initial, isEscalated, isNeedsYou, branchOwnerId, ms, noteLabel, roleOf, taskById } from '../util';
 import { isUsageNote, isWeeklyNote, weeklyThreshold } from '../usagealert';
 import { createWeeklyAlertView } from './usagealert';
@@ -257,7 +259,7 @@ export function createBoard(): Page {
     },
     h('div.type', null, badge(n)),
     h('div.body', null, h('div.text', null, n.text), h('div.meta', null, metaLine(state, n))),
-    h('div.side', null, h('span.muted', null, ageShort(n.createdAt)), side,
+    h('div.side', null, h('span.muted', null, ageShort(n.createdAt)), task && n.open && (n.type === 'review' || n.type === 'escalation') ? qaBadge(task, true) : null, side,
       n.type === 'system' ? h('span.note-x', {
         role: 'button',
         title: 'Dismiss: remove it from the board',
@@ -375,6 +377,8 @@ export function createBoard(): Page {
       items.push(h('div.banner.warm', null, icon('alert', 16), h('div.flex1', null, msg, hint), act));
       if (n.type === 'review' && task) items.push(evidenceStrip(task));
     }
+    const qa = task && qaOf(task) && n.open && (n.type === 'review' || n.type === 'escalation' || (n.type as string) === 'approval') ? qaStrip(task, 5, true) : null;
+    if (qa) items.push(qa);
     setChildren(replies, items);
     if (n.ask && n.open && !n.replies.length) replies.scrollTop = 0; // a fresh question menu reads from its first question
     else if (wasBottom) replies.scrollTop = replies.scrollHeight;

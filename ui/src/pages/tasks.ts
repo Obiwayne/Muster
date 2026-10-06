@@ -6,6 +6,7 @@ import type { Page } from '../page';
 import { api } from '../api';
 import { approveMerge, approveTask, getDiffStat, mergeTask, run, sendBackApproval, showDiffModal } from '../actions';
 import { evidenceStrip } from '../evidence';
+import { qaStrip } from '../qa';
 import { branchOwnerId, ms, stationRole, statTotals, taskIsStuck } from '../util';
 
 const COLUMNS: { status: TaskStatus | 'awaiting_approval'; label: string }[] = [
@@ -64,7 +65,7 @@ export function createTasks(): Page {
           if (tot) { statCache.set(t.id, `+${tot.add} −${tot.del}`); stat.textContent = `${t.branch ?? d.branch} · +${tot.add} −${tot.del}`; }
         }).catch(() => {});
       }
-      return h('div.card.merge', { title: tip }, titleRow, stat, evidenceStrip(t),
+      return h('div.card.merge', { title: tip }, titleRow, stat, qaStrip(t), evidenceStrip(t),
         h('div.actions', null,
           h('button.btn.sm', { disabled: !owner, onclick: () => owner && showDiffModal(owner, t.branch) }, 'View diff'),
           h('button.btn.sm', { onclick: () => mergeTask(state, t) }, 'Merge'),
@@ -86,7 +87,7 @@ export function createTasks(): Page {
     const station = t.stations[t.stationIndex] ?? '';
     const who = t.assignee ?? 'unassigned';
     const whoRole = t.status === 'review' ? 'captain' : state.agents.find((a) => a.id === t.assignee)?.role ?? stationRole(station);
-    return h('div.card', { class: stuckNote && 'stuck', title: tip }, titleRow, stationBar(t, !!stuckNote),
+    return h('div.card', { class: stuckNote && 'stuck', title: tip }, titleRow, stationBar(t, !!stuckNote), qaStrip(t),
       h('div.who', null,
         h('span.dot.sm', { class: `r-${whoRole}`, style: stuckNote ? 'background:var(--color-stuck)' : '' }),
         h('span.w', null, `${who} · ${station}${stuckNote ? ` · stuck ${stuckNote.id}` : ''}`),
