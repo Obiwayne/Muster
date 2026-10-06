@@ -9,7 +9,7 @@ import { agentStatusWord, agoLong, resetsIn, setUserName, sortedAgents } from '.
 import { needsYouCount } from './chatmodel';
 import { reportNeedsYou } from './needsyou';
 import type { Page } from './page';
-import { createDashboard } from './pages/dashboard';
+import { createDashboard, dashboardSwitch } from './pages/dashboard';
 import { createRoadmap } from './pages/roadmap';
 import { createResearch } from './pages/research';
 import { createIntel } from './pages/intel';
@@ -141,7 +141,7 @@ const weekFill = h('div.usage-fill');
 const week = h('div.usage.weekly', null, h('div.usage-head', null, h('div.usage-label', null, 'WEEKLY'), weekVal), h('div.usage-track', null, weekFill));
 const addTop = h('button.btn.secondary', { style: 'height:32px' }, icon('plus', 14), 'Add agent');
 addTop.onclick = () => openAddAgent(addTop, 'right');
-const topbar = h('header.topbar', null, h('div.goal', null, goalTitle, goalSub), five, week, addTop);
+const topbar = h('header.topbar', null, h('div.goal', null, goalTitle, goalSub), dashboardSwitch, five, week, addTop);
 const connBanner = h('div.conn-banner', { hidden: true }, 'Reconnecting to the Muster orchestrator…');
 const pagesHost = h('div', { style: 'flex:1;min-height:0;display:flex;flex-direction:column' });
 
@@ -196,6 +196,7 @@ function show(route: RouteId, params: URLSearchParams): void {
     page.show?.();
   }
   page.params?.(params);
+  dashboardSwitch.hidden = route !== 'dashboard';
   const nav = SUB_ROUTES.find((r) => r.id === route)?.nav ?? route;
   navItems.forEach((el, id) => el.classList.toggle('active', id === nav));
 }

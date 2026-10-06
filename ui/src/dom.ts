@@ -85,6 +85,7 @@ const ICONS: Record<string, string> = {
   circle: '<circle cx="12" cy="12" r="9"/>',
   x: '<path d="M18 6L6 18M6 6l12 12"/>',
   terminal: '<path d="M4 17l6-6-6-6M12 19h8"/>',
+  ship: '<path d="M2 21c.6.5 1.2 1 2.5 1 2.5 0 2.5-2 5-2 1.3 0 1.9.5 2.5 1 .6.5 1.2 1 2.5 1 2.5 0 2.5-2 5-2 1.3 0 1.9.5 2.5 1"/><path d="M19.4 17.5 21 11l-9-4-9 4 1.6 6.5"/><path d="M12 2v5"/>',
   down: '<path d="M12 5v14M19 12l-7 7-7-7"/>',
   route: '<circle cx="6" cy="19" r="3"/><path d="M9 19h8.5a3.5 3.5 0 0 0 0-7h-11a3.5 3.5 0 0 1 0-7H15"/><circle cx="18" cy="5" r="3"/>',
   'chevron-right': '<path d="M9 6l6 6-6 6"/>',

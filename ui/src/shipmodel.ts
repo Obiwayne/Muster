@@ -1,0 +1,163 @@
+// Ship view (Dashboard → Ship): turns the state into who stands where on the pirate ship and which signs are up.
+// Pure, so it is tested without a DOM. Coordinates are in the 1220×720 scene (see pages/ship.ts). Design: Vellum "Muster" › Ship.
+import type { Agent, FeedItem, MusterConfig, MusterState, Note, Role, Task } from '../../src/types';
+import { YOU, awaitingApproval, hhmm, taskById } from './util';
+
+export const SCENE_W = 1220;
+export const SCENE_H = 720;
+
+export type Pose = 'stand' | 'hammer' | 'haul' | 'sit' | 'stuck' | 'captain' | 'captain_wave';
+export type Weather = 'clear' | 'clouds' | 'storm';
+
+export interface Sailor {
+  id: string;
+  role: Role;
+  pose: Pose;
+  x: number; // centre
+  feet: number; // y the feet stand on
+  flip?: boolean;
+  tagLift?: number; // raise the name tag so neighbours on the main deck don't overlap
+  status: Agent['status'];
+  word: string; // short status for the name tag
+}
+
+export interface ShipView {
+  sailors: Sailor[];
+  below: number; // working agents with no spot left on deck
+  question: Note | null; // the Captain asks you something
+  chest: Task[]; // reviewed work waiting for your approval
+  fire: Note | null; // merge blocked by uncommitted files
+  stuck: { sailor: Sailor; note?: Note }[];
+  weather: Weather;
+  weeklyPct: number | null;
+  anchored: boolean; // new work paused for the 5-hour window
+  tone: 'ok' | 'needs' | 'trouble';
+  title: string;
+  sub: string;
+  log: { at: string; text: string }[];
+}
+
+interface Spot { x: number; feet: number; pose?: Pose; flip?: boolean; tagLift?: number }
+
+const HELM: Spot = { x: 268, feet: 512 };
+const NEST: Spot = { x: 422, feet: 186 };
+const MAIN_DECK: Spot[] = [
+  { x: 468, feet: 560, pose: 'hammer' },
+  { x: 548, feet: 560, pose: 'haul', flip: true, tagLift: 30 },
+  { x: 508, feet: 560, pose: 'hammer', flip: true, tagLift: 60 },
+];
+const CANNON: Spot[] = [{ x: 650, feet: 505 }, { x: 616, feet: 507 }];
+const STERN: Spot[] = [{ x: 222, feet: 500, pose: 'hammer' }];
+const RIGGING: Spot[] = [{ x: 540, feet: 432 }, { x: 300, feet: 372 }]; // right rope first: the left one sits under the Captain's bubble
+const REST: Spot[] = [{ x: 762, feet: 470 }, { x: 222, feet: 500 }];
+
+/** Agents doing nothing for you right now sit and rest. */
+function resting(a: Agent): boolean {
+  return a.status === 'idle' || a.status === 'waiting' || a.status === 'done' || a.status === 'starting';
+}
+
+function station(state: MusterState, a: Agent): string | undefined {
+  const t = taskById(state, a.taskId);
+  return t ? t.stations[t.stationIndex] : undefined;
+}
+
+/** One short word for a sailor's name tag: "building", "testing", "reviewing", "idle"… */
+export function tagWord(state: MusterState, a: Agent): string {
+  if (a.status === 'stuck') return 'stuck';
+  if (a.status === 'waiting') return 'waiting';
+  if (a.status === 'idle' || a.status === 'done') return 'idle · zzz';
+  if (a.status !== 'working') return a.status;
+  if (a.role === 'captain') return state.tasks.some((t) => t.status === 'review') ? 'reviewing' : 'at the helm';
+  const st = station(state, a);
+  const words: Record<string, string> = { build: 'building', test: 'testing', qa: 'checking', design: 'designing', review: 'in review' };
+  return st ? (words[st] ?? st) : 'working';
+}
+
+/** The newest open question or decision the Captain put to you (not system notes like usage or the checkout). */
+export function captainQuestion(state: MusterState): Note | null {
+  const asks = state.notes.filter((n) => n.open && !n.dismissed && n.from === 'captain'
+    && (n.type === 'escalation' || n.type === 'question' || (n.to === YOU && n.type !== 'review' && n.type !== 'system')));
+  return asks.sort((a, b) => b.createdAt.localeCompare(a.createdAt))[0] ?? null;
+}
+
+export function blockedMerge(state: MusterState): Note | null {
+  return state.notes.find((n) => n.open && !n.dismissed && n.topic === 'checkout') ?? null;
+}
+
+export function weatherFor(pct: number | null, warnAt: number): Weather {
+  if (pct === null) return 'clear';
+  if (pct >= 90) return 'storm';
+  return pct >= warnAt ? 'clouds' : 'clear';
+}
+
+function logLine(f: FeedItem): string {
+  const text = f.text.replace(/\s+/g, ' ').trim();
+  const who = f.from === YOU ? 'You' : f.from === 'muster' ? '' : f.from;
+  const line = who && !text.toLowerCase().startsWith(who.toLowerCase()) ? `${who}: ${text}` : text;
+  return line.length > 90 ? `${line.slice(0, 89)}…` : line;
+}
+
+export function shipView(state: MusterState, config: Pick<MusterConfig, 'warnAtWeeklyPct'>): ShipView {
+  const question = captainQuestion(state);
+  const fire = blockedMerge(state);
+  const chest = awaitingApproval(state);
+  const sailors: Sailor[] = [];
+  const stuck: ShipView['stuck'] = [];
+  let below = 0;
+  const free = { main: [...MAIN_DECK], cannon: [...CANNON], stern: [...STERN], rigging: [...RIGGING], rest: [...REST] };
+  let nestTaken = false;
+
+  const place = (a: Agent, spot: Spot | undefined, pose: Pose): Sailor | null => {
+    if (!spot) { below++; return null; }
+    const s: Sailor = {
+      id: a.id, role: a.role, pose: spot.pose && pose !== 'sit' && pose !== 'stuck' && pose !== 'stand' ? spot.pose : pose,
+      x: spot.x, feet: spot.feet, flip: spot.flip, tagLift: spot.tagLift, status: a.status, word: tagWord(state, a),
+    };
+    sailors.push(s);
+    return s;
+  };
+
+  const captain = state.agents.find((a) => a.role === 'captain' && a.status !== 'stopped');
+  if (captain) place(captain, HELM, question ? 'captain_wave' : 'captain');
+
+  for (const a of state.agents) {
+    if (a === captain || a.status === 'stopped' || a.role === 'research') continue;
+    if (a.status === 'stuck') {
+      const s = place(a, free.rigging.shift(), 'stuck');
+      if (s) stuck.push({ sailor: s, note: state.notes.find((n) => n.open && n.type === 'stuck' && n.from === a.id) });
+      continue;
+    }
+    if (resting(a)) { place(a, free.rest.shift(), 'sit'); continue; }
+    if (a.role === 'design' && !nestTaken) { nestTaken = true; place(a, NEST, 'stand'); continue; }
+    const st = station(state, a);
+    if (st === 'test' || st === 'qa' || a.role === 'qa') { place(a, free.cannon.shift() ?? free.main.shift() ?? free.stern.shift(), 'stand'); continue; }
+    place(a, free.main.shift() ?? free.stern.shift() ?? free.cannon.shift(), 'hammer');
+  }
+
+  const wk = state.usage.sevenDay ? Math.round(state.usage.sevenDay.usedPercentage) : null;
+  const weather = weatherFor(wk, config.warnAtWeeklyPct);
+  const anchored = !!state.usage.paused;
+  const working = state.agents.filter((a) => a.status === 'working').length;
+  const idle = state.agents.filter((a) => a !== captain && resting(a)).length;
+
+  const trouble = [fire && 'merge blocked', stuck.length && `${stuck.map((s) => s.sailor.id).join(', ')} stuck`, weather === 'storm' && `usage ${wk}%`].filter(Boolean) as string[];
+  const needs = (question ? 1 : 0) + chest.length + (fire ? 1 : 0);
+  let tone: ShipView['tone'] = 'ok';
+  let title = 'Fair winds';
+  let sub = state.agents.length ? `${working} working · ${idle} idle · nothing needs you` : 'No crew aboard yet';
+  if (trouble.length) {
+    tone = 'trouble';
+    title = 'Rough seas';
+    sub = trouble.join(' · ');
+  } else if (needs) {
+    tone = 'needs';
+    title = `${needs} need${needs === 1 ? 's' : ''} you`;
+    sub = [question && 'The Captain has a question', chest.length && `${chest.length} to approve`].filter(Boolean).join(' · ');
+  } else if (anchored) {
+    title = 'Anchored';
+    sub = 'New work is paused until the 5-hour window resets';
+  }
+
+  const log = state.feed.filter((f) => f.kind !== 'reply').slice(-2).reverse().map((f) => ({ at: hhmm(f.at), text: logLine(f) }));
+  return { sailors, below, question, chest, fire, stuck, weather, weeklyPct: wk, anchored, tone, title, sub, log };
+}
