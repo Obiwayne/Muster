@@ -26,7 +26,6 @@ const SEEDED = [...Object.keys(STARTER_GUIDELINES), QA_STATION, REVIEW]; // ever
 
 const DEFAULT_GUIDELINE: Record<string, string> = {
   ...STARTER_GUIDELINES,
-  qa: "The QA agent scores the task's diff before the Captain's review (1-5; only 5/5 passes) and sends findings back to the builder. It reviews and runs tests; it never edits code.",
   review: "Extra checks for the Captain's review. The fixed rules (tests pass, diff matches the task, only the human merges) always apply and can't be relaxed here. Read the diff, run the tests, and check the acceptance criteria before flagging the branch ready for merge.",
 };
 
