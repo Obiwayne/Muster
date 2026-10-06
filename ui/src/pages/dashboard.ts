@@ -1,4 +1,5 @@
-// Dashboard: grid of live agent terminals (1 full, 2 side by side, 3 = two + one wide, 4 = 2×2, >4 → pages).
+// Dashboard: grid of live agent terminals (1 full, 2 side by side, 3 = two + one wide, 4 = 2×2, >4 → pages),
+// or the same crew as sailors on a pirate ship (Terminals | Ship switch in the top bar, remembered per browser).
 import type { Agent, MusterState, Role } from '../../../src/types';
 import { h, icon, setChildren, showMenu, type MenuItem } from '../dom';
 import type { Snapshot } from '../events';
@@ -7,8 +8,26 @@ import { TermView } from '../terminal';
 import { api } from '../api';
 import { closeAgent, openAddAgent, run, setRole, showDiffModal } from '../actions';
 import { agentStatusLong, openStuck, sortedAgents } from '../util';
+import { createShipView } from './ship';
+import { shipView } from '../shipmodel';
 
 const PER_PAGE = 4;
+
+type DashView = 'terminals' | 'ship';
+const VIEW_KEY = 'muster.dashboardView';
+function savedView(): DashView {
+  try {
+    return localStorage.getItem(VIEW_KEY) === 'ship' ? 'ship' : 'terminals';
+  } catch {
+    return 'terminals';
+  }
+}
+
+const termBtn = h('button', { title: 'Live terminals' }, icon('terminal', 14), 'Terminals');
+const shipNeeds = h('span.needs', { hidden: true });
+const shipBtn = h('button', { title: 'The crew on the ship' }, icon('ship', 14), 'Ship', shipNeeds);
+/** Terminals | Ship, shown in the top bar while the Dashboard is open (main.ts places it). */
+export const dashboardSwitch = h('div.view-switch', null, termBtn, shipBtn);
 
 /** Assign an element property only when it differs; a same-value write still dirties the DOM (and textContent swaps the text node). */
 function put<T extends HTMLElement, K extends keyof T>(el: T, prop: K, value: T[K]): void {
@@ -142,7 +161,27 @@ export function createDashboard(): Page {
   const grid = h('div.grid');
   const pager = h('div.pager', { hidden: true });
   const empty = h('div.hero-empty', { hidden: true });
-  const el = h('div.page', null, grid, pager, empty);
+  const ship = createShipView();
+  const el = h('div.page', null, grid, pager, empty, ship.el);
+  let view: DashView = savedView();
+  let shown = false;
+
+  function setView(v: DashView): void {
+    view = v;
+    try { localStorage.setItem(VIEW_KEY, v); } catch { /* private window */ }
+    termBtn.classList.toggle('on', v === 'terminals');
+    shipBtn.classList.toggle('on', v === 'ship');
+    if (v === 'ship') shipNeeds.hidden = true;
+    ship.el.hidden = v !== 'ship';
+    grid.style.display = v === 'ship' ? 'none' : '';
+    pager.style.display = v === 'ship' ? 'none' : '';
+    empty.style.display = v === 'ship' ? 'none' : '';
+    if (v === 'ship' && shown) ship.show();
+    else ship.hide();
+    if (v === 'terminals') tiles.forEach((t) => t.refresh());
+  }
+  termBtn.onclick = () => setView('terminals');
+  shipBtn.onclick = () => setView('ship');
   const tiles = new Map<string, Tile>();
   let pageIdx = 0;
   let snap: Snapshot | null = null;
@@ -210,15 +249,36 @@ export function createDashboard(): Page {
 
   return {
     el,
-    update(s) { snap = s; render(); },
+    update(s) {
+      snap = s;
+      render();
+      ship.update(s);
+      // While on Terminals, the Ship button counts what's waiting on deck for you.
+      const v = shipView(s.state, s.config);
+      const n = (v.question ? 1 : 0) + v.chest.length + (v.fire ? 1 : 0) + v.stuck.length;
+      shipNeeds.hidden = n === 0 || view === 'ship';
+      shipNeeds.textContent = String(n);
+    },
     params(p) {
+      const want = p.get('view');
+      if (want === 'terminals' || want === 'ship') setView(want);
       const a = p.get('agent');
       if (a) {
+        if (view !== 'terminals') setView('terminals');
         focusAgent = a;
         render();
         history.replaceState(null, '', '#/dashboard');
+      } else if (want) {
+        history.replaceState(null, '', '#/dashboard');
       }
     },
-    show() { tiles.forEach((t) => t.refresh()); },
+    show() {
+      shown = true;
+      setView(view);
+    },
+    hide() {
+      shown = false;
+      ship.hide();
+    },
   };
 }

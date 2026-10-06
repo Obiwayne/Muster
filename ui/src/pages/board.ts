@@ -1,5 +1,5 @@
 // Bulletin board: filter chips, note list, selected thread with replies and a reply box.
-import type { AskQuestion, MusterState, Note, NoteType, Task } from '../../../src/types';
+import type { AskQuestion, MusterState, Note, NoteType } from '../../../src/types';
 import { h, icon, setChildren } from '../dom';
 import type { Snapshot } from '../events';
 import type { Page } from '../page';
@@ -8,7 +8,7 @@ import { approveAllMerges, approveMerge, approveRoadmap, approveTask, commitChec
 import { evidenceStrip } from '../evidence';
 import { qaBadge, qaStrip } from '../qa';
 import { qaOf } from '../qamodel';
-import { NOTE_BADGE, ageShort, ago, displayName, initial, isEscalated, isNeedsYou, branchOwnerId, ms, noteLabel, roleOf, taskById } from '../util';
+import { NOTE_BADGE, awaitingApproval, ageShort, ago, displayName, initial, isEscalated, isNeedsYou, branchOwnerId, ms, noteLabel, roleOf, taskById } from '../util';
 import { isUsageNote, isWeeklyNote, weeklyThreshold } from '../usagealert';
 import { createWeeklyAlertView } from './usagealert';
 import { intelNoteView, isIntelJobNote, runAgainBody, type IntelNoteAction } from '../intelnote';
@@ -38,17 +38,6 @@ function matches(n: Note, f: Filter): boolean {
     case 'needsYou': return isNeedsYou(n);
     case 'all': return true;
   }
-}
-
-/** Tasks the Captain flagged ready that you have not approved yet (one per open review note). */
-function awaitingApproval(state: MusterState): Task[] {
-  const out: Task[] = [];
-  for (const n of state.notes) {
-    if (n.type !== 'review' || !n.open) continue;
-    const t = taskById(state, n.taskId);
-    if (t && t.status === 'ready_for_merge' && !t.mergeApproval && !out.includes(t)) out.push(t);
-  }
-  return out;
 }
 
 /** Split a note into a title (first line / sentence pair) and the rest. */

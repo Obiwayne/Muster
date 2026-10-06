@@ -145,6 +145,17 @@ export function branchOwnerId(state: MusterState, task: Task): string | undefine
   return branchOwner(state, task)?.id ?? task.branch?.split('/')[0];
 }
 
+/** Tasks the Captain flagged ready that you have not approved yet (one per open review note). */
+export function awaitingApproval(state: MusterState): Task[] {
+  const out: Task[] = [];
+  for (const n of state.notes) {
+    if (n.type !== 'review' || !n.open) continue;
+    const t = taskById(state, n.taskId);
+    if (t && t.status === 'ready_for_merge' && !t.mergeApproval && !out.includes(t)) out.push(t);
+  }
+  return out;
+}
+
 export function taskIsStuck(state: MusterState, task: Task): Note | undefined {
   return state.notes.find((n) => n.open && n.type === 'stuck' && (n.taskId === task.id
     || (task.assignee && n.from === task.assignee && state.agents.find((a) => a.id === task.assignee)?.taskId === task.id)));
