@@ -3,11 +3,19 @@
 //
 //   MOCK_MEDIA=none  → nothing written yet, no suggestions (empty library)
 //
-// Evidence images point at T1/E1/01-after-token-copy.png, the one image the mock serves.
+// Evidence images point at T1/E1/01-after-token-copy.png, the one image the mock serves. Demo GIFs serve
+// ui/dev/fixtures/demo.gif (GET /api/media/pieces/:id/gif returns { file } for mock-server.mjs to stream).
 
 /**
  * @param {{ state: any, now: number, need: Function, HttpError: any, toastAll: Function, readBody: (req: any) => Promise<any>, send: (msg: object) => void }} deps
  */
+import { readFileSync } from 'node:fs';
+import { dirname, join } from 'node:path';
+import { fileURLToPath } from 'node:url';
+
+const GIF = join(dirname(fileURLToPath(import.meta.url)), 'fixtures', 'demo.gif');
+const gifFileInfo = (name, at) => ({ name, bytes: 1.8 * 1024 * 1024, width: 800, height: 500, seconds: 9.5, renderedAt: at });
+
 export function createMediaMock(deps) {
   const { now, need, send, toastAll } = deps;
   const MODE = process.env.MOCK_MEDIA ?? 'full';
@@ -38,7 +46,24 @@ export function createMediaMock(deps) {
           { platform: 'bluesky', versions: ["Teachers asked us for one thing: see a post before the class does.\n\nNow every new post can wait for you. One tap approves it, one tap sends it back with a note. It's live on every wall today, free for one class.", 'Moderation is live.'], chosen: 0 },
         ],
         images: [{ ...IMG, caption: 'After · approval queue' }, { ...IMG, caption: 'Approve / send back buttons' }],
+        gifIds: ['MP7'],
         claims: claimsSocial, editedAt: iso(2),
+      }),
+      piece('MP7', 'gif', "Demo: approve a student's post in one tap", 'review', 30, {
+        about: [{ kind: 'task', ref: 'T38', label: 'T38 Approval queue' }, { kind: 'task', ref: 'T43', label: 'T43 Approve and send back' }],
+        gif: {
+          source: 'slideshow',
+          frames: [
+            { ...IMG, caption: 'A student posts', seconds: 2 },
+            { ...IMG, caption: 'New posts wait for you first', seconds: 2.5 },
+            { ...IMG, caption: 'One tap approves it', seconds: 2.5 },
+            { ...IMG, caption: "It's on the class wall", seconds: 2.5 },
+          ],
+          steps: ['Open a wall with approval switched on', 'As a student, post "My volcano diagram"', 'As the teacher, open the queue and tap Approve', 'Show the post arriving on the class wall'],
+          altText: 'A student posts to a class wall; the post waits in the teacher\'s approval queue; the teacher taps Approve and it appears on the wall.',
+          slideshow: gifFileInfo('slideshow.gif', iso(29)),
+        },
+        claims: [{ id: 'C1', quote: 'New posts wait for you first', sources: [src('task', 'T38', 'T38 merged')] }, { id: 'C2', quote: 'One tap approves it', sources: [src('task', 'T43', 'T43 merged')] }],
       }),
       piece('MP5', 'website', 'Feature page: Moderation you control', 'review', 60, {
         target: '/features/moderation',
@@ -93,7 +118,7 @@ export function createMediaMock(deps) {
       { id: 'MS2', trigger: 'feature', ref: 'T41', title: 'One-click PDF export of a whole wall', summary: 'Social posts for X and LinkedIn with the export GIF, plus a feature page section for the website.', plan: [{ kind: 'social', platforms: ['x', 'linkedin'] }, { kind: 'website' }], about: [{ kind: 'task', ref: 'T41', label: 'T41 PDF export' }], status: 'open', createdAt: iso(1300) },
       { id: 'MS1', trigger: 'weekly', ref: '2026-W40', title: 'Week 40: 17 tasks merged, roadmap 38% → 52%', summary: 'A devlog article and a 60-second video script. Herald only suggests a roundup in weeks with 5 or more merged tasks.', plan: [{ kind: 'article' }, { kind: 'video' }], about: [{ kind: 'range', ref: '2026-09-28..2026-10-04', label: '28 Sep to 4 Oct' }], status: 'open', createdAt: iso(4000) },
     ],
-    nextIds: { piece: 7, suggestion: 4 },
+    nextIds: { piece: 8, suggestion: 4 },
   };
 
   const summary = () => {
@@ -119,6 +144,13 @@ export function createMediaMock(deps) {
       if (p.kind === 'social') {
         p.posts = (p.platforms ?? ['x']).map((platform) => ({ platform, versions: [`(mock) ${p.title}. Live today.`, `(mock) ${p.title}.`, '(mock) Short version.'], chosen: 0 }));
         p.images = [{ ...IMG, caption: 'From T1 evidence' }];
+      } else if (p.kind === 'gif') {
+        p.gif = {
+          source: 'slideshow',
+          frames: [{ ...IMG, caption: '(mock) First frame', seconds: 2.5 }, { ...IMG, caption: '(mock) Second frame', seconds: 2.5 }],
+          steps: ['(mock) Open the app', '(mock) Do the thing'], altText: '(mock) What the GIF shows.',
+          slideshow: gifFileInfo('slideshow.gif', new Date().toISOString()),
+        };
       } else if (p.kind === 'video') {
         p.hooks = ['(mock) Hook one.', '(mock) Hook two.', '(mock) Hook three.']; p.hookChosen = 0;
         p.shots = [{ at: '0:00', shot: 'opening', voiceover: '(mock) Voiceover.', evidence: IMG }, { at: '0:05', shot: 'you on camera', voiceover: '(mock) More.', record: true }];
@@ -138,7 +170,7 @@ export function createMediaMock(deps) {
     const id = `MP${store.nextIds.piece++}`;
     const about = (b.about ?? []).map((a) => ({ kind: a.kind, ref: a.ref, label: a.label ?? a.ref }));
     const p = {
-      id, kind: b.kind, title: `New ${b.kind === 'social' ? 'social post' : b.kind === 'video' ? 'video script' : b.kind} about ${about.map((a) => a.label).join(', ') || 'recent work'}`,
+      id, kind: b.kind, title: `New ${b.kind === 'social' ? 'social post' : b.kind === 'video' ? 'video script' : b.kind === 'gif' ? 'demo GIF' : b.kind} about ${about.map((a) => a.label).join(', ') || 'recent work'}`,
       status: 'queued', about, ...(b.note ? { note: b.note } : {}), ...(b.kind === 'social' ? { platforms: b.platforms ?? ['x', 'linkedin', 'bluesky'] } : {}),
       claims: [], requests: [], ...(suggestionId ? { suggestionId } : {}), createdAt: new Date().toISOString(), updatedAt: new Date().toISOString(),
     };
@@ -152,14 +184,20 @@ export function createMediaMock(deps) {
     if (m === 'GET' && p === '/api/media/summary') return summary();
     const b = m === 'GET' ? {} : await deps.readBody(req);
     if (m === 'POST' && p === '/api/media/pieces') {
-      need(['social', 'article', 'website', 'video'].includes(b.kind), 400, 'kind must be social, article, website or video');
+      need(['social', 'article', 'website', 'video', 'gif'].includes(b.kind), 400, 'kind must be social, article, website, video or gif');
       need(Array.isArray(b.about) && b.about.length, 400, 'Pick what it is about');
       const piece = newPiece(b, b.suggestionId);
       if (b.suggestionId) { const s = store.suggestions.find((x) => x.id === b.suggestionId); if (s) { s.status = 'accepted'; s.pieceIds = [piece.id]; } }
       commit();
       return piece;
     }
-    let mm = /^\/api\/media\/pieces\/([^/]+)(?:\/(edit|ask|approve|used|retry))?$/.exec(p);
+    let mm = /^\/api\/media\/pieces\/([^/]+)\/gif$/.exec(p);
+    if (mm && m === 'GET') {
+      const piece = find(decodeURIComponent(mm[1]));
+      need(piece.gif && (piece.gif.slideshow || piece.gif.recording?.file), 404, `${piece.id} has no GIF yet`);
+      return { file: readFileSync(GIF), type: 'image/gif' };
+    }
+    mm = /^\/api\/media\/pieces\/([^/]+)(?:\/(edit|ask|approve|used|retry|record))?$/.exec(p);
     if (mm) {
       const piece = find(decodeURIComponent(mm[1]));
       const act = mm[2];
@@ -167,7 +205,12 @@ export function createMediaMock(deps) {
       need(m === 'POST', 404, `No route ${m} ${p}`);
       if (act === 'edit') {
         need(piece.status !== 'drafting' && piece.status !== 'queued', 409, 'herald is writing it: wait until it is done');
-        for (const k of ['title', 'posts', 'sections', 'hooks', 'hookChosen', 'shots', 'target', 'images']) if (b[k] !== undefined) piece[k] = b[k];
+        for (const k of ['title', 'posts', 'sections', 'hooks', 'hookChosen', 'shots', 'target', 'images', 'gifIds']) if (b[k] !== undefined) piece[k] = b[k];
+        if (b.gif && piece.gif) {
+          const framesChanged = b.gif.frames !== undefined && JSON.stringify(b.gif.frames) !== JSON.stringify(piece.gif.frames);
+          Object.assign(piece.gif, b.gif);
+          if (framesChanged) piece.gif.slideshow = gifFileInfo('slideshow.gif', new Date().toISOString()); // the server re-renders
+        }
         piece.editedAt = new Date().toISOString();
         if (piece.status === 'approved') piece.status = 'review';
       } else if (act === 'ask') {
@@ -183,6 +226,11 @@ export function createMediaMock(deps) {
       } else if (act === 'used') {
         need(piece.status === 'approved', 409, 'Approve it first');
         piece.status = 'used'; piece.usedAt = new Date().toISOString();
+      } else if (act === 'record') {
+        need(piece.kind === 'gif' && piece.gif, 400, 'Only a demo GIF can be recorded');
+        need(!['requested', 'recording'].includes(piece.gif.recording?.status), 409, 'A recording is already on its way');
+        piece.gif.recording = { status: 'requested', requestedAt: new Date().toISOString() };
+        setTimeout(() => { piece.gif.recording = { ...piece.gif.recording, status: 'recording', taskId: 'T52' }; stamp(piece); commit(); }, 3000);
       } else if (act === 'retry') {
         need(piece.status === 'failed', 409, 'Only a stopped piece can be retried');
         piece.status = 'queued'; delete piece.error; fakeHerald(piece);
