@@ -307,5 +307,6 @@ describe('mediaPrompt', () => {
   });
   it('tells the Captain to suggest media for features users will notice', () => {
     expect(captainPrompt(ctx)).toContain('call `suggest_media(task, title, why)` once for it');
+    expect(captainPrompt(ctx)).toContain('`media_recording(piece, task)`');
   });
 });

@@ -10,6 +10,7 @@ import {
   askPiece,
   confirmClaim,
   createPiece,
+  currentGifFile,
   deletePiece,
   dismissAllSuggestions,
   dismissSuggestion,
@@ -18,16 +19,22 @@ import {
   failCurrent,
   finishDraft,
   isoWeek,
+  linkRecording,
   markUsed,
   MediaFile,
   mediaBrief,
   mediaSummary,
   migrateMedia,
+  recordingDone,
+  recordingFailed,
+  recordingFor,
+  requestRecording,
   requirePiece,
   resolveAbout,
   retryPiece,
   saveDraft,
   setHouseStyle,
+  setSlideshow,
   startNext,
   suggestFeature,
   syncStageSuggestions,
@@ -321,4 +328,138 @@ describe('brief', () => {
 it('keeps the store JSON-serialisable', () => {
   social();
   expect(JSON.parse(JSON.stringify(m)).pieces[0].id).toBe('MP1');
+});
+
+describe('demo GIF', () => {
+  const frame = { taskId: 't38', evidenceId: 'e2', name: 'queue.png', caption: 'New posts wait for you first', seconds: 2.5 };
+  const file = (name: string) => ({ name, bytes: 1_500_000, width: 800, height: 500, seconds: 7.5, renderedAt: '2026-10-07T10:00:00.000Z' });
+  const drafted = () => {
+    const p = createPiece(m, s, 'you', { kind: 'gif', about: [{ kind: 'task', ref: 'T38' }] });
+    expect(p.gif).toEqual({ source: 'slideshow', frames: [], steps: [], altText: '' });
+    startNext(m);
+    return p;
+  };
+  const finished = () => {
+    const p = drafted();
+    saveDraft(m, s, 'herald', p.id, { gif: { frames: [frame], steps: ['Open a wall', 'Tap Approve'], altText: 'A teacher approves a post.' } });
+    finishDraft(m, s, 'herald', p.id);
+    return p;
+  };
+
+  it('herald saves frames, steps and alt text; finish needs all three', () => {
+    const p = drafted();
+    expect(status(() => finishDraft(m, s, 'herald', p.id))).toBe(409);
+    saveDraft(m, s, 'herald', p.id, { title: 'Demo: approve a post', gif: { frames: [frame] } });
+    expect(p.gif!.frames[0]).toMatchObject({ taskId: 'T38', evidenceId: 'E2', seconds: 2.5 });
+    expect(status(() => finishDraft(m, s, 'herald', p.id))).toBe(409); // no steps yet
+    saveDraft(m, s, 'herald', p.id, { gif: { steps: ['Open a wall', 'Tap Approve'], altText: 'A teacher approves a post.' } });
+    finishDraft(m, s, 'herald', p.id);
+    expect(p.status).toBe('review');
+    expect(p.gif!.frames).toHaveLength(1); // a partial gif save keeps the other fields
+  });
+
+  it('validates frames against task evidence, image kinds and durations', () => {
+    const p = drafted();
+    expect(status(() => saveDraft(m, s, 'herald', p.id, { gif: { frames: [{ ...frame, name: 'nope.png' }] } }))).toBe(400);
+    expect(status(() => saveDraft(m, s, 'herald', p.id, { gif: { frames: [{ ...frame, seconds: 20 }] } }))).toBe(400);
+    expect(status(() => saveDraft(m, s, 'herald', p.id, { gif: { frames: [{ ...frame, caption: 'x'.repeat(61) }] } }))).toBe(400);
+    expect(status(() => saveDraft(m, s, 'herald', p.id, { gif: { colour: 'red' } }))).toBe(400);
+    s.tasks[0].evidence![0].files.push({ name: 'log.txt', kind: 'text', bytes: 1 });
+    expect(status(() => saveDraft(m, s, 'herald', p.id, { gif: { frames: [{ ...frame, name: 'log.txt' }] } }))).toBe(400);
+    expect(status(() => saveDraft(m, s, 'herald', p.id, { posts: [] }))).toBe(400); // posts are for social pieces
+    const post = social();
+    expect(status(() => editPiece(m, s, 'you', post.id, { gif: { frames: [] } }))).toBe(400); // gif is for gif pieces
+  });
+
+  it('approve needs the GIF file of the current source', () => {
+    const p = finished();
+    expect(status(() => approvePiece(m, s, 'you', p.id))).toBe(409);
+    setSlideshow(m, p.id, { error: 'ffmpeg not found' });
+    expect(p.gif!.renderError).toBe('ffmpeg not found');
+    setSlideshow(m, p.id, { file: file('slideshow.gif') });
+    expect(p.gif!.renderError).toBeUndefined();
+    expect(currentGifFile(p)?.name).toBe('slideshow.gif');
+    approvePiece(m, s, 'you', p.id);
+    expect(p.status).toBe('approved');
+    expect(setSlideshow(m, 'MP99', { error: 'x' })).toBeUndefined();
+  });
+
+  it('you edit frames and steps, and switch the source only to a recording that exists', () => {
+    const p = finished();
+    expect(status(() => editPiece(m, s, 'you', p.id, { gif: { source: 'recording' } }))).toBe(409);
+    editPiece(m, s, 'you', p.id, { gif: { frames: [{ ...frame, caption: 'Edited', seconds: 3 }], steps: ['One', 'Two'] } });
+    expect(p.gif!.frames[0].caption).toBe('Edited');
+    expect(p.gif!.steps).toEqual(['One', 'Two']);
+  });
+
+  it('a real recording: you ask, the Captain links a task, the evidence becomes the GIF', () => {
+    const early = drafted();
+    expect(status(() => requestRecording(m, s, 'you', early.id))).toBe(409); // herald is still writing it
+    deletePiece(m, s, 'you', early.id);
+    const p = finished();
+    expect(status(() => requestRecording(m, s, 'crew-2', p.id))).toBe(403);
+    requestRecording(m, s, 'you', p.id);
+    expect(p.gif!.recording?.status).toBe('requested');
+    const inbox = s.inbox.find((i) => i.agentId === 'captain' && i.text.includes(p.id));
+    expect(inbox?.text).toContain('1. Open a wall');
+    expect(inbox?.text).toContain(`media_recording("${p.id}"`);
+    expect(status(() => requestRecording(m, s, 'you', p.id))).toBe(409); // already requested
+
+    addTask('T50', { status: 'in_progress' as Task['status'] });
+    expect(status(() => linkRecording(m, s, 'crew-2', p.id, 'T50'))).toBe(403);
+    expect(status(() => linkRecording(m, s, 'captain', p.id, 'T99'))).toBe(404);
+    linkRecording(m, s, 'captain', p.id, 't50');
+    expect(p.gif!.recording).toMatchObject({ status: 'recording', taskId: 'T50' });
+    expect(recordingFor(m, 'T50')).toBe(p);
+    expect(recordingFor(m, 'T38')).toBeUndefined();
+
+    setSlideshow(m, p.id, { file: file('slideshow.gif') });
+    approvePiece(m, s, 'you', p.id);
+    recordingDone(m, s, p.id, file('recording.gif'));
+    expect(p.status).toBe('review'); // back to you
+    expect(p.gif!.source).toBe('recording');
+    expect(currentGifFile(p)?.name).toBe('recording.gif');
+    const ready = () => s.notes.some((n) => n.topic === 'media' && n.text.startsWith(`Demo recording ready for ${p.id} ·`) && !n.dismissed);
+    expect(ready()).toBe(true);
+    approvePiece(m, s, 'you', p.id);
+    expect(ready()).toBe(false);
+    editPiece(m, s, 'you', p.id, { gif: { source: 'slideshow' } });
+    expect(currentGifFile(p)?.name).toBe('slideshow.gif');
+
+    // done → you can ask again; a failure keeps the slideshow and lets you ask once more
+    requestRecording(m, s, 'you', p.id);
+    linkRecording(m, s, 'captain', p.id, 'T50');
+    recordingFailed(m, p.id, 'ffmpeg failed: bad input');
+    expect(p.gif!.recording).toMatchObject({ status: 'failed', error: 'ffmpeg failed: bad input' });
+    expect(p.gif!.slideshow?.name).toBe('slideshow.gif');
+    requestRecording(m, s, 'you', p.id);
+    expect(p.gif!.recording?.status).toBe('requested');
+  });
+
+  it('social posts attach finished demo GIFs, and the brief offers them', () => {
+    const g = drafted();
+    const post = social();
+    expect(status(() => editPiece(m, s, 'you', post.id, { gifIds: [g.id] }))).toBe(400); // still drafting
+    saveDraft(m, s, 'herald', g.id, { gif: { frames: [frame], steps: ['Open a wall'], altText: 'alt' } });
+    finishDraft(m, s, 'herald', g.id);
+    expect(status(() => editPiece(m, s, 'you', post.id, { gifIds: [post.id] }))).toBe(400); // not a gif
+    editPiece(m, s, 'you', post.id, { gifIds: [g.id.toLowerCase(), g.id] });
+    expect(post.gifIds).toEqual([g.id]);
+
+    deletePiece(m, s, 'you', post.id);
+    createPiece(m, s, 'you', { kind: 'social', about: [{ kind: 'task', ref: 'T38' }] });
+    startNext(m);
+    expect(mediaBrief(m, s)).toContain(`Demo GIFs about the same work: ${g.id}`);
+  });
+
+  it('the gif brief asks for frames, steps and alt text; feature suggestions plan a GIF', () => {
+    drafted();
+    const brief = mediaBrief(m, s);
+    expect(brief).toContain('Demo GIF: open the evidence screenshots with Read');
+    expect(brief).toContain('gif.steps');
+    const sg = suggestFeature(m, s, 'captain', { task: 'T38', title: 'Approve posts', why: 'Teachers asked.' });
+    expect(sg.plan.map((x) => x.kind)).toEqual(['social', 'website', 'gif']);
+    const made = acceptSuggestion(m, s, 'you', sg.id);
+    expect(made.find((x) => x.kind === 'gif')?.gif?.source).toBe('slideshow');
+  });
 });

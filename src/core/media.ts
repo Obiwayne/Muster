@@ -10,6 +10,9 @@ import type {
   MediaAbout,
   MediaClaim,
   MediaClaimSource,
+  MediaGif,
+  MediaGifFile,
+  MediaGifFrame,
   MediaImage,
   MediaKind,
   MediaPiece,
@@ -24,14 +27,14 @@ import type {
   Note,
   Task,
 } from '../types.js';
-import { closeNoteIfOpen, feedEvent, findAgent, HUMAN, isCaptain, nowIso, postNote, SYSTEM } from './board.js';
+import { addInbox, captainOf, closeNoteIfOpen, feedEvent, findAgent, HUMAN, isCaptain, nowIso, postNote, SYSTEM } from './board.js';
 import { badRequest, conflict, forbidden, notFound } from './errors.js';
 import type { MusterPaths } from './paths.js';
 import { writeAtomic, type StoreOptions } from './store.js';
 
 /** herald's id: there is only ever one media agent. */
 export const HERALD_ID = 'herald';
-export const MEDIA_KINDS: readonly MediaKind[] = ['social', 'article', 'website', 'video'];
+export const MEDIA_KINDS: readonly MediaKind[] = ['social', 'article', 'website', 'video', 'gif'];
 export const PLATFORMS: readonly MediaPlatform[] = ['x', 'linkedin', 'bluesky', 'threads'];
 /** Character limits the UI warns about (never rejected: a long LinkedIn post is fine). */
 export const PLATFORM_LIMITS: Record<MediaPlatform, number> = { x: 280, linkedin: 3000, bluesky: 300, threads: 500 };
@@ -60,12 +63,20 @@ const MAX_IMAGES = 6;
 const MAX_ABOUT = 10;
 const MAX_PROGRESS = 200;
 const MAX_TARGET = 200;
+const MAX_FRAMES = 12;
+const MAX_CAPTION = 60;
+const MAX_STEPS = 12;
+const MAX_STEP = 200;
+const MAX_ALT = 400;
+const MAX_GIFS = 3;
+/** Image kinds ffmpeg reads as a still frame. */
+const FRAME_EXT = /\.(png|jpe?g|webp|gif)$/i;
 /** A stage that completed longer ago than this gets no suggestion (so old stages don't flood the page on first run). */
 const STAGE_SUGGEST_WINDOW_MS = 14 * 24 * 3600_000;
 /** A weekly roundup is suggested only for weeks with at least this many merged tasks. */
 export const WEEKLY_MIN_MERGED = 5;
 
-const KIND_LABEL: Record<MediaKind, string> = { social: 'Social post', article: 'Article', website: 'Website', video: 'Video script' };
+const KIND_LABEL: Record<MediaKind, string> = { social: 'Social post', article: 'Article', website: 'Website', video: 'Video script', gif: 'Demo GIF' };
 const CLAIM_KINDS: readonly MediaClaimSource['kind'][] = ['task', 'stage', 'goal', 'idea', 'intel', 'chat', 'evidence', 'opinion'];
 const ABOUT_KINDS: readonly MediaAbout['kind'][] = ['stage', 'goal', 'task', 'idea', 'range'];
 const OPINION: MediaClaimSource = { kind: 'opinion', ref: '', label: 'opinion · your voice' };
@@ -342,8 +353,53 @@ function claims(v: unknown): MediaClaim[] {
   });
 }
 
-/** The text fields both you (edit) and herald (draft) may set, validated for the piece's kind. */
-function applyText(state: MusterState, piece: MediaPiece, body: Record<string, any>): void {
+function frames(state: MusterState, v: unknown): MediaGifFrame[] {
+  return list(v, 'gif.frames', MAX_FRAMES).map((raw, i) => {
+    if (!isObj(raw)) throw badRequest(`gif.frames[${i}] must be an object`);
+    const taskId = text(raw.taskId, `gif.frames[${i}].taskId`, 20).toUpperCase();
+    const evidenceId = text(raw.evidenceId, `gif.frames[${i}].evidenceId`, 20).toUpperCase();
+    const name = text(raw.name, `gif.frames[${i}].name`, 260);
+    const task = state.tasks.find((t) => t.id === taskId);
+    const entry = task?.evidence?.find((e) => e.id === evidenceId);
+    if (!entry || !entry.files.some((f) => f.name === name)) throw badRequest(`No evidence file ${taskId}/${evidenceId}/${name}`);
+    if (!FRAME_EXT.test(name)) throw badRequest(`gif.frames[${i}]: ${name} is not an image (png, jpg, webp or gif)`);
+    const seconds = raw.seconds === undefined ? 2.5 : raw.seconds;
+    if (typeof seconds !== 'number' || !Number.isFinite(seconds) || seconds < 0.5 || seconds > 8) throw badRequest(`gif.frames[${i}].seconds must be a number from 0.5 to 8`);
+    return { taskId, evidenceId, name, caption: text(raw.caption, `gif.frames[${i}].caption`, MAX_CAPTION, false), seconds: Math.round(seconds * 10) / 10 };
+  });
+}
+
+/** gif: {source?, frames?, steps?, altText?} merged into the piece's MediaGif. Returns whether the frames changed. */
+function applyGif(state: MusterState, piece: MediaPiece, v: unknown): boolean {
+  if (!isObj(v)) throw badRequest('gif must be an object');
+  for (const k of Object.keys(v)) if (!['source', 'frames', 'steps', 'altText'].includes(k)) throw badRequest(`gif.${k} can't be set`);
+  const gif = (piece.gif ??= emptyGif());
+  const before = JSON.stringify(gif.frames);
+  if (v.frames !== undefined) gif.frames = frames(state, v.frames);
+  if (v.steps !== undefined) gif.steps = list(v.steps, 'gif.steps', MAX_STEPS).map((t, i) => text(t, `step ${i + 1}`, MAX_STEP));
+  if (v.altText !== undefined) gif.altText = text(v.altText, 'gif.altText', MAX_ALT, false);
+  if (v.source !== undefined) {
+    const source = oneOf(v.source, ['slideshow', 'recording'] as const, 'gif.source');
+    if (source === 'recording' && !gif.recording?.file) throw conflict(`${piece.id} has no recording yet`);
+    gif.source = source;
+  }
+  return JSON.stringify(gif.frames) !== before;
+}
+
+/** gifIds on a social post: demo GIF pieces that are in review, approved or used. */
+function gifIds(store: MediaStore, v: unknown): string[] {
+  return [...new Set(list(v, 'gifIds', MAX_GIFS).map((x, i) => text(x, `gifIds[${i}]`, 20).toUpperCase()))].map((id) => {
+    const g = store.pieces.find((p) => p.id === id);
+    if (!g || g.kind !== 'gif') throw badRequest(`${id} is not a demo GIF piece`);
+    if (!['review', 'approved', 'used'].includes(g.status)) throw badRequest(`${id} is ${g.status}; attach a demo GIF once herald has finished it`);
+    return id;
+  });
+}
+
+export const emptyGif = (): MediaGif => ({ source: 'slideshow', frames: [], steps: [], altText: '' });
+
+/** The text fields both you (edit) and herald (draft) may set, validated for the piece's kind. Returns whether the GIF frames changed (re-render). */
+function applyText(store: MediaStore, state: MusterState, piece: MediaPiece, body: Record<string, any>): boolean {
   const kind = piece.kind;
   const only = (field: string, kinds: MediaKind[]) => {
     if (body[field] !== undefined && !kinds.includes(kind)) throw badRequest(`${field} is for ${kinds.map((k) => KIND_LABEL[k].toLowerCase()).join(' or ')} pieces, not a ${KIND_LABEL[kind].toLowerCase()}`);
@@ -355,6 +411,8 @@ function applyText(state: MusterState, piece: MediaPiece, body: Record<string, a
   only('hooks', ['video']);
   only('hookChosen', ['video']);
   only('shots', ['video']);
+  only('gif', ['gif']);
+  only('gifIds', ['social']);
   if (body.title !== undefined) piece.title = text(body.title, 'title', MAX_TITLE);
   if (body.posts !== undefined) piece.posts = posts(body.posts, piece);
   if (body.images !== undefined) piece.images = images(state, body.images);
@@ -366,6 +424,8 @@ function applyText(state: MusterState, piece: MediaPiece, body: Record<string, a
   }
   if (body.hookChosen !== undefined) piece.hookChosen = index(body.hookChosen, 'hookChosen', piece.hooks?.length ?? 0);
   if (body.shots !== undefined) piece.shots = shots(body.shots);
+  if (body.gifIds !== undefined) piece.gifIds = gifIds(store, body.gifIds);
+  return body.gif !== undefined && applyGif(state, piece, body.gif);
 }
 
 // ------------------------------------------------------------------ pieces (you)
@@ -387,6 +447,7 @@ function newPiece(store: MediaStore, kind: MediaKind, about: MediaAbout[], extra
     status: 'queued',
     about,
     ...(kind === 'social' ? { platforms: [...DEFAULT_PLATFORMS] } : {}),
+    ...(kind === 'gif' ? { gif: emptyGif() } : {}),
     claims: [],
     requests: [],
     createdAt: at,
@@ -425,7 +486,7 @@ export function editPiece(store: MediaStore, state: MusterState, actor: string, 
   const piece = requirePiece(store, id);
   if (piece.status === 'drafting') throw conflict(`herald is writing ${piece.id}; edit it when the draft is ready`);
   for (const k of ['claims', 'progress', 'status']) if (body[k] !== undefined) throw badRequest(`${k} can't be edited`);
-  applyText(state, piece, body);
+  applyText(store, state, piece, body);
   const at = nowIso();
   piece.editedAt = at;
   piece.updatedAt = at;
@@ -473,6 +534,7 @@ export function approvePiece(store: MediaStore, state: MusterState, actor: strin
   if (piece.status !== 'review') throw conflict(`${piece.id} is ${piece.status}, not waiting for review`);
   const open = unsourced(piece);
   if (open.length) throw conflict(`${piece.id} has ${open.length} claim${open.length === 1 ? '' : 's'} with no source (${open.map((c) => c.id).join(', ')}): confirm ${open.length === 1 ? 'it' : 'them'} or ask herald to cut ${open.length === 1 ? 'it' : 'them'}`);
+  if (piece.kind === 'gif' && !currentGifFile(piece)) throw conflict(`${piece.id} has no GIF yet${piece.gif?.renderError ? ` (${piece.gif.renderError})` : '; it is still rendering'}`);
   piece.status = 'approved';
   piece.approvedAt = piece.updatedAt = nowIso();
   settleNote(state, piece.id);
@@ -546,7 +608,7 @@ export function saveDraft(store: MediaStore, state: MusterState, actor: string, 
   requireHerald(state, actor, 'save drafts');
   const piece = requirePiece(store, id);
   if (piece.status !== 'drafting') throw conflict(`${piece.id} is ${piece.status}, not being drafted; call media_brief for the current piece`);
-  applyText(state, piece, body);
+  applyText(store, state, piece, body);
   if (body.claims !== undefined) piece.claims = claims(body.claims);
   if (body.progress !== undefined) piece.progress = text(body.progress, 'progress', MAX_PROGRESS, false) || undefined;
   piece.updatedAt = nowIso();
@@ -562,6 +624,11 @@ function missing(piece: MediaPiece): string | undefined {
   }
   if ((piece.kind === 'article' || piece.kind === 'website') && !piece.sections?.some((s) => s.text.trim())) return 'no sections with text yet';
   if (piece.kind === 'video' && !piece.shots?.length) return 'no shots yet';
+  if (piece.kind === 'gif') {
+    if (!piece.gif?.frames.length) return 'no frames yet: save gif.frames (evidence screenshots with captions)';
+    if (!piece.gif.steps.length) return 'no demo steps yet: save gif.steps';
+    if (!piece.gif.altText.trim()) return 'no alt text yet: save gif.altText';
+  }
   return undefined;
 }
 
@@ -599,9 +666,9 @@ const noteTitle = (piece: MediaPiece) => `herald finished ${piece.id} · ${piece
 
 /** The board note of a piece is settled once it's approved, used, deleted or redrafted. */
 function settleNote(state: MusterState, pieceId: string): void {
-  const head = `herald finished ${pieceId} ·`;
+  const heads = [`herald finished ${pieceId} ·`, `Demo recording ready for ${pieceId} ·`];
   for (const n of state.notes as Note[]) {
-    if (n.topic !== 'media' || !n.text.startsWith(head) || n.dismissed) continue;
+    if (n.topic !== 'media' || !heads.some((h) => n.text.startsWith(h)) || n.dismissed) continue;
     closeNoteIfOpen(n);
     n.dismissed = true;
   }
@@ -667,8 +734,8 @@ export function suggestFeature(store: MediaStore, state: MusterState, actor: str
     trigger: 'feature',
     ref: task.id,
     title,
-    summary: `Social posts for X and LinkedIn, plus a section for the website. ${why}`.slice(0, 600),
-    plan: [{ kind: 'social', platforms: ['x', 'linkedin'] }, { kind: 'website' }],
+    summary: `Social posts for X and LinkedIn, a section for the website and a demo GIF. ${why}`.slice(0, 600),
+    plan: [{ kind: 'social', platforms: ['x', 'linkedin'] }, { kind: 'website' }, { kind: 'gif' }],
     about: [{ kind: 'task', ref: task.id, label: `${task.id} ${task.title}` }],
   });
 }
@@ -797,9 +864,11 @@ export function mediaBrief(store: MediaStore, state: MusterState, opts: { intel?
     L.push('', `## Change requests from ${who} (do these now; keep everything else)`);
     for (const r of open) L.push(`- ${r.text}`);
   }
-  if (piece.posts?.length || piece.sections?.length || piece.shots?.length) L.push('', 'There is already a draft (edited by you or by the user). Read it with the fields below and change only what the requests ask for.');
+  if (piece.posts?.length || piece.sections?.length || piece.shots?.length || piece.gif?.frames.length) L.push('', 'There is already a draft (edited by you or by the user). Read it with the fields below and change only what the requests ask for.');
   for (const p of piece.posts ?? []) p.versions.forEach((v, i) => L.push(`[${p.platform} ${String.fromCharCode(65 + i)}${i === p.chosen ? ', chosen' : ''}] ${v}`));
   for (const s of piece.sections ?? []) L.push(`[${s.id} ${s.heading || '(no heading)'}] ${clip(s.text, 600)}`);
+  if (piece.gif?.frames.length) piece.gif.frames.forEach((f, i) => L.push(`[frame ${i + 1}] ${f.taskId}/${f.evidenceId} · ${f.name} · ${f.seconds}s · "${f.caption}"`));
+  if (piece.gif?.steps.length) piece.gif.steps.forEach((t, i) => L.push(`[step ${i + 1}] ${t}`));
 
   L.push('', '## House style', store.houseStyle);
 
@@ -853,6 +922,14 @@ export function mediaBrief(store: MediaStore, state: MusterState, opts: { intel?
   if (piece.kind === 'article') L.push('- Article: 4–6 sections with plain headings, about 800–1,500 words. Mark sections todo/writing/done as you go.');
   if (piece.kind === 'website') L.push('- Website: a target path plus sections (hero line, feature blocks, FAQ or changelog entries). Short, scannable.');
   if (piece.kind === 'video') L.push('- Video: 3 opening hooks, then a shot table (at "0:04", shot, voiceover, onScreen). Use evidence screenshots where they exist (evidence: taskId, evidenceId, name); set record: true where someone has to film it. About 60 seconds unless asked.');
+  if (piece.kind === 'gif')
+    L.push(
+      '- Demo GIF: open the evidence screenshots with Read and pick 2–6 that really show the feature, in the order a user would see it. Save gif.frames (taskId, evidenceId, name, caption ≤ 60 chars, seconds 1.5–4). Also save gif.steps (3–8 steps to demo it for real with sample data, never real users) and gif.altText (one or two sentences describing what the GIF shows). Muster renders the GIF after you finish. No screenshot shows it? Use the closest ones, say so in your summary, and the user can ask for a real recording.',
+    );
+  if (piece.kind === 'social') {
+    const gifs = store.pieces.filter((p) => p.kind === 'gif' && ['review', 'approved', 'used'].includes(p.status) && p.about.some((a) => piece.about.some((b) => b.kind === a.kind && b.ref === a.ref)));
+    if (gifs.length) L.push(`- Demo GIFs about the same work: ${gifs.map((g) => `${g.id} "${g.title}"`).join(', ')}. Attach one with gifIds when it fits the post better than a still.`);
+  }
   L.push('- When done, call media_finish. Never post anything, push, edit files or claim tasks.');
   return L.join('\n');
 }
@@ -868,3 +945,125 @@ function safePath(fn: (task: Task, entryId: string, name: string) => string, tas
 /** What a piece is called in the Captain's inbox and the feed. */
 export const pieceLabel = (piece: MediaPiece) => `${piece.id} ${KIND_LABEL[piece.kind].toLowerCase()} "${clip(piece.title, 60)}"`;
 
+
+// ------------------------------------------------------------------ demo GIF (rendering: core/mediagif.ts)
+
+/** The GIF file the piece currently uses (slideshow or recording), if it has been made. */
+export function currentGifFile(piece: MediaPiece): MediaGifFile | undefined {
+  const gif = piece.gif;
+  if (!gif) return undefined;
+  return gif.source === 'recording' ? gif.recording?.file : gif.slideshow;
+}
+
+function requireGif(store: MediaStore, id: string): MediaPiece & { gif: MediaGif } {
+  const piece = requirePiece(store, id);
+  if (piece.kind !== 'gif') throw badRequest(`${piece.id} is a ${KIND_LABEL[piece.kind].toLowerCase()}, not a demo GIF`);
+  piece.gif ??= emptyGif();
+  return piece as MediaPiece & { gif: MediaGif };
+}
+
+/** The slideshow finished rendering (or failed). Undefined when the piece was deleted meanwhile. The caller commits. */
+export function setSlideshow(store: MediaStore, id: string, result: { file: MediaGifFile } | { error: string }): MediaPiece | undefined {
+  const piece = store.pieces.find((p) => p.id === id && p.kind === 'gif');
+  if (!piece) return undefined;
+  const gif = (piece.gif ??= emptyGif());
+  if ('file' in result) {
+    gif.slideshow = result.file;
+    delete gif.renderError;
+  } else gif.renderError = result.error.slice(0, 400);
+  return piece;
+}
+
+/** POST /api/media/pieces/:id/record: you ask for a real recording; the Captain gets the steps in its inbox. */
+export function requestRecording(store: MediaStore, state: MusterState, actor: string, id: string): MediaPiece {
+  requireHuman(actor, 'ask for demo recordings');
+  const piece = requireGif(store, id);
+  if (piece.status === 'queued' || piece.status === 'drafting') throw conflict(`herald is still writing ${piece.id}; ask for a recording when the draft is ready`);
+  const rec = piece.gif.recording;
+  if (rec && (rec.status === 'requested' || rec.status === 'recording')) throw conflict(`A recording of ${piece.id} is already ${rec.status === 'requested' ? 'requested' : `being made in ${rec.taskId}`}`);
+  if (!piece.gif.steps.length) throw conflict(`${piece.id} has no demo steps; add them first`);
+  const at = nowIso();
+  piece.gif.recording = { status: 'requested', requestedAt: at };
+  piece.updatedAt = at;
+  const captain = captainOf(state);
+  if (captain) {
+    addInbox(state, {
+      agentId: captain.id,
+      from: SYSTEM,
+      kind: 'system',
+      text: [
+        `The user wants a real recording of demo GIF ${piece.id} "${piece.title}".`,
+        'Steps:',
+        ...piece.gif.steps.map((t, i) => `${i + 1}. ${t}`),
+        `Create one small task to record this demo with sample data (never real user data) and attach the recording as video evidence (.webm/.mp4) or a .gif (the before-and-after skill's scripts/record.mjs records a browser session); then call media_recording("${piece.id}", <task id>). Muster turns the recording into the GIF when the evidence arrives.`,
+      ].join('\n'),
+    });
+  }
+  feedEvent(state, actor, `asked for a real recording of demo GIF ${piece.id}`);
+  return piece;
+}
+
+/** POST /api/media/pieces/:id/recording (media_recording): the Captain links the crew task that records the demo. */
+export function linkRecording(store: MediaStore, state: MusterState, actor: string, id: string, taskId: unknown): MediaPiece {
+  if (!isCaptain(state, actor)) throw forbidden('Only the Captain links a recording task');
+  const piece = requireGif(store, id);
+  const rec = piece.gif.recording;
+  if (!rec || rec.status === 'done') throw conflict(`No recording of ${piece.id} was asked for${rec ? ' (the last one is done)' : ''}`);
+  const tid = text(taskId, 'task', 20).toUpperCase();
+  const task = state.tasks.find((t) => t.id === tid);
+  if (!task) throw notFound(`No task "${taskId}"`);
+  const other = store.pieces.find((p) => p !== piece && p.gif?.recording?.status === 'recording' && p.gif.recording.taskId === tid);
+  if (other) throw conflict(`${tid} already records ${other.id}`);
+  rec.status = 'recording';
+  rec.taskId = tid;
+  delete rec.error;
+  piece.updatedAt = nowIso();
+  feedEvent(state, actor, `linked ${tid} to record demo GIF ${piece.id}`);
+  return piece;
+}
+
+/** The piece whose recording task is `taskId`, while it is being recorded. */
+export function recordingFor(store: MediaStore, taskId: string): MediaPiece | undefined {
+  return store.pieces.find((p) => p.kind === 'gif' && p.gif?.recording?.status === 'recording' && p.gif.recording.taskId === taskId);
+}
+
+/** The recording became recording.gif: it is now the GIF and the piece goes back to you. The caller commits both stores. */
+export function recordingDone(store: MediaStore, state: MusterState, id: string, file: MediaGifFile): MediaPiece | undefined {
+  const piece = store.pieces.find((p) => p.id === id && p.kind === 'gif');
+  const rec = piece?.gif?.recording;
+  if (!piece || !rec) return undefined;
+  rec.status = 'done';
+  rec.file = file;
+  delete rec.error;
+  piece.gif!.source = 'recording';
+  const at = nowIso();
+  piece.updatedAt = at;
+  if (piece.status === 'approved' || piece.status === 'used' || piece.status === 'failed') {
+    piece.status = 'review';
+    delete piece.approvedAt;
+    delete piece.usedAt;
+  }
+  settleNote(state, piece.id);
+  const note = postNote(state, {
+    actor: SYSTEM,
+    type: 'system',
+    to: HUMAN,
+    topic: 'media',
+    text: `Demo recording ready for ${piece.id} · ${piece.title}\nThe real recording (${rec.taskId}) is now the GIF: ${file.seconds.toFixed(1)} s, ${(file.bytes / 1048576).toFixed(1)} MB. Check it and approve.`,
+  });
+  note.open = true;
+  delete note.taskId;
+  delete note.branch;
+  return piece;
+}
+
+/** Turning the recording into a GIF failed: the slideshow stays, and you can ask again. */
+export function recordingFailed(store: MediaStore, id: string, error: string): MediaPiece | undefined {
+  const piece = store.pieces.find((p) => p.id === id && p.kind === 'gif');
+  const rec = piece?.gif?.recording;
+  if (!piece || !rec) return undefined;
+  rec.status = 'failed';
+  rec.error = error.slice(0, 400);
+  piece.updatedAt = nowIso();
+  return piece;
+}

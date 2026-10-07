@@ -69,7 +69,7 @@ export const CAPTAIN_TOOLS = [
   'roadmap', 'set_roadmap', 'update_stage', 'check_criterion', 'complete_stage', 'add_goal', 'update_goal', 'link_tasks', 'roadmap_status',
   'list_ideas', 'get_idea', 'advise_idea', 'react',
   'intel_overview', 'intel_check_status', 'request_intel_check', 'intel_reply', 'intel_suggest', 'run_sweep',
-  'suggest_media',
+  'suggest_media', 'media_recording',
 ] as const;
 export const CREW_TOOLS = [
   'claim_task', 'list_agents', 'list_tasks', 'post_note', 'read_board', 'reply', 'ask_captain',
@@ -639,6 +639,16 @@ ${r.output}`;
       },
     );
 
+    tool(
+      'media_recording',
+      'Link the crew task that records a demo GIF for real (after the user asked for a recording; your inbox has the steps). When that task attaches a video (.webm/.mp4) or .gif as evidence, Muster turns it into the GIF.',
+      { piece: z.string().describe('Demo GIF piece id, e.g. MP5'), task: z.string().describe('The recording task, e.g. T52') },
+      async ({ piece, task }) => {
+        const p = await api<MediaPiece>(`/api/media/pieces/${enc(upId(piece))}/recording`, { method: 'POST', body: { actor: me, task: upId(task) } });
+        return `Linked ${p.gif?.recording?.taskId} to ${p.id}. Its worker attaches the recording with add_evidence (a .webm/.mp4 or .gif); Muster makes the GIF from it.`;
+      },
+    );
+
     // ---- research ideas ----
 
     tool(
@@ -766,17 +776,26 @@ ${r.output}`;
 
     tool(
       'media_draft',
-      'Save part of the draft; each field you send replaces the old value (send whole lists). Plain text only. posts (social): one per platform with 1-3 versions. images (social): evidence screenshots. sections (article/website): heading + text + status. target (website): the page path. hooks + shots (video). claims: every factual phrase with its sources ([] = unsourced, the user confirms or cuts it). progress: a short line the user sees live.',
+      'Save part of the draft; each field you send replaces the old value (send whole lists). Plain text only. posts (social): one per platform with 1-3 versions. images (social): evidence screenshots. gifIds (social): demo GIF pieces to attach. gif (demo GIF): frames, steps, altText. sections (article/website): heading + text + status. target (website): the page path. hooks + shots (video). claims: every factual phrase with its sources ([] = unsourced, the user confirms or cuts it). progress: a short line the user sees live.',
       {
         piece: z.string().optional().describe('Piece id, e.g. MP3 (default: the one you are drafting)'),
         title: z.string().min(1).max(160).optional(),
         posts: z.array(z.object({ platform: z.enum(['x', 'linkedin', 'bluesky', 'threads']), versions: z.array(z.string().min(1)).min(1).max(3), chosen: z.number().int().min(0).optional() })).optional(),
         images: z.array(evidenceRefShape.extend({ caption: z.string().max(120).optional() })).max(6).optional(),
+        gifIds: z.array(z.string()).max(3).optional().describe('Social only: finished demo GIF pieces to attach, e.g. ["MP5"]'),
         sections: z.array(z.object({ heading: z.string().max(200), text: z.string().max(8000), status: z.enum(['todo', 'writing', 'done']).optional() })).max(20).optional(),
         target: z.string().max(200).optional().describe('Website only, e.g. /features/moderation'),
         hooks: z.array(z.string().min(1).max(300)).max(3).optional(),
         hookChosen: z.number().int().min(0).optional(),
         shots: z.array(z.object({ at: z.string().describe('e.g. 0:04'), shot: z.string().min(1), voiceover: z.string(), onScreen: z.string().optional(), evidence: evidenceRefShape.optional(), record: z.boolean().optional() })).max(40).optional(),
+        gif: z
+          .object({
+            frames: z.array(evidenceRefShape.extend({ caption: z.string().max(60), seconds: z.number().min(0.5).max(8).optional().describe('Default 2.5') })).min(1).max(12).optional(),
+            steps: z.array(z.string().min(1).max(200)).max(12).optional().describe('How to demo it for real, with sample data'),
+            altText: z.string().max(400).optional(),
+          })
+          .optional()
+          .describe('Demo GIF only: frames (evidence screenshots + captions), steps, altText'),
         claims: z.array(z.object({ quote: z.string().min(1).max(300), sources: z.array(claimSourceShape).max(8) })).max(60).optional(),
         progress: z.string().max(200).optional().describe('e.g. "writing section 3 of 5"'),
       },

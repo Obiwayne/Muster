@@ -228,3 +228,41 @@ own kind.
   - bar actions Save GIF (download), Copy alt text and Approve, plus "Rendering…" and the `renderError` line.
   - New piece gets the fifth card "Demo GIF · Screenshots or a recording", and the library gets a "Demo GIFs" tab.
   - The social attachment picker becomes "+ Screenshot or demo GIF".
+
+### Demo GIF implementation notes (backend, obi/media-api)
+
+These are the details the Demo GIF contract left open, decided while building:
+- **Slideshow rendering.** Slideshows render at **2 fps** with a **palette per frame**
+  (`palettegen=stats_mode=single` / `paletteuse=new=1`).
+  - Stills change completely between frames, so one shared palette lost whole colours (a pink frame came out grey).
+  - Repeated frames cost almost nothing at 2 fps, so a 2-frame sample is about 35 KB. 0.5 s timing steps still
+    work.
+  - Each still is held with `tpad` before `fps` (fps drops a lone frame). The inputs have no `-loop`, because the
+    gif demuxer has none.
+- **Recordings** use 12 fps and one palette from every frame. A recording longer than 30 s is cut
+  (`MAX_RECORDING_SECONDS`).
+- **Captions** come from caption files (`.muster/media/<id>/.captions/`) through `textfile=` with
+  `expansion=none`, so "50% done" stays literal. The font is Segoe UI Semibold (else Segoe UI, Arial, DejaVu). The
+  caption sits in a dark box, bottom-left. Paths inside the filtergraph are quoted, with `:` escaped (`C\:/…`).
+- **Edits.** An `edit` that changes `gif.frames` drops `gif.slideshow` and `gif.renderError` before it re-renders.
+  The UI shows **Rendering…** when a gif piece has frames but no `slideshow` and no `renderError`. An edit made
+  during a render queues one more render.
+- **Frames.** `gif.frames[].seconds` defaults to 2.5, is rounded to 0.1 and must be 0.5–8. Frames must be image
+  evidence (png, jpg, webp or gif).
+- **Approve** on a gif piece needs the file of the current `source` (409 names the render error, or "still
+  rendering").
+- **`record` (you)** is refused while herald is drafting the piece, while a recording is already requested or
+  recording, and when there are no steps. It's allowed again after `done` or `failed`. The Captain's inbox item
+  names `media_recording("MPn", <task id>)`.
+- **Linking a recording.** The Captain's MCP tool calls **`POST /api/media/pieces/:id/recording` `{task}`**
+  (Captain only, checked in core). One task can record one piece at a time.
+- **The evidence hook** takes the first video file, or `.gif` file, in the new evidence entry of a task that is
+  recording a piece.
+  - Success sets `recording.file` and `status: 'done'`, switches `source` to `recording`, and moves an approved,
+    used or failed piece back to `review`. A queued or drafting piece keeps its status.
+  - It also posts the board note "Demo recording ready for MPn · <title>" (settled like a finish note on
+    approve/used/delete), plus a toast and a notification.
+  - Failure sets `recording.status: 'failed'` and `recording.error`.
+- **`gifIds`** accepts gif pieces in review, approved **or used**.
+- **`record.mjs`** also takes `--hold <ms>` (default 1200), which keeps recording after the last step. On a failed
+  step it still saves the video so far and exits 1.
