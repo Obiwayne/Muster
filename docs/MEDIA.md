@@ -283,3 +283,222 @@ become a tester", with no stages or task numbers in the text.
   herald puts it in the text exactly as typed.
 - **No jargon:** every brief now forbids internal ids and words in the text (M3, T38, roadmap, stage, crew, Muster,
   merged, branches). Ids belong in claim sources only.
+
+## Hashtags, Vellum post images, platform research, conversations and posting (2026-10-07)
+
+The user signed off five Vellum artboards on the Media page, row y 1080:
+- "Media — social post with hashtags"
+- "Media — posting (check and post)"
+- "Media — post images made in Vellum"
+- "Media — platform research"
+- "Media — conversations (reply drafts)"
+
+The user **reversed "never posts"**. Muster may now post, but only through the user's own signed-in Chrome, and only
+after the user presses Post or Reply for that one item. The types are in src/types.ts, in the section "Media:
+hashtags, Vellum post images…".
+
+### Platforms and hashtags
+
+- **New platforms:** `facebook` and `instagram`. Character limits: x 280, bluesky 300, threads 500, linkedin 3000,
+  facebook 5000, instagram 2200.
+- **Defaults:** new social pieces default to x, linkedin and facebook. Instagram is never on by default and needs at
+  least one image to post.
+- **Hashtag format:** `MediaPost.hashtags` are stored without "#", and each one matches `^[A-Za-z0-9_]{1,50}$`.
+- **Per-platform rule counts:** x 1–2, linkedin 3–5, facebook 1–3, instagram 5–10 (max 30), threads 1, bluesky 1–2.
+  herald follows them; the UI warns when outside them but doesn't reject.
+- **Full text:** the chosen version + "\n\n" + "#tag #tag". Copy text and posting use the full text, and the
+  X/Bluesky/Threads character counts include the hashtags.
+- **Picking hashtags:** herald picks them from `research.hashtags` when there is research.
+
+### Research (social pieces)
+
+- **When:** before drafting a social piece, herald researches its platforms.
+- **Refresh:** `POST /api/media/pieces/:id/research` works on any social piece that isn't drafting. It re-queues the
+  piece for research only.
+- **How:** herald uses the research browser through the existing `browse` tool (give herald the same tool scout
+  has). It searches each platform and the web for the subject: posts, threads and articles from the last ~30 days.
+- **Saving:** `media_research(piece, research)` stores `MediaResearch`. That's top posts and articles with
+  engagement and links, themes with counts, hashtags in use, and `used` (how it shaped the draft).
+- **Labelling:** themes are what people said, not facts, and the UI labels them that way.
+- **Conversations:** while researching, herald may also add up to 6 conversations (below) where a reply would help.
+
+### Vellum post images
+
+- **Asking:** `POST /api/media/pieces/:id/design {style, note?, platforms?}` (you only) sets `designRequest` and
+  queues herald.
+- **Vellum access:** herald gets the Vellum MCP server like the design crew does (`vellumServer(config)`), with
+  `VELLUM_EXPORT_ROOTS=<repo>/.muster/media` in its env.
+- **Where it designs:** on a page called "Media" in the project's Vellum file (`config.vellumFile`), created if
+  missing. Artboards are named like "MP3 · X 1600×900".
+- **Look:** it uses the file's design system (get_tokens, fonts, logo).
+- **Sizes:** x 1600×900, linkedin 1200×627, facebook 1200×630, instagram 1080×1080, threads 1080×1350, bluesky
+  1600×900.
+- **Export:** each artboard as PNG into `<repo>/.muster/media/<piece>/images/` (outputDir absolute). Then herald calls
+  `media_designs(piece, designs[])`.
+- **Server check:** the server checks each file exists there and reads the PNG size. It replaces the designs for
+  those platforms and clears `designRequest`.
+- **Serving:** `GET /api/media/pieces/:id/designs/:file` serves the PNG.
+- **Posting order:** a post uses the design for its platform when there is one, else evidence images, else GIFs.
+- **No Vellum:** with no `config.vellum` or no `vellumFile`, the design route returns 409 "Vellum isn't set up for
+  this project" and the UI hides "+ Make an image".
+- **On its own:** herald may make a design during drafting when a social piece has no good screenshot.
+
+### Conversations
+
+- **Storage:** `MediaStore.conversations`, ids MC1….
+- **Where they come from:**
+  - Threads come from research.
+  - Comments on your own posts come from a daily watch: when `replyPolicy.watchOwn` is on and there are posted jobs
+    with URLs from the last 14 days, the server queues a watch for herald at most once every 24 hours (`lastWatch`).
+- **Rules for herald:**
+  - Reply only where it adds something real (an answer, your experience, a fix).
+  - Name your product only when someone asked for a tool, and then say it's yours (`mentionsProduct: true`).
+  - At most one conversation per thread URL.
+  - Claims follow the same rules as pieces.
+- **Routes (you only):**
+  - `POST /api/media/conversations/:id/edit {draft}`, `/skip` and `/claims/:cid/confirm`.
+  - `/reply` creates a reply publish job. It's refused with 409 while there are unsourced claims, and with 409 when
+    today's replies (posted + queued, local day) reach `replyPolicy.perDay`.
+  - `PUT /api/media/reply-policy {perDay?, watchOwn?}`.
+- **Summary:** `MediaSummary.conversations` counts drafts.
+
+### Posting through your Chrome
+
+- **Start:** `POST /api/media/publish {pieceId, platforms}` (you only; the piece must be approved or used, and
+  social). It creates one `MediaPublishJob` per platform with the full text and image paths (design → evidence →
+  GIF). Instagram with no image is a 400. Then it starts herald.
+- **Stop:** `POST /api/media/publish/stop {pieceId}` cancels that piece's queued and ready jobs.
+- **Go or cancel one job:** `POST /api/media/publish/:jobId/go` (ready → posting, you only) and `/cancel`.
+- **Chrome:** herald is always spawned with `--chrome` (Claude in Chrome, the user's signed-in Chrome).
+- **herald tools:**
+  - `media_publish_next()` returns the oldest queued job, or nothing.
+  - `media_publish_ready(job, composer, attached)` moves the job from filling to ready. Muster then posts a board note
+    with topic `media` ("X post ready: check the tab in Chrome and press Post in Muster") plus a toast and
+    notification.
+  - `media_publish_wait(job)` long-polls up to 5 minutes and returns `go`, `cancel` or `waiting`. herald loops while
+    it's `waiting`.
+  - `media_publish_done(job, url)` and `media_publish_failed(job, error, signin?)`.
+- **What herald does, in order:**
+  1. Open a NEW tab and go to the platform's composer (or the reply box of `conversation.url`).
+  2. If a login page shows, call `failed(signin: true)`; the status becomes `signin`.
+  3. Paste `job.text` exactly and attach `job.images` with the file upload tool.
+  4. Read the composer back, call `ready`, then `wait`.
+  5. Only on `go`: press Post/Reply once, read the new post's URL, and call `done`.
+  6. On `cancel`: discard the draft and close the tab.
+- **Never:** like, follow, DM, quote, or post anything that isn't `job.text`.
+- **Afterwards:** when every post job of a piece is posted, the piece becomes `used` (`usedAt`). A posted reply sets
+  its conversation to `posted`.
+- **Summary:** `MediaSummary.publishReady` counts ready jobs and is added to the nav badge.
+
+### herald's queue (one thing at a time)
+
+1. Publish jobs (you're waiting).
+2. Design requests.
+3. Research and drafts (a social draft starts with research).
+4. The daily watch.
+
+The brief (`media_brief`) says which kind of work is current. The prompt gets the posting and reply rules above word
+for word.
+
+### UI (follow the five artboards)
+
+- **Post tab:**
+  - Platform tabs gain Facebook and Instagram; Instagram is off by default.
+  - Hashtag chips have ✕ and "+ hashtag", with the per-platform hint, and the counts include hashtags.
+- **Approve:** opens the "Approved. Want me to post it for you?" dialog. It lists platform rows with ticks (version,
+  hashtags, images) and offers "Yes, get N posts ready" or "No, I'll copy it myself". "Post it for me" in the bar
+  reopens it.
+- **Posting rail** (replaces the claims rail while jobs exist):
+  - Per-job status lines.
+  - A ready job shows the `composer` text, the attached count and "Check the tab in Chrome", with Post on X / Cancel.
+  - Posted jobs show "View post ↗".
+  - Sign-in jobs say "Sign in to X in Chrome, then Retry". Retry is `POST /api/media/publish {pieceId,
+    platforms:[x]}`.
+  - "Stop posting" is in the bar.
+- **Attachments:**
+  - Vellum designs come first, with a VELLUM tag, the size, and "Open in Vellum". Open in Vellum opens the Vellum
+    app's file if possible, else just shows the file name.
+  - Then screenshots, then GIFs.
+  - The "+ Make an image" card opens a popover: style, sizes from platforms, note, and "Make N images".
+- **View tabs:** social pieces get Post | Research | Conversations, per the artboards.
+- **Conversations:**
+  - Reply for me is disabled, with the reason shown, when there are unsourced claims or the daily limit is reached.
+  - The policy card edits `replyPolicy`.
+
+### Implementation notes (backend, obi/social-api)
+
+These are details the contract left open, decided while building. Code: `src/core/mediasocial.ts` (pure),
+`src/orchestrator/mediaapi.ts` (runtime and routes).
+
+**New store fields** (added to the types):
+- `MediaStore.current` (`MediaWork {kind, id?, startedAt}`) is the one thing herald holds.
+- `MediaStore.watchQueuedAt` means the comment check is due.
+- `MediaPiece.researchQueued` means a Refresh is waiting.
+
+**Dispatching:**
+- `pickWork` hands out work only when the current item is closed. A post is closed once its job leaves
+  queued/filling/ready/posting, an image once `designRequest` is gone, a draft once the piece isn't drafting, a
+  refresh once `researchQueued` is gone, and the check once `watchQueuedAt` is gone.
+- herald is typed "`<label>`: call media_brief and start", e.g. "Put post PJ1 into X". It stops `scoutStopDelayMs`
+  after the last work closes (`hasWork()` false).
+
+**Research route:** `POST /api/media/pieces/:id/research` is a **Refresh when the actor is you** (409 while queued or
+drafting; 400 for non-social pieces) and **saves research (media_research) when the actor is herald**.
+
+**Routes the contract didn't name:**
+
+| Route | Actor | Returns |
+|---|---|---|
+| `POST /api/media/pieces/:id/design` | you | the piece (with `designRequest`) |
+| `POST /api/media/pieces/:id/designs {designs}` | herald | the piece |
+| `GET /api/media/pieces/:id/designs/:file` | anyone | the PNG |
+| `POST /api/media/conversations {conversations}` | herald | `{added: MediaConversation[]}` |
+| `POST /api/media/watch/done` | herald | `{ok: true}` |
+| `POST /api/media/publish/next` | herald | `{job: MediaPublishJob \| null}` |
+| `POST /api/media/publish/:id/ready {composer, attached}` | herald | the job |
+| `POST /api/media/publish/:id/wait` (long poll) | herald | `{decision: 'go' \| 'cancel' \| 'waiting' \| <status>, job}` |
+| `POST /api/media/publish/:id/done {url}` | herald | the job |
+| `POST /api/media/publish/:id/failed {error, signin?}` | herald | the job |
+
+The wait holds **4 minutes**, not 5, to stay under Node's 5-minute request timeout.
+
+**Your routes' responses:**
+- `POST /api/media/publish` returns `{jobs}`.
+- `POST /api/media/publish/stop` returns `{stopped: jobs}`.
+- `go` and `cancel` return the job.
+- `conversations/:id/edit|skip|claims/:cid/confirm` return the conversation; `/reply` returns the new job.
+- `PUT /api/media/reply-policy` returns the full policy.
+- Errors are 400 for bad input, 403 for the wrong actor, 404 for unknown ids and 409 for the wrong status. 409 also
+  covers unsourced claims, the daily reply limit, a platform already going out, and Vellum not set up.
+
+**When a piece becomes used:** after a post is done and none of the piece's post jobs are still going out. A `signin`
+or `failed` job keeps the piece `approved` until a retry posts it, or until you mark it used.
+- **Retry** = `POST /api/media/publish` again for that platform. A platform with a job queued, filling, ready or
+  posting is skipped, and the call is a 409 when every platform was skipped.
+- **Cancel** works on queued, filling, ready, signin and failed jobs, but not on posting (409). Cancelling a reply job
+  puts its conversation back to `draft`.
+
+**If herald exits with work open:**
+- A job not yet sent becomes `failed` ("Retry puts it in again").
+- A job that was posting becomes `failed` with "check <platform> before you retry".
+- A design or research request is dropped (with a feed line).
+- The comment check is postponed 24 hours.
+- Drafts fail as before.
+
+**Ready note:** first line "`<Platform> <post|reply> ready (PJn)`", topic `media`, open. It is settled on go,
+cancel, stop, done or failed, and by herald exiting.
+
+**Browsing:** herald may use `browse` while its current work is a social draft, a research refresh or the comment
+check. The page budget is 40 per piece of work, using the research browser's mode; screenshots go to
+`.muster/media/shots`. The contract asked for the same tool scout has; this is the same route with a herald branch.
+
+**Agent launch:**
+- herald launches with `--chrome`.
+- Its MCP config gets the Vellum server only when `config.vellumFile` is set (plus `VELLUM_EXPORT_ROOTS=<repo>/.muster/media`).
+- "Vellum set up" for the design route = `vellumServer(config)` and `vellumFile`.
+
+**Other details:**
+- Hashtag inputs may include a leading "#" (it is stripped). Repeats are dropped case-insensitively, with a maximum of 30.
+- Design file names must be bare `.png` names in the piece's images folder. Re-designing a platform replaces its
+  image; the Vellum export never overwrites, so herald exports under a new name.
+- Replies per day count posted and in-flight reply jobs created on your local calendar day.

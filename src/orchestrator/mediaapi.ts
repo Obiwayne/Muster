@@ -2,15 +2,20 @@
 // route. See docs/MEDIA.md.
 import { existsSync, readFileSync } from 'node:fs';
 import { join } from 'node:path';
-import type { Evidence, IntelStore, MediaPiece, MediaStore, MusterConfig, MusterState, Task } from '../types.js';
+import type { BrowseMode, Evidence, IntelStore, MediaPiece, MediaPlatform, MediaPublishJob, MediaStore, MusterConfig, MusterState, Note, Task } from '../types.js';
 import * as board from '../core/board.js';
-import { badRequest, notFound } from '../core/errors.js';
+import { badRequest, forbidden, notFound } from '../core/errors.js';
 import { evidencePath } from '../core/evidence.js';
+import { vellumServer } from '../core/claude.js';
 import * as media from '../core/media.js';
+import * as social from '../core/mediasocial.js';
 import { convertRecording, renderSlideshow, type RenderOptions } from '../core/mediagif.js';
 import type { MusterPaths } from '../core/paths.js';
 import type { Store } from '../core/store.js';
 import type { AgentManager, HeraldMedia } from './agents.js';
+
+/** Pages herald may read per research or comment check. */
+export const MEDIA_PAGE_BUDGET = 40;
 
 export interface MediaRuntimeOptions {
   store: Store;
@@ -20,6 +25,9 @@ export interface MediaRuntimeOptions {
   log?: (msg: string) => void;
   /** Test seam: the ffmpeg path / runner / font behind demo GIF rendering (core/mediagif.ts). */
   gif?: RenderOptions;
+  /** Test seams: how long media_publish_wait holds (default 4 min) and how often it looks (default 1 s). */
+  publishWaitMs?: number;
+  publishPollMs?: number;
 }
 
 /**
@@ -69,12 +77,34 @@ export class MediaRuntime implements HeraldMedia {
     return media.draftingPiece(this.store);
   }
 
+  /** The line herald is typed for the work it holds ("Draft MP3", "Put post PJ2 into X"), or undefined. */
+  heraldWork(): string | undefined {
+    const w = this.store.current;
+    if (w && social.workOpen(this.store, w)) return social.workLabel(this.store, w);
+    const piece = media.draftingPiece(this.store);
+    return piece ? `Draft ${piece.id}` : undefined;
+  }
+
+  /** Whether herald has anything open or waiting (it is stopped when this turns false). */
+  hasWork(): boolean {
+    return social.hasWork(this.store);
+  }
+
   onHeraldExit(reason: string): void {
     const piece = media.failCurrent(this.store, reason);
-    if (!piece) return;
-    board.feedEvent(this.state, board.SYSTEM, `media piece ${piece.id} failed: ${reason} (what herald saved is kept)`);
+    const other = social.failWork(this.store, reason);
+    if (!piece && !other) return;
+    if (piece) board.feedEvent(this.state, board.SYSTEM, `media piece ${piece.id} failed: ${reason} (what herald saved is kept)`);
+    if (other) board.feedEvent(this.state, board.SYSTEM, `media: ${other}`);
+    this.settleReadyNotes();
     this.o.store.commit();
     this.file.commit();
+  }
+
+  /** Nothing left for herald: stop it after it has read its last result. */
+  afterWork(): void {
+    if (!this.agents || social.hasWork(this.store)) return;
+    void this.agents.stopHerald('media queue empty', this.agents.scoutStopDelayMs);
   }
 
   // ---- dispatcher
@@ -89,12 +119,17 @@ export class MediaRuntime implements HeraldMedia {
     });
   }
 
-  /** Starts the oldest queued piece when herald is free (never while paused), and starts herald for it (or types it in). */
+  /**
+   * When herald is free (never while paused), hands it the next piece of work (a post going out, a post image, a
+   * draft, a research refresh, the comment check) and starts herald for it, or types it in. Returns the piece when
+   * the work is a draft (older callers and tests look at it).
+   */
   async dispatch(): Promise<MediaPiece | undefined> {
     if (!this.agents || this.state.usage.paused) return undefined;
-    const piece = media.startNext(this.store);
-    if (!piece) return undefined;
-    board.feedEvent(this.state, board.SYSTEM, `herald started ${media.pieceLabel(piece)}`);
+    const work = social.pickWork(this.store);
+    if (!work) return undefined;
+    const piece = work.kind === 'draft' ? this.store.pieces.find((p) => p.id === work.id) : undefined;
+    board.feedEvent(this.state, board.SYSTEM, piece ? `herald started ${media.pieceLabel(piece)}` : `herald: ${social.workLabel(this.store, work)}`);
     this.o.store.commit();
     this.file.commit();
     try {
@@ -105,11 +140,119 @@ export class MediaRuntime implements HeraldMedia {
     return piece;
   }
 
-  /** The hourly tick: the week that just ended may get a roundup suggestion. */
+  /** The hourly tick: the week that just ended may get a roundup suggestion; the daily comment check may be due. */
   tick(now = new Date()): void {
     const before = this.store.lastWeekly;
     const made = media.weeklyCheck(this.store, this.state, now);
-    if (made || this.store.lastWeekly !== before) this.file.commit();
+    const watch = social.watchCheck(this.store, now.getTime());
+    if (made || watch || this.store.lastWeekly !== before) this.commit();
+  }
+
+  // ---- post images, posting
+
+  /** .muster/media/<piece>/images/: the post images herald exported from Vellum. */
+  imagesDir(id: string): string {
+    return join(this.gifDir(id), 'images');
+  }
+
+  /** Whether herald can design in Vellum here: a Vellum MCP server and the project's Vellum file. */
+  vellumReady(): boolean {
+    const config = this.o.config();
+    return !!vellumServer(config) && !!config.vellumFile?.trim();
+  }
+
+  /** A post image's path (404 when the piece has no such design). */
+  designPath(id: string, file: string): string {
+    const piece = media.requirePiece(this.store, id);
+    const d = piece.designs?.find((x) => x.file === file);
+    const path = d && join(this.imagesDir(piece.id), d.file);
+    if (!path || !existsSync(path)) throw notFound(`${piece.id} has no post image "${file}"`);
+    return path;
+  }
+
+  /** The files a post on `platform` carries: its Vellum design, else the evidence images, else demo GIFs. */
+  imagesFor(piece: MediaPiece, platform: MediaPlatform): string[] {
+    const design = piece.designs?.find((d) => d.platform === platform);
+    if (design) return [join(this.imagesDir(piece.id), design.file)];
+    const shots = (piece.images ?? []).flatMap((im) => {
+      const task = this.state.tasks.find((t) => t.id === im.taskId);
+      return task ? [evidencePath(this.o.paths, task, im.evidenceId, im.name)] : [];
+    });
+    if (shots.length) return shots;
+    return (piece.gifIds ?? []).flatMap((gid) => {
+      const g = this.store.pieces.find((p) => p.id === gid);
+      const f = g && media.currentGifFile(g);
+      return g && f ? [join(this.gifDir(g.id), f.name)] : [];
+    });
+  }
+
+  /** A job filled in and waiting for you: a board note, a toast and a notification. */
+  announceReady(job: MediaPublishJob, ctx: Pick<MediaRouteContext, 'notify' | 'toast'>): void {
+    const piece = job.pieceId ? this.store.pieces.find((p) => p.id === job.pieceId) : undefined;
+    const where = social.PLATFORM_NAME[job.platform];
+    const press = job.kind === 'reply' ? 'Reply' : 'Post';
+    const note = board.postNote(this.state, {
+      actor: board.SYSTEM,
+      type: 'system',
+      to: board.HUMAN,
+      topic: 'media',
+      text: `${social.readyNoteTitle(job)}\nCheck the ${where} tab in Chrome, then press ${press} in Muster${piece ? ` (${piece.id} · ${piece.title})` : ''}. Nothing is sent until you do.`,
+    });
+    note.open = true;
+    delete note.taskId;
+    delete note.branch;
+    this.o.store.commit();
+    const line = `${where} ${job.kind} ready: check the tab in Chrome and press ${press} in Muster`;
+    ctx.toast('info', line);
+    ctx.notify('Muster: ready to post', line);
+  }
+
+  /** Settles the "ready" notes of jobs that aren't ready any more. */
+  settleReadyNotes(): void {
+    const ready = new Set((this.store.publish ?? []).filter((j) => j.status === 'ready').map((j) => social.readyNoteTitle(j)));
+    for (const n of this.state.notes as Note[]) {
+      const head = n.text.split('\n')[0];
+      if (n.topic !== 'media' || n.dismissed || !/ ready \(PJ\d+\)$/.test(head) || ready.has(head)) continue;
+      board.closeNoteIfOpen(n);
+      n.dismissed = true;
+    }
+  }
+
+  // ---- browsing (research and the comment check)
+
+  /** Pages herald has read per piece of work (keyed by the work's start). */
+  private pagesRead = new Map<string, number>();
+
+  /** herald's browse budget while it researches a social piece or checks comments; null otherwise. */
+  browseWork(): { id: string; mode: BrowseMode; pagesLeft: number } | null {
+    const w = this.store.current;
+    if (!w || !social.workOpen(this.store, w)) return null;
+    const piece = w.id ? this.store.pieces.find((p) => p.id === w.id) : undefined;
+    const browsing = w.kind === 'research' || w.kind === 'watch' || (w.kind === 'draft' && piece?.kind === 'social');
+    if (!browsing) return null;
+    const key = `${w.kind}:${w.id ?? ''}:${w.startedAt}`;
+    const mode = this.o.config().researchBrowser?.mode ?? 'profile';
+    return { id: key, mode, pagesLeft: Math.max(0, MEDIA_PAGE_BUDGET - (this.pagesRead.get(key) ?? 0)) };
+  }
+
+  countPage(key: string): void {
+    this.pagesRead.set(key, (this.pagesRead.get(key) ?? 0) + 1);
+  }
+
+  /** Where screenshots herald takes while browsing go. */
+  shotsDir(): string {
+    return join(this.o.paths.dir, 'media', 'shots');
+  }
+
+  /** media_publish_wait: holds until you press Post or Cancel, or the wait runs out ("waiting"). */
+  async waitForDecision(id: string): Promise<{ decision: string; job: MediaPublishJob }> {
+    const until = Date.now() + (this.o.publishWaitMs ?? social.PUBLISH_WAIT_MS);
+    const every = this.o.publishPollMs ?? 1000;
+    for (;;) {
+      const decision = social.publishDecision(this.store, id);
+      if (decision !== 'waiting' || Date.now() >= until) return { decision, job: social.requireJob(this.store, id) };
+      await new Promise((r) => setTimeout(r, every));
+    }
   }
 
   /** After every state change: newly finished stages get a suggestion. */
@@ -194,16 +337,34 @@ export class MediaRuntime implements HeraldMedia {
     }
   }
 
-  /** herald's brief for the piece it is drafting. */
+  /** herald's brief for the work it holds: a draft (with research steps for a social piece without research yet), or the post / image / research / comment-check brief. */
   brief(intel?: IntelStore): string {
     const config = this.o.config();
-    return media.mediaBrief(this.store, this.state, {
+    const w = this.store.current;
+    if (w && w.kind !== 'draft' && social.workOpen(this.store, w))
+      return social.workBrief(this.store, this.state, {
+        projectName: config.projectName,
+        userName: config.userName,
+        vellumFile: config.vellumFile,
+        imagesDir: (id) => this.imagesDir(id),
+        evidencePath: (taskId, evidenceId, name) => {
+          const task = this.state.tasks.find((t) => t.id === taskId);
+          return task ? evidencePath(this.o.paths, task, evidenceId, name) : undefined;
+        },
+      });
+    const text = media.mediaBrief(this.store, this.state, {
       intel,
       evidenceFile: (task, entryId, name) => evidencePath(this.o.paths, task, entryId, name),
       userName: config.userName,
       projectName: config.projectName,
       readme: readReadme(this.state.repoRoot),
     });
+    const piece = media.draftingPiece(this.store);
+    if (piece?.kind !== 'social') return text;
+    const extra = [...(piece.research ? social.replyRules() : social.researchSteps(piece))];
+    if (this.vellumReady())
+      extra.push('', `Post images: Vellum file ${config.vellumFile}, page "Media"; export PNGs to ${this.imagesDir(piece.id)} and attach with media_designs. Sizes: ${(piece.platforms ?? []).map((p) => `${social.PLATFORM_NAME[p]} ${social.DESIGN_SIZES[p].join('×')}`).join(', ')}.`);
+    return `${text}\n${extra.join('\n')}`;
   }
 }
 
@@ -299,9 +460,92 @@ export function registerMediaRoutes(route: (method: string, path: string, handle
     const text = `herald finished ${piece.id}: ${piece.title}`;
     ctx.toast('info', text);
     ctx.notify('Muster: media ready', text);
-    // Another queued piece is typed into herald by the dispatcher; with none left, herald stops after reading this.
-    if (!st().pieces.some((p) => p.status === 'queued' || p.status === 'drafting')) void agents.stopHerald('media queue empty', agents.scoutStopDelayMs); // after herald has read the result
+    // More work is typed into herald by the dispatcher; with none left, herald stops after reading this.
+    runtime.afterWork();
     return piece;
+  });
+
+  // ---- research (Refresh is yours; media_research is herald's)
+  route('POST', '/api/media/pieces/:id/research', ({ params, body }) => {
+    const actor = str(body.actor, 'actor');
+    if (actor === board.HUMAN) return write(() => social.requestResearch(st(), actor, params.id));
+    const piece = write(() => social.saveResearch(st(), state(), actor, params.id, withoutActor(body)));
+    runtime.afterWork();
+    return piece;
+  });
+
+  // ---- post images in Vellum
+  route('POST', '/api/media/pieces/:id/design', ({ params, body }) => write(() => social.requestDesign(st(), str(body.actor, 'actor'), params.id, withoutActor(body), runtime.vellumReady())));
+  route('POST', '/api/media/pieces/:id/designs', ({ params, body }) => {
+    const id = media.requirePiece(st(), params.id).id;
+    const dir = runtime.imagesDir(id);
+    const piece = write(() => social.saveDesigns(st(), state(), str(body.actor, 'actor'), id, body.designs, dir, (file) => social.readPngSize(join(dir, file))));
+    runtime.afterWork();
+    return piece;
+  });
+  route('GET', '/api/media/pieces/:id/designs/:file', ({ params }) => ctx.file(runtime.designPath(params.id, params.file), 'image/png'));
+
+  // ---- conversations
+  route('POST', '/api/media/conversations', ({ body }) => write(() => ({ added: social.addConversations(st(), state(), str(body.actor, 'actor'), body.conversations) })));
+  route('POST', '/api/media/conversations/:id/edit', ({ params, body }) => write(() => social.editConversation(st(), str(body.actor, 'actor'), params.id, body.draft)));
+  route('POST', '/api/media/conversations/:id/skip', ({ params, body }) => write(() => social.skipConversation(st(), str(body.actor, 'actor'), params.id)));
+  route('POST', '/api/media/conversations/:id/claims/:cid/confirm', ({ params, body }) => write(() => social.confirmConversationClaim(st(), str(body.actor, 'actor'), params.id, params.cid)));
+  route('POST', '/api/media/conversations/:id/reply', ({ params, body }) => write(() => social.replyConversation(st(), str(body.actor, 'actor'), params.id)));
+  route('PUT', '/api/media/reply-policy', ({ body }) => write(() => social.setReplyPolicy(st(), str(body.actor, 'actor'), withoutActor(body))));
+  route('POST', '/api/media/watch/done', ({ body }) => {
+    write(() => social.watchDone(st(), state(), str(body.actor, 'actor')));
+    runtime.afterWork();
+    return { ok: true };
+  });
+
+  // ---- posting through your Chrome (yours: start, stop, go, cancel)
+  route('POST', '/api/media/publish', ({ body }) => write(() => ({ jobs: social.startPublish(st(), str(body.actor, 'actor'), str(body.pieceId, 'pieceId'), body.platforms, (piece, platform) => runtime.imagesFor(piece, platform)) })));
+  route('POST', '/api/media/publish/stop', ({ body }) => {
+    const stopped = write(() => social.stopPublish(st(), str(body.actor, 'actor'), str(body.pieceId, 'pieceId')));
+    runtime.settleReadyNotes();
+    ctx.store.commit();
+    return { stopped };
+  });
+  route('POST', '/api/media/publish/:id/go', ({ params, body }) => {
+    const job = write(() => social.goJob(st(), str(body.actor, 'actor'), params.id));
+    runtime.settleReadyNotes();
+    ctx.store.commit();
+    return job;
+  });
+  route('POST', '/api/media/publish/:id/cancel', ({ params, body }) => {
+    const job = write(() => social.cancelJob(st(), str(body.actor, 'actor'), params.id));
+    runtime.settleReadyNotes();
+    ctx.store.commit();
+    return job;
+  });
+
+  // ---- posting (herald)
+  route('POST', '/api/media/publish/next', ({ body }) => write(() => ({ job: social.publishNext(st(), state(), str(body.actor, 'actor')) ?? null })));
+  route('POST', '/api/media/publish/:id/ready', ({ params, body }) => {
+    const job = write(() => social.publishReady(st(), state(), str(body.actor, 'actor'), params.id, body.composer, body.attached));
+    runtime.announceReady(job, ctx);
+    return job;
+  });
+  route('POST', '/api/media/publish/:id/wait', async ({ params, body }) => {
+    const actor = str(body.actor, 'actor');
+    if (!media.isHerald(state(), actor)) throw forbidden('Only herald (the media agent) waits for your Post');
+    return runtime.waitForDecision(params.id);
+  });
+  route('POST', '/api/media/publish/:id/done', ({ params, body }) => {
+    const job = write(() => social.publishDone(st(), state(), str(body.actor, 'actor'), params.id, body.url), true);
+    runtime.settleReadyNotes();
+    ctx.store.commit();
+    ctx.toast('info', `Posted on ${social.PLATFORM_NAME[job.platform]}`);
+    runtime.afterWork();
+    return job;
+  });
+  route('POST', '/api/media/publish/:id/failed', ({ params, body }) => {
+    const job = write(() => social.publishFailed(st(), state(), str(body.actor, 'actor'), params.id, body.error, body.signin));
+    runtime.settleReadyNotes();
+    ctx.store.commit();
+    ctx.toast('warn', `${social.PLATFORM_NAME[job.platform]}: ${job.error}`);
+    runtime.afterWork();
+    return job;
   });
 }
 

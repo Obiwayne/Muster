@@ -12,6 +12,7 @@ import * as gitOps from '../core/git.js';
 import type { MusterPaths } from '../core/paths.js';
 import type { Store } from '../core/store.js';
 import * as lines from '../core/lines.js';
+import { isHerald } from '../core/media.js';
 import * as research from '../core/research.js';
 import * as roadmap from '../core/roadmap.js';
 import * as stations from '../core/stations.js';
@@ -869,6 +870,10 @@ ${pushed ? `Pushed ${base} to origin.` : `Push to origin failed: ${(r.stderr || 
     currentWork: () => ctx.intel.currentWork(),
     countPage: (id, page) => ctx.intel.countPage(id, page),
     shotsDir: (id) => ctx.intel.shotsDir(id),
+    isHerald: (a) => !!ctx.media && isHerald(state(), a),
+    mediaWork: () => ctx.media?.browseWork() ?? null,
+    countMediaPage: (id) => ctx.media?.countPage(id),
+    mediaShotsDir: () => ctx.media!.shotsDir(),
     probe: ctx.probe,
     publicRead: ctx.publicRead,
   });

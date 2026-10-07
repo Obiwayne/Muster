@@ -158,6 +158,7 @@ describe('AgentManager', () => {
 });
 
 describe('AgentManager watchdog', () => {
+  const agents = (r: { agents: { watchQuietTerminals(): void } }) => r.agents;
   const T = { watchdogIdleMs: 40, watchdogStartingMs: 40, watchdogEscalateMs: 80, enterDelayMs: 1, humanHoldMs: 0 };
   async function rig(timings = {}) {
     const stucks: string[] = [];
@@ -200,6 +201,40 @@ describe('AgentManager watchdog', () => {
     }
     expect(stuckNotes(store)).toHaveLength(1);
     expect(nudges()).toBe(1);
+  });
+
+  it('re-sends herald its Media work prompt when it sits idle holding work (and keeps doing so, no stuck note)', async () => {
+    const stucks: string[] = [];
+    const ptys = new Map<string, { written: string[]; show: (t: string) => void }>();
+    const launcher: PtyLauncher = (_f, _a, opts) => {
+      let emit: (d: string) => void = () => {};
+      const written: string[] = [];
+      ptys.set(opts.env.MUSTER_AGENT, { written, show: (d) => emit(d) });
+      return { pid: 1, onData: (cb) => (emit = cb), onExit() {}, write: (d) => written.push(d), resize() {}, kill() {} };
+    };
+    let work: string | undefined = 'Make post images for MP6';
+    const media = { draftingPiece: () => undefined, heraldWork: () => work, hasWork: () => !!work, onHeraldExit() {} };
+    const r = setup(launcher, { ...T, heraldIdleMs: 30 }, { onStuck: (t) => stucks.push(t), media });
+    const herald = await r.agents.create({ name: 'herald', role: 'media', actor: 'muster' });
+    r.agents.handleEvent(herald.id, 'stop');
+    const sent = () => ptys.get(herald.id)!.written.join('').match(/Make post images for MP6: call media_brief/g)?.length ?? 0;
+    const before = sent(); // the first prompt at spawn
+    ptys.get(herald.id)!.show('❯ ');
+    await sleep(50);
+    agents(r).watchQuietTerminals();
+    await sleep(20);
+    expect(sent()).toBe(before + 1);
+    await sleep(100);
+    agents(r).watchQuietTerminals();
+    await sleep(20);
+    expect(sent()).toBe(before + 2);
+    expect(stucks).toEqual([]);
+    expect(r.store.state.notes.filter((n) => n.type === 'stuck')).toHaveLength(0);
+    work = undefined; // nothing left: no more nudges
+    await sleep(100);
+    agents(r).watchQuietTerminals();
+    await sleep(20);
+    expect(sent()).toBe(before + 2);
   });
 
   it('activity (a prompt hook) resets the watchdog', async () => {

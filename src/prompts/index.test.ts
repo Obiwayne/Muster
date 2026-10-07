@@ -301,7 +301,8 @@ describe('mediaPrompt', () => {
     const p = mediaPrompt({ ...ctx, agentId: 'herald' });
     expect(p).toContain('you are herald, the media agent (herald)');
     expect(p).toContain('`media_brief()` — **call first.**');
-    expect(p).toMatch(/Never post, publish, send, push or sign in anywhere/);
+    expect(p).toContain('**Posting goes through media_publish_* only, and only after');
+    expect(p).toMatch(/Name the product only when someone asked for a tool/);
     expect(p).toMatch(/Plain text only/);
     expect(p).toContain('`sources: []`');
   });

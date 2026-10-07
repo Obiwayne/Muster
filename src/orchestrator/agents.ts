@@ -32,6 +32,7 @@ export interface Timings {
   watchdogIdleMs: number; // an agent holding work at an idle prompt this long gets a re-nudge
   watchdogStartingMs: number; // ... as does one still 'starting' this long after spawn
   watchdogEscalateMs: number; // still not active this long after the re-nudge: stuck note, Captain inbox item, toast
+  heraldIdleMs: number; // herald idle at its prompt with Media work waiting this long gets its work prompt again (it missed it, e.g. typed while it restarted)
   scoutStopDelayMs: number; // after finish_research, let scout read the tool result before it is stopped
 }
 
@@ -49,6 +50,7 @@ export const DEFAULT_TIMINGS: Timings = {
   watchdogIdleMs: 5 * 60_000,
   watchdogStartingMs: 3 * 60_000,
   watchdogEscalateMs: 5 * 60_000,
+  heraldIdleMs: 60_000,
   scoutStopDelayMs: 3000,
 };
 
@@ -75,12 +77,18 @@ export interface AgentManagerOptions {
 export interface HeraldMedia {
   /** The piece herald is drafting, if any. */
   draftingPiece(): { id: string; title: string } | undefined;
-  /** herald exited or was stopped mid-draft: fail the piece (what it saved stays). */
+  /** The work herald holds as one line ("Draft MP3", "Put post PJ2 into X"), if any (drafts only when absent). */
+  heraldWork?(): string | undefined;
+  /** Whether herald has anything open or waiting; it is stopped when this turns false (drafts only when absent). */
+  hasWork?(): boolean;
+  /** herald exited or was stopped mid-work: fail what it held (what it saved stays). */
   onHeraldExit(reason: string): void;
 }
 
 /** What herald is told when it starts (or is typed into) for a piece. */
 export const heraldPrompt = (agentId: string, piece: { id: string }) => `[muster] You are ${agentId} (media). Draft ${piece.id}: call media_brief and start.`;
+/** What herald is told for any other work ("Put post PJ2 into X"). */
+export const heraldWorkPrompt = (agentId: string, work: string) => `[muster] You are ${agentId} (media). ${work}: call media_brief and start.`;
 
 export interface ScoutIntel {
   /** The intel job scout is working on, if any. */
@@ -350,6 +358,8 @@ export class AgentManager {
       return job ? intelJobPrompt(agent.id, job) : `[muster] You are ${agent.id} (research). Call research_brief and start.`;
     }
     if (agent.role === 'media') {
+      const work = this.o.media?.heraldWork?.();
+      if (work) return heraldWorkPrompt(agent.id, work);
       const piece = this.o.media?.draftingPiece();
       return piece ? heraldPrompt(agent.id, piece) : undefined;
     }
@@ -487,7 +497,7 @@ export class AgentManager {
     const agent = requireAgent(this.state, id);
     const rt = this.runtimes.get(id);
     const heldJob = agent.role === 'research' ? this.o.intel?.runningJob()?.id : undefined; // a job started meanwhile isn't this stop's
-    const heldPiece = agent.role === 'media' ? this.o.media?.draftingPiece()?.id : undefined;
+    const heldPiece = agent.role === 'media' ? (this.o.media?.heraldWork?.() ?? this.o.media?.draftingPiece()?.id) : undefined;
     if (rt) {
       rt.stopping = true;
       rt.pty.kill();
@@ -504,7 +514,7 @@ export class AgentManager {
     }
     // Stopped on purpose (not a shutdown, which keeps work for the resume): an intel job it held can't finish.
     if (heldJob && reason !== undefined && this.o.intel?.runningJob()?.id === heldJob) this.o.intel.onScoutExit(`${id} stopped: ${reason}`);
-    if (heldPiece && reason !== undefined && this.o.media?.draftingPiece()?.id === heldPiece) this.o.media.onHeraldExit(`${id} stopped: ${reason}`);
+    if (heldPiece && reason !== undefined && (this.o.media?.heraldWork?.() ?? this.o.media?.draftingPiece()?.id) === heldPiece) this.o.media!.onHeraldExit(`${id} stopped: ${reason}`);
     return agent;
   }
 
@@ -823,7 +833,8 @@ export class AgentManager {
     if (!herald || !this.runtimes.has(herald.id)) return;
     if (delayMs > 0) {
       setTimeout(() => {
-        if (!this.o.media?.draftingPiece()) void this.stop(herald.id, reason).catch((e) => this.log(`${herald.id}: not stopped: ${errText(e)}`));
+        const busy = this.o.media?.hasWork ? this.o.media.hasWork() : !!this.o.media?.draftingPiece();
+        if (!busy) void this.stop(herald.id, reason).catch((e) => this.log(`${herald.id}: not stopped: ${errText(e)}`));
       }, delayMs).unref();
       return;
     }
@@ -1337,9 +1348,12 @@ export class AgentManager {
       if (!rt || rt.stopping) continue;
       const unread = inboxFor(this.state, agent.id, true);
       const task = agent.taskId ? this.state.tasks.find((t) => t.id === agent.taskId) : undefined;
-      const key = task ? task.id : unread.length ? `inbox:${unread[0].id}` : '';
+      // herald holds Media work (a draft, an image, research, a post), not tasks: its first prompt is the nudge.
+      const mediaWork = agent.role === 'media' && (this.o.media?.hasWork ? this.o.media.hasWork() : !!this.o.media?.draftingPiece()) ? this.firstPromptFor(agent) : undefined;
+      const key = task ? task.id : unread.length ? `inbox:${unread[0].id}` : mediaWork ? `media:${mediaWork}` : '';
       const starting = agent.status === 'starting';
-      const idle = agent.status === 'idle' && !rt.permissionNoteId && now - (rt.lastOutputAt ?? rt.spawnedAt) >= this.timings.watchdogIdleMs;
+      const idleMs = mediaWork ? Math.min(this.timings.watchdogIdleMs, this.timings.heraldIdleMs) : this.timings.watchdogIdleMs;
+      const idle = agent.status === 'idle' && !rt.permissionNoteId && now - (rt.lastOutputAt ?? rt.spawnedAt) >= idleMs;
       const late = starting && now - rt.spawnedAt >= this.timings.watchdogStartingMs;
       if (!key || agent.status === 'working' || (!starting && agent.status !== 'idle')) {
         rt.wd = undefined;
@@ -1357,7 +1371,14 @@ export class AgentManager {
         if (this.humanHoldLeft(agent.id) > 0) continue;
         wd.nudgedAt = now;
         this.log(`${agent.id}: idle holding ${key}; re-nudging`);
-        void this.type(agent.id, `[muster] You have work waiting: call read_inbox${task ? `, then continue ${task.id}` : ''}.`).catch(() => {});
+        void this.type(agent.id, mediaWork && !task && !unread.length ? mediaWork : `[muster] You have work waiting: call read_inbox${task ? `, then continue ${task.id}` : ''}.`).catch(() => {});
+      } else if (mediaWork && !task && !unread.length) {
+        // herald has no Captain to escalate to: keep re-sending its work prompt every escalate interval.
+        if (now - wd.nudgedAt >= this.timings.watchdogEscalateMs) {
+          wd.nudgedAt = now;
+          this.log(`${agent.id}: still idle holding ${key}; re-nudging`);
+          void this.type(agent.id, mediaWork).catch(() => {});
+        }
       } else if (now - wd.nudgedAt >= this.timings.watchdogEscalateMs) {
         wd.escalated = true;
         const mins = Math.max(1, Math.round((now - wd.since) / 60_000));
