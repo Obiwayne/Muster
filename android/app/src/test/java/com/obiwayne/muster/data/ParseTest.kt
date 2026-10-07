@@ -99,6 +99,11 @@ class ParseTest {
         assertEquals(ServerEvent.Resolved("p:N1"), Parse.event("""{"type":"resolved","id":"p:N1"}"""))
         assertEquals(ServerEvent.Ping, Parse.event("""{"type":"ping"}"""))
         assertEquals(ServerEvent.Test, Parse.event("""{"type":"test"}"""))
+        assertEquals(
+            ServerEvent.Hosts(listOf("192.168.1.20", "100.101.102.103", "pc.tail.ts.net")),
+            Parse.event("""{"type":"hosts","hosts":["192.168.1.20","100.101.102.103","pc.tail.ts.net"," "]}"""),
+        )
+        assertNull(Parse.event("""{"type":"hosts","hosts":[]}"""))
         assertNull(Parse.event("not json"))
     }
 

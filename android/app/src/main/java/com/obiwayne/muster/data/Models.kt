@@ -2,6 +2,7 @@ package com.obiwayne.muster.data
 
 import kotlinx.serialization.Serializable
 import kotlinx.serialization.json.Json
+import kotlinx.serialization.json.JsonArray
 import kotlinx.serialization.json.JsonElement
 import kotlinx.serialization.json.JsonObject
 import kotlinx.serialization.json.JsonPrimitive
@@ -312,6 +313,8 @@ sealed interface ServerEvent {
     data class Resolved(val id: String) : ServerEvent
     data object Ping : ServerEvent
     data object Test : ServerEvent
+    /** The PC's current addresses (LAN, then Tailscale), sent when the socket opens. */
+    data class Hosts(val hosts: List<String>) : ServerEvent
     data class Unknown(val type: String) : ServerEvent
 }
 
@@ -354,6 +357,8 @@ object Parse {
             "resolved" -> obj["id"]?.jsonPrimitive?.contentOrNull?.let { ServerEvent.Resolved(it) }
             "ping" -> ServerEvent.Ping
             "test" -> ServerEvent.Test
+            "hosts" -> (obj["hosts"] as? JsonArray)?.mapNotNull { it.jsonPrimitive.contentOrNull?.trim()?.takeIf(String::isNotEmpty) }
+                ?.takeIf { it.isNotEmpty() }?.let { ServerEvent.Hosts(it.distinct()) }
             null -> null
             else -> ServerEvent.Unknown(type)
         }

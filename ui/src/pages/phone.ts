@@ -1,4 +1,4 @@
-// Settings → Phone: link an Android phone (QR + code), pick how it reaches this PC, list linked phones,
+// Settings → Phone: link an Android phone (QR + code), show how it reaches this PC, list linked phones,
 // choose what is sent. Talks to the orchestrator's /api/phone/* (forwarded to the phone gateway, docs/PHONE.md).
 import '../phone.css';
 import { confirmDialog, h, icon, setChildren, toast, toggle, type Child } from '../dom';
@@ -6,7 +6,7 @@ import { api, ApiError } from '../api';
 import { errToast } from '../actions';
 import {
   SEND_ROWS, deviceLine, expiryLine, manualHost, msLeft, networkRows, sendTarget, withNotify,
-  type PhoneNetworkMode, type PhonePairCode, type PhoneSendPrefs, type PhoneStatus, maskAddress, shortFingerprint, shownDetail } from '../phonemodel';
+  type PhonePairCode, type PhoneSendPrefs, type PhoneStatus, maskAddress, shortFingerprint, shownDetail } from '../phonemodel';
 
 const STATUS_POLL_MS = 4000;
 const SHOW_ADDRESSES_KEY = 'muster.phone.showAddresses';
@@ -132,22 +132,6 @@ export function createPhoneSection(): PhoneSection {
     render();
   }
 
-  async function setNetwork(mode: PhoneNetworkMode): Promise<void> {
-    if (!status || status.network.mode === mode) return;
-    const prev = status.network.mode;
-    status = { ...status, network: { ...status.network, mode } };
-    render();
-    try {
-      await api.phoneSetNetwork(mode);
-      await loadStatus();
-      void newCode(); // the QR code carries the addresses, which depend on the mode
-    } catch (e) {
-      if (status) status = { ...status, network: { ...status.network, mode: prev } };
-      errToast(e);
-      render();
-    }
-  }
-
   async function unlink(id: string, name: string): Promise<void> {
     if (!(await confirmDialog(`Unlink ${name}?`, 'Its key stops working at once. To use Muster on it again, scan a new code.', 'Unlink', 'danger'))) return;
     try {
@@ -222,10 +206,10 @@ export function createPhoneSection(): PhoneSection {
   function networkCard(): HTMLElement {
     const rows = status ? networkRows(status) : [];
     return card('How your phone reaches this PC',
-      rows.map((r) => h('button.ph-net', {
+      // Status, not a choice: the phone gets both addresses and uses whichever answers.
+      rows.map((r) => h('div.ph-net', {
           class: [r.selected && 'on', r.disabled && 'disabled'],
-          role: 'radio', 'aria-checked': String(r.selected), disabled: r.disabled,
-          onclick: () => void setNetwork(r.mode),
+          title: r.selected ? 'The phone can use this now' : undefined,
         },
         h('span.ph-radio', null, r.selected ? h('span.ph-radio-dot') : null),
         h('span.ph-net-body', null,

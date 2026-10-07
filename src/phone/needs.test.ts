@@ -147,8 +147,12 @@ describe('network', () => {
     expect(info).toEqual({ installed: true, ip: '100.101.102.103', dnsName: 'wayne-pc.tail1234.ts.net', online: true });
     expect(isTailscaleIp('100.64.0.1')).toBe(true);
     expect(isTailscaleIp('100.128.0.1')).toBe(false);
-    expect(hostsFor('lan', ['192.168.1.20'], info)).toEqual(['192.168.1.20']);
-    expect(hostsFor('tailscale', ['192.168.1.20'], info)).toEqual(['192.168.1.20', '100.101.102.103', 'wayne-pc.tail1234.ts.net']);
+    expect(isTailscaleIp('100.127.255.255')).toBe(true);
+    expect(isTailscaleIp('100.63.255.255')).toBe(false);
+    // Tailscale is always offered next to the LAN, so a phone on mobile data can still reach the PC.
+    expect(hostsFor(['192.168.1.20'], info)).toEqual(['192.168.1.20', '100.101.102.103', 'wayne-pc.tail1234.ts.net']);
+    expect(hostsFor([], info)).toEqual(['100.101.102.103', 'wayne-pc.tail1234.ts.net']);
+    expect(hostsFor(['192.168.1.20'], { installed: false, ip: null, dnsName: null, online: false })).toEqual(['192.168.1.20']);
   });
 
   it('parses git diff --stat', () => {

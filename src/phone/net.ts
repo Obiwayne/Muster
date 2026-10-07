@@ -90,12 +90,14 @@ export async function tailscaleInfo(): Promise<TailscaleInfo> {
   return info;
 }
 
-/** Hosts for the pairing QR code and the pair response: LAN first, then Tailscale in tailscale mode. */
-export function hostsFor(mode: 'lan' | 'tailscale', lan: string[], ts: TailscaleInfo): string[] {
+/**
+ * Hosts for the pairing QR code, the pair response and the phone's host refresh: LAN first, then Tailscale.
+ * Tailscale is always offered when the PC has it: only devices on the user's tailnet can reach 100.64.0.0/10,
+ * so it is as trusted a path as the home Wi-Fi, and it is the one that works on mobile data.
+ */
+export function hostsFor(lan: string[], ts: TailscaleInfo): string[] {
   const out = [...lan];
-  if (mode === 'tailscale') {
-    if (ts.ip) out.push(ts.ip);
-    if (ts.dnsName) out.push(ts.dnsName);
-  }
+  if (ts.ip && isTailscaleIp(ts.ip)) out.push(ts.ip);
+  if (ts.dnsName) out.push(ts.dnsName);
   return out;
 }

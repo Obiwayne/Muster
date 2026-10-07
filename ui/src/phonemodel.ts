@@ -76,18 +76,21 @@ export function shortDns(name: string | null | undefined): string {
   return (name ?? '').replace(/\.$/, '').split('.')[0] ?? '';
 }
 
-/** "How your phone reaches this PC": the LAN and Tailscale radio rows from GET /admin/status. */
+/**
+ * "How your phone reaches this PC": the LAN and Tailscale rows from GET /admin/status. Both paths are always
+ * offered to the phone, so these show which ones work right now (`selected`); they are not a choice.
+ */
 export function networkRows(s: PhoneStatus): NetworkRow[] {
-  const { mode, lanHosts, tailscale: ts } = s.network;
+  const { lanHosts, tailscale: ts } = s.network;
   const lan: NetworkRow = {
-    mode: 'lan', title: 'Home Wi‑Fi only', sub: 'Phone must be on the same network',
-    selected: mode === 'lan', disabled: false,
+    mode: 'lan', title: 'Home Wi‑Fi', sub: 'When the phone is on the same network',
+    selected: lanHosts.length > 0, disabled: lanHosts.length === 0,
     detail: lanHosts.length ? `${lanHosts[0]}:${s.port}` : 'no network found',
     ...(lanHosts.length ? { secret: lanHosts[0] } : {}),
   };
   const tsRow: NetworkRow = {
-    mode: 'tailscale', title: 'Home + anywhere with Tailscale', sub: 'Works on mobile data and other networks',
-    selected: mode === 'tailscale', disabled: !ts.installed && mode !== 'tailscale', detail: '',
+    mode: 'tailscale', title: 'Anywhere with Tailscale', sub: 'Mobile data and other networks, with Tailscale on the phone',
+    selected: ts.installed && !!ts.online, disabled: !ts.installed, detail: '',
   };
   if (!ts.installed) {
     tsRow.detail = 'not installed';

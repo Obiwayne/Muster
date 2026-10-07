@@ -35,7 +35,7 @@ Design: Vellum file "Muster" (28BUsqILtGqq), page "Mobile": M01–M09 phone scre
 1. Desktop asks the gateway for a code (`POST /admin/pair-code`): 6 characters from `ABCDEFGHJKMNPQRSTUVWXYZ23456789`,
    shown as `K7M-4QX`, valid 2 minutes, single use; a new code invalidates the old one.
 2. The QR code text is `muster://pair?c=K7M4QX&p=47910&f=<sha256 hex of the cert DER>&n=<pcName>&h=<host1>,<host2>`
-   where hosts are the PC's LAN IPv4 addresses, and in tailscale mode also its Tailscale IP (100.64.0.0/10) and MagicDNS
+   where hosts are the PC's LAN IPv4 addresses, then always (whatever `network.mode` says) its Tailscale IP (100.64.0.0/10) and MagicDNS
    name (from `tailscale status --json` when the CLI exists). The gateway renders the QR as SVG (`qrcode` npm package).
 3. The phone calls `POST https://<host>:47910/pair` `{ code, deviceName }` trying hosts in order, pinning `f`.
    Response `{ deviceId, key, pcName, hosts }`. `key` is 32 random bytes base64url, stored on the phone in
@@ -92,7 +92,7 @@ All times ISO strings. Errors `{ error: string }` with 4xx/5xx.
 - `GET /api/events` (WebSocket upgrade, same bearer): server sends `{ type: 'need', item: NeedItem }` for each NEW needs-you
   item that passes this device's prefs (notify), `{ type: 'need_silent', item }` for a new item that doesn't (quiet hours,
   a switch or project turned off: add it to the list, don't buzz), `{ type: 'resolved', id }` when one goes away,
-  `{ type: 'ping' }` every 25 s.
+  `{ type: 'ping' }` every 25 s, and `{ type: 'hosts', hosts }` once on connect (the phone saves them over its paired list).
   The gateway polls each running project's state every 3 s (or subscribes to its WS) to diff items.
   As built: items already waiting when the socket opens are the baseline and are not pushed (fetch `/api/needs` on
   connect); items of a project that stops answering are kept, not 'resolved'. Also `{ type: 'test' }` from
