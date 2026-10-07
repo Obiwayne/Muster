@@ -28,6 +28,12 @@ export interface BrowserRouteDeps {
   currentWork(): { id: string; mode: BrowseMode; pagesLeft: number } | null;
   countPage(id: string, page?: { url?: string; blocked?: string; loggedIn?: boolean; mode?: string }): void; // job.pagesBrowsed++ (and its progress: what it reads, blocks, missing sign-ins) / run counter
   shotsDir(id: string): string; // .muster/intel/shots/<id>
+  /** herald (the media agent) browses too, while it researches a social piece or checks comments (docs/MEDIA.md). */
+  isHerald?(actor: string): boolean;
+  /** herald's research work with its page budget, or null (→ 409). */
+  mediaWork?(): { id: string; mode: BrowseMode; pagesLeft: number } | null;
+  countMediaPage?(id: string): void;
+  mediaShotsDir?(id: string): string;
   /** Test seam for POST /api/intel/probe. */
   probe?: (url: string, opts: ProbeOptions) => Promise<IntelProbe>;
   /** Test seam: the public reader used when a site blocks the research browser (default readPublic). */
@@ -88,13 +94,14 @@ export function registerBrowserRoutes(route: RouteFn, deps: BrowserRouteDeps): v
 
   route('POST', '/api/browser/read', async ({ body }): Promise<BrowseResult> => {
     const actor = String(body.actor ?? '');
-    if (!deps.isResearcher(actor)) throw forbidden('Only the research agent browses, and only during an intel job or research run.');
+    const herald = !deps.isResearcher(actor) && !!deps.isHerald?.(actor);
+    if (!deps.isResearcher(actor) && !herald) throw forbidden('Only the research agent browses, and only during an intel job or research run.');
     if (typeof body.url !== 'string' || !body.url.trim()) throw badRequest('Missing url');
     const action = body.action ?? 'read';
     if (!ACTIONS.has(action)) throw badRequest('action must be read, screenshot or scroll');
     if (body.by !== undefined && !Number.isFinite(Number(body.by))) throw badRequest('by must be a number of pixels');
-    const work = deps.currentWork();
-    if (!work) throw conflict('No intel job or research run is running: browse works only during one.');
+    const work = herald ? (deps.mediaWork?.() ?? null) : deps.currentWork();
+    if (!work) throw conflict(herald ? 'browse works only while you research a social piece or check comments' : 'No intel job or research run is running: browse works only during one.');
     if (work.pagesLeft <= 0) throw new HttpError(429, `Page budget used (${deps.config().researchBrowser.maxPagesPerJob} pages for ${work.id}). Finish with what you have.`);
     if (work.mode === 'opera' && !imported.has(work.id)) {
       imported.add(work.id);
@@ -103,11 +110,12 @@ export function registerBrowserRoutes(route: RouteFn, deps: BrowserRouteDeps): v
     const mode: BrowseMode = work.mode === 'public' ? 'public' : 'profile';
     const out =
       action === 'screenshot'
-        ? await browser.screenshot(body.url, { mode, path: nextShot(deps.shotsDir(work.id)), fullPage: body.fullPage === true })
+        ? await browser.screenshot(body.url, { mode, path: nextShot(herald ? deps.mediaShotsDir!(work.id) : deps.shotsDir(work.id)), fullPage: body.fullPage === true })
         : action === 'scroll'
           ? await browser.scroll(body.url, { mode, by: body.by === undefined ? undefined : Number(body.by) })
           : await browser.read(body.url, { mode, links: body.links === true });
-    deps.countPage(work.id, { url: out.url || body.url, blocked: out.blocked, loggedIn: out.loggedIn, mode });
+    if (herald) deps.countMediaPage?.(work.id);
+    else deps.countPage(work.id, { url: out.url || body.url, blocked: out.blocked, loggedIn: out.loggedIn, mode });
     const done: BrowseResult = { ...out, via: work.mode, pagesLeft: Math.max(0, work.pagesLeft - 1) };
     if (!done.blocked) return done;
     // The site answered with a bot check: no getting past it. Read the public page another way and say so.

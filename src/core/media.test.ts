@@ -108,7 +108,7 @@ describe('pieces', () => {
     expect(status(() => createPiece(m, s, 'you', { kind: 'social', about: [{ kind: 'stage', ref: 'M9' }] }))).toBe(400);
     expect(status(() => createPiece(m, s, 'you', { kind: 'social', about: [{ kind: 'range', ref: '2026-10-07..2026-10-01' }] }))).toBe(400);
     const p = createPiece(m, s, 'you', { kind: 'social', about: [{ kind: 'stage', ref: 'm1' }, { kind: 'task', ref: 't38' }], note: ' for teachers ' });
-    expect(p).toMatchObject({ id: 'MP1', status: 'queued', platforms: ['x', 'linkedin', 'bluesky'], note: 'for teachers', title: 'Social post: Stage M1 · Moderation, T38 Approval queue' });
+    expect(p).toMatchObject({ id: 'MP1', status: 'queued', platforms: ['x', 'linkedin', 'facebook'], note: 'for teachers', title: 'Social post: Stage M1 · Moderation, T38 Approval queue' });
     expect(p.about[1]).toEqual({ kind: 'task', ref: 'T38', label: 'T38 Approval queue' });
     const a = createPiece(m, s, 'you', { kind: 'article', about: [{ kind: 'range', ref: '2026-10-01..2026-10-07' }], platforms: ['x'] });
     expect(a.platforms).toBeUndefined();
@@ -141,8 +141,8 @@ describe('pieces', () => {
     expect(status(() => saveDraft(m, s, 'herald', p.id, { images: [{ taskId: 'T38', evidenceId: 'E2', name: 'nope.png' }] }))).toBe(400);
     expect(status(() => saveDraft(m, s, 'herald', p.id, { posts: [{ platform: 'x', versions: ['a', 'b', 'c', 'd'] }] }))).toBe(400);
     expect(p.claims.map((c) => c.id)).toEqual(['C1', 'C2']);
-    expect(status(() => finishDraft(m, s, 'herald', p.id))).toBe(409); // bluesky missing
-    saveDraft(m, s, 'herald', p.id, { posts: [...p.posts!, { platform: 'bluesky', versions: ['B'] }] });
+    expect(status(() => finishDraft(m, s, 'herald', p.id))).toBe(409); // facebook missing
+    saveDraft(m, s, 'herald', p.id, { posts: [...p.posts!, { platform: 'facebook', versions: ['B'] }] });
     finishDraft(m, s, 'herald', p.id, 'Three versions per platform.');
     expect(p).toMatchObject({ status: 'review' });
     expect(p.progress).toBeUndefined();
@@ -156,7 +156,7 @@ describe('pieces', () => {
   it('blocks approval on unsourced claims until you confirm them, then settles the note', () => {
     const p = social();
     startNext(m);
-    saveDraft(m, s, 'herald', p.id, { posts: ['x', 'linkedin', 'bluesky'].map((platform) => ({ platform, versions: ['hi'] })), claims: [{ quote: 'no source', sources: [] }] });
+    saveDraft(m, s, 'herald', p.id, { posts: ['x', 'linkedin', 'facebook'].map((platform) => ({ platform, versions: ['hi'] })), claims: [{ quote: 'no source', sources: [] }] });
     finishDraft(m, s, 'herald', p.id);
     expect(status(() => approvePiece(m, s, 'herald', p.id))).toBe(403);
     expect(status(() => approvePiece(m, s, 'you', p.id))).toBe(409);
@@ -201,7 +201,7 @@ describe('pieces', () => {
   it('asks for changes: a finished piece goes back to the queue; finishing marks requests done', () => {
     const p = social();
     startNext(m);
-    saveDraft(m, s, 'herald', p.id, { posts: ['x', 'linkedin', 'bluesky'].map((platform) => ({ platform, versions: ['hi'] })) });
+    saveDraft(m, s, 'herald', p.id, { posts: ['x', 'linkedin', 'facebook'].map((platform) => ({ platform, versions: ['hi'] })) });
     askPiece(m, 'you', p.id, 'Shorter'); // while drafting: stays drafting
     expect(p.status).toBe('drafting');
     finishDraft(m, s, 'herald', p.id);
@@ -308,7 +308,7 @@ describe('brief', () => {
     startNext(m);
     const text = mediaBrief(m, s, { evidenceFile: (t, e, n) => `/repo/.muster/evidence/${t.id}/${e}/${n}`, userName: 'Wayne', projectName: 'wall-education' });
     expect(text).toContain('# MP1 · Social post for wall-education');
-    expect(text).toContain('x (≤ 280 chars), linkedin (≤ 3000 chars), bluesky (≤ 300 chars)');
+    expect(text).toContain('x (≤ 280 chars with hashtags, 1–2 hashtags), linkedin (≤ 3000 chars with hashtags, 3–5 hashtags), facebook (≤ 5000 chars with hashtags, 1–3 hashtags)');
     expect(text).toContain('Note from Wayne: For teachers');
     expect(text).toContain('- Mention the free plan');
     expect(text).toContain('Task T38 Approval queue (merged, merged 2026-10-01)');

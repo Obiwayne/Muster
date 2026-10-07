@@ -75,12 +75,18 @@ export interface AgentManagerOptions {
 export interface HeraldMedia {
   /** The piece herald is drafting, if any. */
   draftingPiece(): { id: string; title: string } | undefined;
-  /** herald exited or was stopped mid-draft: fail the piece (what it saved stays). */
+  /** The work herald holds as one line ("Draft MP3", "Put post PJ2 into X"), if any (drafts only when absent). */
+  heraldWork?(): string | undefined;
+  /** Whether herald has anything open or waiting; it is stopped when this turns false (drafts only when absent). */
+  hasWork?(): boolean;
+  /** herald exited or was stopped mid-work: fail what it held (what it saved stays). */
   onHeraldExit(reason: string): void;
 }
 
 /** What herald is told when it starts (or is typed into) for a piece. */
 export const heraldPrompt = (agentId: string, piece: { id: string }) => `[muster] You are ${agentId} (media). Draft ${piece.id}: call media_brief and start.`;
+/** What herald is told for any other work ("Put post PJ2 into X"). */
+export const heraldWorkPrompt = (agentId: string, work: string) => `[muster] You are ${agentId} (media). ${work}: call media_brief and start.`;
 
 export interface ScoutIntel {
   /** The intel job scout is working on, if any. */
@@ -350,6 +356,8 @@ export class AgentManager {
       return job ? intelJobPrompt(agent.id, job) : `[muster] You are ${agent.id} (research). Call research_brief and start.`;
     }
     if (agent.role === 'media') {
+      const work = this.o.media?.heraldWork?.();
+      if (work) return heraldWorkPrompt(agent.id, work);
       const piece = this.o.media?.draftingPiece();
       return piece ? heraldPrompt(agent.id, piece) : undefined;
     }
@@ -487,7 +495,7 @@ export class AgentManager {
     const agent = requireAgent(this.state, id);
     const rt = this.runtimes.get(id);
     const heldJob = agent.role === 'research' ? this.o.intel?.runningJob()?.id : undefined; // a job started meanwhile isn't this stop's
-    const heldPiece = agent.role === 'media' ? this.o.media?.draftingPiece()?.id : undefined;
+    const heldPiece = agent.role === 'media' ? (this.o.media?.heraldWork?.() ?? this.o.media?.draftingPiece()?.id) : undefined;
     if (rt) {
       rt.stopping = true;
       rt.pty.kill();
@@ -504,7 +512,7 @@ export class AgentManager {
     }
     // Stopped on purpose (not a shutdown, which keeps work for the resume): an intel job it held can't finish.
     if (heldJob && reason !== undefined && this.o.intel?.runningJob()?.id === heldJob) this.o.intel.onScoutExit(`${id} stopped: ${reason}`);
-    if (heldPiece && reason !== undefined && this.o.media?.draftingPiece()?.id === heldPiece) this.o.media.onHeraldExit(`${id} stopped: ${reason}`);
+    if (heldPiece && reason !== undefined && (this.o.media?.heraldWork?.() ?? this.o.media?.draftingPiece()?.id) === heldPiece) this.o.media!.onHeraldExit(`${id} stopped: ${reason}`);
     return agent;
   }
 
@@ -823,7 +831,8 @@ export class AgentManager {
     if (!herald || !this.runtimes.has(herald.id)) return;
     if (delayMs > 0) {
       setTimeout(() => {
-        if (!this.o.media?.draftingPiece()) void this.stop(herald.id, reason).catch((e) => this.log(`${herald.id}: not stopped: ${errText(e)}`));
+        const busy = this.o.media?.hasWork ? this.o.media.hasWork() : !!this.o.media?.draftingPiece();
+        if (!busy) void this.stop(herald.id, reason).catch((e) => this.log(`${herald.id}: not stopped: ${errText(e)}`));
       }, delayMs).unref();
       return;
     }

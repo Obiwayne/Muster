@@ -552,7 +552,7 @@ describe('muster-mcp media tools', () => {
     expect((await h.client.listTools()).tools.map((t) => t.name).sort()).toEqual([...MEDIA_TOOLS].sort());
     for (const role of ['crew', 'design', 'captain', 'research'] as Role[]) {
       const names = (await (await connect(role, () => null)).client.listTools()).tools.map((t) => t.name);
-      for (const n of MEDIA_TOOLS.filter((t) => t !== 'read_inbox')) expect(names).not.toContain(n);
+      for (const n of MEDIA_TOOLS.filter((t) => t !== 'read_inbox' && !(t === 'browse' && role === 'research'))) expect(names).not.toContain(n);
     }
   });
 

@@ -72,7 +72,7 @@ async function until(check: () => boolean, ms = 3000): Promise<void> {
     await new Promise((r) => setTimeout(r, 10));
   }
 }
-const posts = (text = 'Teachers approve posts first.') => ['x', 'linkedin', 'bluesky'].map((platform) => ({ platform, versions: [text] }));
+const posts = (text = 'Teachers approve posts first.') => ['x', 'linkedin', 'facebook'].map((platform) => ({ platform, versions: [text] }));
 
 beforeAll(async () => {
   process.env.MUSTER_NO_NOTIFY = '1';

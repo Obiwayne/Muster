@@ -71,6 +71,12 @@ const HUMAN_ONLY: [string, RegExp, string][] = [
   ['DELETE', /^\/api\/media\/pieces\/[^/]+$/, 'delete media pieces'],
   ['PUT', /^\/api\/media\/style$/, 'change the house style'],
   ['POST', /^\/api\/media\/suggestions\/(?:dismiss-all|[^/]+\/(?:accept|dismiss))$/, 'decide on media suggestions'],
+  ['POST', /^\/api\/media\/pieces\/[^/]+\/design$/, 'ask for post images'],
+  ['POST', /^\/api\/media\/conversations\/[^/]+\/(?:edit|skip|reply)$/, 'decide on replies'],
+  ['POST', /^\/api\/media\/conversations\/[^/]+\/claims\/[^/]+\/confirm$/, 'confirm claims'],
+  ['PUT', /^\/api\/media\/reply-policy$/, 'change how herald replies'],
+  ['POST', /^\/api\/media\/publish(?:\/stop)?$/, 'start or stop posting'],
+  ['POST', /^\/api\/media\/publish\/[^/]+\/(?:go|cancel)$/, 'press Post or cancel a post'],
   ...(['GET', 'POST', 'PUT', 'DELETE'] as const).map((m): [string, RegExp, string] => [m, /^\/api\/phone(?:\/|$)/, 'manage the phone link']),
 ];
 
