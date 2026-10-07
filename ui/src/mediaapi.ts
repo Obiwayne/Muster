@@ -1,6 +1,7 @@
 // Typed client for the Media routes (/api/media/*, docs/MEDIA.md). Every write is yours (actor "you").
 import type {
-  MediaAbout, MediaGif, MediaImage, MediaKind, MediaPiece, MediaPlatform, MediaPost, MediaPurpose, MediaSection, MediaShot, MediaStore, MediaSuggestion, MediaSummary,
+  MediaAbout, MediaConversation, MediaDesignStyle, MediaGif, MediaImage, MediaKind, MediaPiece, MediaPlatform, MediaPost, MediaPublishJob, MediaPurpose, MediaReplyPolicy,
+  MediaSection, MediaShot, MediaStore, MediaSuggestion, MediaSummary,
 } from '../../src/types';
 import { ApiError, getToken, refreshToken } from './api';
 
@@ -70,15 +71,34 @@ export const dismissSuggestion = (id: string) => req<MediaSuggestion>('POST', `/
 export const dismissAllSuggestions = () => req<unknown>('POST', '/api/media/suggestions/dismiss-all', { actor: YOU });
 export const recordDemo = (id: string) => req<MediaPiece>('POST', `/api/media/pieces/${enc(id)}/record`, { actor: YOU });
 
+// ---- hashtags travel in posts; post images, research, posting and conversations (docs/MEDIA.md, 2026-10-07) ----
+export const researchPiece = (id: string) => req<MediaPiece>('POST', `/api/media/pieces/${enc(id)}/research`, { actor: YOU });
+export const designPiece = (id: string, body: { style: MediaDesignStyle; note?: string; platforms?: MediaPlatform[] }) =>
+  req<MediaPiece>('POST', `/api/media/pieces/${enc(id)}/design`, { actor: YOU, ...body });
+export const publishPiece = (pieceId: string, platforms: MediaPlatform[]) => req<unknown>('POST', '/api/media/publish', { actor: YOU, pieceId, platforms });
+export const stopPublish = (pieceId: string) => req<unknown>('POST', '/api/media/publish/stop', { actor: YOU, pieceId });
+export const publishGo = (jobId: string) => req<MediaPublishJob>('POST', `/api/media/publish/${enc(jobId)}/go`, { actor: YOU });
+export const publishCancel = (jobId: string) => req<MediaPublishJob>('POST', `/api/media/publish/${enc(jobId)}/cancel`, { actor: YOU });
+export const editConversation = (id: string, draft: string) => req<MediaConversation>('POST', `/api/media/conversations/${enc(id)}/edit`, { actor: YOU, draft });
+export const skipConversation = (id: string) => req<MediaConversation>('POST', `/api/media/conversations/${enc(id)}/skip`, { actor: YOU });
+export const confirmConversationClaim = (id: string, cid: string) => req<MediaConversation>('POST', `/api/media/conversations/${enc(id)}/claims/${enc(cid)}/confirm`, { actor: YOU });
+export const replyConversation = (id: string) => req<unknown>('POST', `/api/media/conversations/${enc(id)}/reply`, { actor: YOU });
+export const saveReplyPolicy = (policy: Partial<MediaReplyPolicy>) => req<unknown>('PUT', '/api/media/reply-policy', { actor: YOU, ...policy });
+
+/** A Vellum post image (GET …/designs/:file), as a Blob for <img>, Copy and Save. */
+export const designBlob = (id: string, file: string) => fileBlob(`/api/media/pieces/${enc(id)}/designs/${enc(file)}`);
+
 /** The rendered GIF of a demo piece (GET …/gif?source=), as a Blob for <img> and Save GIF. */
-export async function gifBlob(id: string, source: MediaGif['source'], retried = false): Promise<Blob> {
+export const gifBlob = (id: string, source: MediaGif['source']) => fileBlob(`/api/media/pieces/${enc(id)}/gif?source=${source}`);
+
+async function fileBlob(path: string, retried = false): Promise<Blob> {
   let res: Response;
   try {
-    res = await fetch(`/api/media/pieces/${enc(id)}/gif?source=${source}`, { headers: { 'x-muster-token': getToken() } });
+    res = await fetch(path, { headers: { 'x-muster-token': getToken() } });
   } catch {
     throw new ApiError('Cannot reach the Muster orchestrator', 0);
   }
-  if (res.status === 401 && !retried && (await refreshToken())) return gifBlob(id, source, true);
+  if (res.status === 401 && !retried && (await refreshToken())) return fileBlob(path, true);
   if (!res.ok) {
     let msg = `${res.status} ${res.statusText}`;
     try { msg = (await res.json()).error ?? msg; } catch { /* not JSON */ }
