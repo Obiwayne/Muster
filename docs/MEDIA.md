@@ -173,3 +173,58 @@ These are details the contract left open, decided while building:
 - The `ApiContext.media` route group is optional in `createApi`, so older tests still compile. The server always
   passes it.
 - `Orchestrator.media` (the `MediaRuntime`) is exposed like `intel`.
+
+## Demo GIF (added 2026-10-07, user sign-off on the Vellum artboard "Media — demo GIF")
+
+The fifth kind, `gif`. It's a short demo of a feature for social posts and the website. Video scripts stay as their
+own kind.
+
+- **Slideshow (always first).** herald picks 2–6 evidence screenshots of the `about` tasks, opening them with Read
+  to check they really show the feature. It orders them, writes a caption per frame (≤ 60 chars) and a duration,
+  and also writes `steps` (how to demo it for real, 3–8 steps, using sample data) and `altText`.
+  `media_draft(gif: {frames, steps, altText})`. Finish needs at least one frame, steps and altText.
+- **Rendering (server, `src/core/mediagif.ts`).** After herald finishes, and after any frame edit by you, the server
+  renders `.muster/media/<id>/slideshow.gif` with ffmpeg, with each frame shown for `seconds`.
+  - Frames are scaled to fit 800×500 and padded to that size with background #111113.
+  - The caption is burned in bottom-left with drawtext, in white on a dark box. Use a Windows font file, Segoe UI
+    Semibold or Arial, and escape the text safely.
+  - The palette is generated with palettegen/paletteuse, and the GIF loops.
+  - ffmpeg comes from `MUSTER_FFMPEG`, else PATH. When it's missing, set `renderError` = "ffmpeg not found: install it
+    with winget install Gyan.FFmpeg" and keep the piece usable.
+  - Rendering runs async: it sets `slideshow` on success, then broadcasts `media`. Approve is refused (409) while
+    there is no GIF file for the current `source`.
+- **Real recording.** `POST /api/media/pieces/:id/record` (you) sets `recording = {status: 'requested'}` and sends the
+  Captain an inbox item. The item includes the piece title, the steps and this instruction: "create one small task
+  to record this demo with sample data (never real user data) and attach the recording as video evidence
+  (.webm/.mp4) or a .gif; then call media_recording(piece, task)".
+  - The Captain MCP tool `media_recording(piece, task)` links the task (status `recording`).
+  - When that task gets evidence with a video or GIF file (hook the existing add-evidence path), the server converts
+    the first such file to `.muster/media/<id>/recording.gif`. It uses the same 800×500 fit, 12 fps and palette.
+    The frame captions are spread evenly over the recording's length as timed drawtext. The status becomes `done`,
+    `source` becomes `recording`, the piece goes back to `review`, and the board note and toast are the same as a
+    finish.
+  - A conversion failure sets `failed` and `error`, and the slideshow stays.
+  - "Record a real demo" is offered again after `failed`.
+- **Recording helper for crew.** `plugin/skills/before-and-after/scripts/record.mjs <url> <out.webm> <actions.mjs>`
+  [--size 1280x800] uses Playwright `recordVideo`. `actions.mjs` default-exports `async (page) => { … }`, the steps
+  in code. Mention it in the before-and-after skill's SKILL.md under a "Demo recording" heading.
+- **Routes:**
+  - `GET /api/media/pieces/:id/gif?source=slideshow|recording` serves the file (`image/gif`, any token, for Save GIF
+    and `<img>`).
+  - `POST /api/media/pieces/:id/edit` accepts `gif: {source?, frames?, steps?, altText?}`; changed frames trigger a
+    re-render.
+  - `POST /api/media/pieces/:id/record` is for you only.
+- **Social attachment.** `gifIds` on a social piece lists approved or review `gif` pieces. Edit validates that they
+  exist and are of kind `gif`. The UI shows the GIF in the attachments row and opens it full size.
+- **Suggestions.** The `feature` plan becomes social + website + gif.
+- **UI.** It follows the Vellum artboard "Media — demo GIF":
+  - the source switch (Slideshow from screenshots / Real recording, disabled until a recording exists);
+  - a big preview (`<img>` of the current GIF) with "frame n / N" when it's a slideshow;
+  - the frame strip (thumbnail, caption, seconds, source `T38/E2`; click a frame to edit its caption and seconds,
+    drag to reorder, × to remove, "+ Frame" to pick from evidence);
+  - the right rail "Real recording" (numbered steps you can edit, a "Record a real demo" button with recording status
+    lines, and a FITS card with the size check: X ≤ 15 MB, LinkedIn ≤ 5 MB, Bluesky ≤ 1 MB, shown green or red per
+    platform);
+  - bar actions Save GIF (download), Copy alt text and Approve, plus "Rendering…" and the `renderError` line.
+  - New piece gets the fifth card "Demo GIF · Screenshots or a recording", and the library gets a "Demo GIFs" tab.
+  - The social attachment picker becomes "+ Screenshot or demo GIF".

@@ -1044,7 +1044,7 @@ export interface BrowseResult {
 // Stored in .muster/media.json (like intel.json) so the state snapshot stays small; a `{ type: 'media' }` event
 // tells the dashboard to refetch.
 
-export type MediaKind = 'social' | 'article' | 'website' | 'video';
+export type MediaKind = 'social' | 'article' | 'website' | 'video' | 'gif'; // gif = a demo GIF (docs/MEDIA.md "Demo GIF")
 /** drafting = herald is (re)writing it (queued or working); review = waiting on you; failed = herald stopped without finishing. */
 export type MediaStatus = 'queued' | 'drafting' | 'review' | 'approved' | 'used' | 'failed';
 export type MediaPlatform = 'x' | 'linkedin' | 'bluesky' | 'threads';
@@ -1125,6 +1125,8 @@ export interface MediaPiece {
   hooks?: string[]; // video: up to 3 opening hooks
   hookChosen?: number;
   shots?: MediaShot[]; // video
+  gif?: MediaGif; // gif
+  gifIds?: string[]; // social: demo GIF pieces attached to the post (their rendered file is the attachment)
   claims: MediaClaim[];
   requests: MediaRequest[]; // "Ask herald to change it"
   progress?: string; // herald's live line while drafting: "writing section 3 of 5"
@@ -1169,4 +1171,42 @@ export interface MediaSummary {
   drafting: number; // queued + drafting
   openSuggestions: number;
   working?: { id: string; title: string; progress?: string }; // the piece herald is on now
+}
+
+/** Demo GIF: one slideshow frame (an evidence screenshot shown for `seconds` with a caption burned in). */
+export interface MediaGifFrame {
+  taskId: string;
+  evidenceId: string;
+  name: string; // image file name inside the evidence folder
+  caption: string; // ≤ 60 chars, burned into the frame
+  seconds: number; // 0.5–8
+}
+
+/** A rendered GIF file at .muster/media/<piece id>/<name>. */
+export interface MediaGifFile {
+  name: string; // "slideshow.gif" | "recording.gif"
+  bytes: number;
+  width: number;
+  height: number;
+  seconds: number;
+  renderedAt: string;
+}
+
+/** A real recording of the demo: a crew task records the steps; its video evidence becomes the GIF. */
+export interface MediaRecording {
+  status: 'requested' | 'recording' | 'done' | 'failed'; // requested = Captain told; recording = task linked; done = GIF made
+  requestedAt: string;
+  taskId?: string; // the crew task (linked by the Captain with media_recording)
+  file?: MediaGifFile; // recording.gif
+  error?: string;
+}
+
+export interface MediaGif {
+  source: 'slideshow' | 'recording'; // which file is the GIF (you switch; 'recording' needs recording.file)
+  frames: MediaGifFrame[]; // slideshow, 1–12
+  steps: string[]; // the demo steps for a real recording (herald writes them), 1–12, each ≤ 200
+  altText: string; // ≤ 400
+  slideshow?: MediaGifFile; // slideshow.gif, rendered by the server after herald finishes or you edit frames
+  renderError?: string; // the last slideshow render failed (ffmpeg missing, bad image…)
+  recording?: MediaRecording;
 }
