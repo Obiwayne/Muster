@@ -291,7 +291,7 @@ a.md-row:hover { background: color-mix(in oklab, var(--color-surface-2) 50%, tra
 .md-vtab:hover { color: var(--color-text); }
 .md-vtab.on { color: var(--color-text); font-weight: 600; border-bottom-color: var(--color-text); }
 .md-vbadge { font-size: 11px; font-weight: 600; color: var(--color-on-accent); background: var(--color-media); border-radius: 9px; padding: 1px 7px; }
-.md-vmeta { font-family: var(--font-mono); font-size: 11px; color: var(--color-faint); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; display: flex; align-items: center; min-width: 0; }
+.md-vmeta { font-family: var(--font-mono); font-size: 11px; color: var(--color-faint); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; display: flex; align-items: center; gap: 6px; min-width: 0; }
 .md-vlink { font-family: var(--font-mono); font-size: 11px; color: var(--color-muted); }
 .md-vlink:hover:not(:disabled) { color: var(--color-text); }
 

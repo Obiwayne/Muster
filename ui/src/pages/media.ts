@@ -662,7 +662,7 @@ export function createMedia(): Page {
     const convs = conversationsFor(store, p.id);
     const drafts = convs.filter((c) => c.status === 'draft').length;
     const meta = view === 'research'
-      ? (p.research ? [`${researchLine(p.research)} · ${ago(p.research.at)} · `, h('button.md-vlink', { disabled: isBusy(p), onclick: () => void run(mapi.researchPiece(p.id), 'herald will research it again').then(() => refresh()) }, 'Refresh')] : null)
+      ? (p.research ? [`${researchLine(p.research)} · ${ago(p.research.at)} ·`, h('button.md-vlink', { disabled: isBusy(p), onclick: () => void run(mapi.researchPiece(p.id), 'herald will research it again').then(() => refresh()) }, 'Refresh')] : null)
       : view === 'conversations' ? conversationsLine(convs, replyPolicy(store)) : null;
     const tab = (id: SocialView, label: string, badge?: number) =>
       h('button.md-vtab', { class: view === id && 'on', onclick: () => { view = id; renderEditor(); } }, label, badge ? h('span.md-vbadge', null, String(badge)) : null);
@@ -691,7 +691,7 @@ export function createMedia(): Page {
       card = h('div.md-textcard', null, h('div.md-wait', null, ro ? 'herald is writing this one…' : 'No text for this platform yet.'));
     } else {
       const idx = Math.min(post.chosen, post.versions.length - 1);
-      const ta = h('textarea.md-posttext', { disabled: ro, rows: 8 }) as HTMLTextAreaElement;
+      const ta = h('textarea.md-posttext', { disabled: ro, rows: 3 }) as HTMLTextAreaElement;
       ta.value = post.versions[idx];
       const cc = h('span.md-cc');
       const upd = () => { const c = charCount(post.platform, fullPostText(post, idx)); cc.textContent = c.text; cc.className = `md-cc ${c.over ? 'over' : c.limit ? 'ok' : ''}`; };
@@ -774,12 +774,12 @@ export function createMedia(): Page {
       box.replaceChildren(img);
     }, () => box.classList.add('missing'));
     const open = d.vellum
-      ? h('button.md-vellum-open', { title: `Vellum file ${d.vellum.fileId}, artboard ${d.vellum.nodeId}`, onclick: () => toast(`Open Vellum: it's on the Media page of your project's file, artboard "${p.id} · ${PLATFORM_LABEL[d.platform]} ${d.width}×${d.height}"`) }, 'Open in Vellum ↗')
+      ? h('button.md-vellum-open', { title: `Vellum file ${d.vellum.fileId}, artboard ${d.vellum.nodeId}`, onclick: () => toast(`Open Vellum: it's on the Media page of your project's file, artboard "${p.id} · ${PLATFORM_LABEL[d.platform]} ${d.width}×${d.height}"`) }, square ? 'Vellum ↗' : 'Open in Vellum ↗')
       : null;
     return h('div.md-img', { class: square ? 'sq' : 'wide' },
       box,
-      h('div.md-img-cap', null, h('span.md-vellum-tag', null, 'VELLUM'), h('span.flex1', null, `${PLATFORM_LABEL[d.platform]} · ${d.width}×${d.height}`), imageButtons(url, name, true)),
-      open ? h('div.md-img-cap', null, open) : null);
+      h('div.md-img-cap', { title: `${PLATFORM_LABEL[d.platform]} · ${d.width}×${d.height}` }, h('span.md-vellum-tag', null, 'VELLUM'), h('span.flex1', null, square ? PLATFORM_LABEL[d.platform] : `${PLATFORM_LABEL[d.platform]} · ${d.width}×${d.height}`)),
+      h('div.md-img-cap', null, open ?? h('span'), h('span.flex1'), imageButtons(url, name, true)));
   }
 
   function attachmentsRow(p: MediaPiece, ro: boolean): HTMLElement {
@@ -1031,7 +1031,9 @@ export function createMedia(): Page {
         h('button.btn.sm', { onclick: () => { ta.focus(); ta.setSelectionRange(ta.value.length, ta.value.length); } }, 'Edit'),
         h('button.md-link', { onclick: () => void run(mapi.skipConversation(c.id), 'Skipped').then(() => refresh()) }, 'Skip'),
         h('div.flex1'),
-        block && block !== 'Write a reply first' ? h('div.md-conv-why.t-stuck', null, block) : c.mentionsProduct ? h('div.md-conv-why', null, 'Mentions your product: someone asked') : null);
+        unsourced.length ? h('div.md-conv-why.t-stuck', null, 'Confirm the red line above, or edit it out')
+          : block && block !== 'Write a reply first' ? h('div.md-conv-why.t-stuck', null, block)
+          : c.mentionsProduct ? h('div.md-conv-why', null, 'Mentions your product: someone asked') : null);
     }
     return h('div.md-conv', null,
       h('div.md-conv-top', null, h('span.md-plat-tag', null, PLATFORM_LABEL[c.platform]), kindLine, h('div.flex1'), h('a.md-conv-open', { href: c.url, target: '_blank', rel: 'noreferrer' }, c.kind === 'own' ? 'Open ↗' : 'Open thread ↗')),
@@ -1301,6 +1303,9 @@ export function createMedia(): Page {
         frameSel = null;
         view = 'post';
       }
+      // #/media/MP6?view=research (or conversations) opens that tab, e.g. from a board note.
+      const v = p.get('view');
+      if (v === 'post' || v === 'research' || v === 'conversations') view = v;
       render();
       // #/media?new=1 opens New piece (a link from elsewhere); the hash is cleaned so Back doesn't reopen it.
       if (!next && p.get('new')) {
