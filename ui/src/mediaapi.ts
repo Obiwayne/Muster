@@ -61,6 +61,6 @@ export const usedPiece = (id: string) => req<MediaPiece>('POST', `/api/media/pie
 export const retryPiece = (id: string) => req<MediaPiece>('POST', `/api/media/pieces/${enc(id)}/retry`, { actor: YOU });
 export const deletePiece = (id: string) => req<unknown>('DELETE', `/api/media/pieces/${enc(id)}`, { actor: YOU });
 export const saveStyle = (text: string) => req<unknown>('PUT', '/api/media/style', { actor: YOU, text });
-export const acceptSuggestion = (id: string) => req<MediaSuggestion>('POST', `/api/media/suggestions/${enc(id)}/accept`, { actor: YOU });
+export const acceptSuggestion = (id: string) => req<{ pieces: MediaPiece[] }>('POST', `/api/media/suggestions/${enc(id)}/accept`, { actor: YOU });
 export const dismissSuggestion = (id: string) => req<MediaSuggestion>('POST', `/api/media/suggestions/${enc(id)}/dismiss`, { actor: YOU });
 export const dismissAllSuggestions = () => req<unknown>('POST', '/api/media/suggestions/dismiss-all', { actor: YOU });
