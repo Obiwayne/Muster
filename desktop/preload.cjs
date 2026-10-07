@@ -31,5 +31,8 @@ if (location.protocol === 'http:' && (location.hostname === '127.0.0.1' || locat
     // "Restart to update": 'build' | 'restart' | 'current', and the restart itself (builds first when needed)
     updateStatus: () => ipcRenderer.invoke('app:updateStatus'),
     restartToUpdate: () => ipcRenderer.invoke('app:restartToUpdate'),
+    // Media page: copy an image to the clipboard; save a file (Save dialog opens on the Desktop; resolves to the path or null)
+    copyImage: (bytes) => ipcRenderer.invoke('app:copyImage', bytes),
+    saveFile: (name, bytes) => ipcRenderer.invoke('app:saveFile', { name, bytes }),
   });
 }
