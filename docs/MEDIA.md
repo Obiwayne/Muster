@@ -424,3 +424,81 @@ for word.
 - **Conversations:**
   - Reply for me is disabled, with the reason shown, when there are unsourced claims or the daily limit is reached.
   - The policy card edits `replyPolicy`.
+
+### Implementation notes (backend, obi/social-api)
+
+These are details the contract left open, decided while building. Code: `src/core/mediasocial.ts` (pure),
+`src/orchestrator/mediaapi.ts` (runtime and routes).
+
+**New store fields** (added to the types):
+- `MediaStore.current` (`MediaWork {kind, id?, startedAt}`) is the one thing herald holds.
+- `MediaStore.watchQueuedAt` means the comment check is due.
+- `MediaPiece.researchQueued` means a Refresh is waiting.
+
+**Dispatching:**
+- `pickWork` hands out work only when the current item is closed. A post is closed once its job leaves
+  queued/filling/ready/posting, an image once `designRequest` is gone, a draft once the piece isn't drafting, a
+  refresh once `researchQueued` is gone, and the check once `watchQueuedAt` is gone.
+- herald is typed "`<label>`: call media_brief and start", e.g. "Put post PJ1 into X". It stops `scoutStopDelayMs`
+  after the last work closes (`hasWork()` false).
+
+**Research route:** `POST /api/media/pieces/:id/research` is a **Refresh when the actor is you** (409 while queued or
+drafting; 400 for non-social pieces) and **saves research (media_research) when the actor is herald**.
+
+**Routes the contract didn't name:**
+
+| Route | Actor | Returns |
+|---|---|---|
+| `POST /api/media/pieces/:id/design` | you | the piece (with `designRequest`) |
+| `POST /api/media/pieces/:id/designs {designs}` | herald | the piece |
+| `GET /api/media/pieces/:id/designs/:file` | anyone | the PNG |
+| `POST /api/media/conversations {conversations}` | herald | `{added: MediaConversation[]}` |
+| `POST /api/media/watch/done` | herald | `{ok: true}` |
+| `POST /api/media/publish/next` | herald | `{job: MediaPublishJob \| null}` |
+| `POST /api/media/publish/:id/ready {composer, attached}` | herald | the job |
+| `POST /api/media/publish/:id/wait` (long poll) | herald | `{decision: 'go' \| 'cancel' \| 'waiting' \| <status>, job}` |
+| `POST /api/media/publish/:id/done {url}` | herald | the job |
+| `POST /api/media/publish/:id/failed {error, signin?}` | herald | the job |
+
+The wait holds **4 minutes**, not 5, to stay under Node's 5-minute request timeout.
+
+**Your routes' responses:**
+- `POST /api/media/publish` returns `{jobs}`.
+- `POST /api/media/publish/stop` returns `{stopped: jobs}`.
+- `go` and `cancel` return the job.
+- `conversations/:id/edit|skip|claims/:cid/confirm` return the conversation; `/reply` returns the new job.
+- `PUT /api/media/reply-policy` returns the full policy.
+- Errors are 400 for bad input, 403 for the wrong actor, 404 for unknown ids and 409 for the wrong status. 409 also
+  covers unsourced claims, the daily reply limit, a platform already going out, and Vellum not set up.
+
+**When a piece becomes used:** after a post is done and none of the piece's post jobs are still going out. A `signin`
+or `failed` job keeps the piece `approved` until a retry posts it, or until you mark it used.
+- **Retry** = `POST /api/media/publish` again for that platform. A platform with a job queued, filling, ready or
+  posting is skipped, and the call is a 409 when every platform was skipped.
+- **Cancel** works on queued, filling, ready, signin and failed jobs, but not on posting (409). Cancelling a reply job
+  puts its conversation back to `draft`.
+
+**If herald exits with work open:**
+- A job not yet sent becomes `failed` ("Retry puts it in again").
+- A job that was posting becomes `failed` with "check <platform> before you retry".
+- A design or research request is dropped (with a feed line).
+- The comment check is postponed 24 hours.
+- Drafts fail as before.
+
+**Ready note:** first line "`<Platform> <post|reply> ready (PJn)`", topic `media`, open. It is settled on go,
+cancel, stop, done or failed, and by herald exiting.
+
+**Browsing:** herald may use `browse` while its current work is a social draft, a research refresh or the comment
+check. The page budget is 40 per piece of work, using the research browser's mode; screenshots go to
+`.muster/media/shots`. The contract asked for the same tool scout has; this is the same route with a herald branch.
+
+**Agent launch:**
+- herald launches with `--chrome`.
+- Its MCP config gets the Vellum server only when `config.vellumFile` is set (plus `VELLUM_EXPORT_ROOTS=<repo>/.muster/media`).
+- "Vellum set up" for the design route = `vellumServer(config)` and `vellumFile`.
+
+**Other details:**
+- Hashtag inputs may include a leading "#" (it is stripped). Repeats are dropped case-insensitively, with a maximum of 30.
+- Design file names must be bare `.png` names in the piece's images folder. Re-designing a platform replaces its
+  image; the Vellum export never overwrites, so herald exports under a new name.
+- Replies per day count posted and in-flight reply jobs created on your local calendar day.

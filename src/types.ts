@@ -1135,6 +1135,7 @@ export interface MediaPiece {
   designs?: MediaDesign[]; // social: post images herald designed in Vellum (docs/MEDIA.md "Post images in Vellum")
   designRequest?: MediaDesignRequest; // "Make an image" asked and not done yet
   research?: MediaResearch; // social: what herald found on the platforms before writing
+  researchQueued?: string; // ISO time you pressed Refresh on Research: herald researches it again (research only, no redraft)
   claims: MediaClaim[];
   requests: MediaRequest[]; // "Ask herald to change it"
   progress?: string; // herald's live line while drafting: "writing section 3 of 5"
@@ -1173,6 +1174,8 @@ export interface MediaStore {
   publish?: MediaPublishJob[]; // posts and replies going out through your Chrome
   replyPolicy?: MediaReplyPolicy; // absent = { perDay: 5, watchOwn: true }
   lastWatch?: string; // ISO time herald last checked comments on your posts
+  watchQueuedAt?: string; // the daily check of comments on your posts is due (herald does it when free)
+  current?: MediaWork; // what herald was handed last and hasn't finished (one thing at a time)
   nextIds: { piece: number; suggestion: number; conversation?: number; publish?: number };
 }
 
@@ -1310,4 +1313,11 @@ export interface MediaPublishJob {
 export interface MediaReplyPolicy {
   perDay: number; // default 5, 0–20
   watchOwn: boolean; // check comments on your posts once a day (default true)
+}
+
+/** The one thing herald is working on (MediaStore.current). The dispatcher hands out work in this order: publish, design, draft, research, watch. */
+export interface MediaWork {
+  kind: 'publish' | 'design' | 'draft' | 'research' | 'watch';
+  id?: string; // the job (PJ3) or piece (MP3); none for watch
+  startedAt: string;
 }

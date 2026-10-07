@@ -179,8 +179,9 @@ export function mcpConfig(agent: Agent, ctx: LaunchContext): object {
   const servers: Record<string, unknown> = {
     muster: { command: posix(process.execPath), args: [`${posix(MUSTER_HOME)}/dist/mcp/index.js`], env },
   };
-  const vellum = agent.role === 'design' ? vellumServer(ctx.config) : undefined;
-  if (vellum) servers.vellum = vellum;
+  const vellum = agent.role === 'design' || (agent.role === 'media' && ctx.config.vellumFile?.trim()) ? vellumServer(ctx.config) : undefined;
+  // herald exports post images into .muster/media (VELLUM_EXPORT_ROOTS lets Vellum write there).
+  if (vellum) servers.vellum = agent.role === 'media' ? { ...vellum, env: { ...vellum.env, VELLUM_EXPORT_ROOTS: join(ctx.repoRoot, '.muster', 'media') } } : vellum;
   return { mcpServers: servers };
 }
 
@@ -273,5 +274,7 @@ export function launchArgs(agent: Agent, config: MusterConfig, files: AgentFiles
     ...(existsSync(PLUGIN_DIR) ? ['--plugin-dir', PLUGIN_DIR] : []),
     ...(opts.inlinePrompt !== undefined ? ['--append-system-prompt', opts.inlinePrompt] : ['--append-system-prompt-file', files.prompt]),
     '--name', `muster ${agent.id}`,
+    // herald puts approved posts into the user's own signed-in Chrome (Claude in Chrome); nothing is sent until they press Post.
+    ...(agent.role === 'media' ? ['--chrome'] : []),
   ];
 }

@@ -36,10 +36,14 @@ import { writeAtomic, type StoreOptions } from './store.js';
 /** herald's id: there is only ever one media agent. */
 export const HERALD_ID = 'herald';
 export const MEDIA_KINDS: readonly MediaKind[] = ['social', 'article', 'website', 'video', 'gif'];
-export const PLATFORMS: readonly MediaPlatform[] = ['x', 'linkedin', 'bluesky', 'threads'];
+export const PLATFORMS: readonly MediaPlatform[] = ['x', 'linkedin', 'facebook', 'instagram', 'bluesky', 'threads'];
 /** Character limits the UI warns about (never rejected: a long LinkedIn post is fine). */
-export const PLATFORM_LIMITS: Record<MediaPlatform, number> = { x: 280, linkedin: 3000, bluesky: 300, threads: 500 };
-export const DEFAULT_PLATFORMS: MediaPlatform[] = ['x', 'linkedin', 'bluesky'];
+export const PLATFORM_LIMITS: Record<MediaPlatform, number> = { x: 280, linkedin: 3000, facebook: 5000, instagram: 2200, bluesky: 300, threads: 500 };
+/** How many hashtags each platform's posts carry (herald follows it; the UI only warns). */
+export const HASHTAG_RULE: Record<MediaPlatform, readonly [number, number]> = { x: [1, 2], linkedin: [3, 5], facebook: [1, 3], instagram: [5, 10], threads: [1, 1], bluesky: [1, 2] };
+export const MAX_HASHTAGS = 30;
+const HASHTAG_RE = /^[A-Za-z0-9_]{1,50}$/;
+export const DEFAULT_PLATFORMS: MediaPlatform[] = ['x', 'linkedin', 'facebook'];
 export const DEFAULT_HOUSE_STYLE =
   "Plain words, no hype, short sentences. Name the real feature, show the screenshot, say who it helps. No em dashes, no 'not X but Y', no rule-of-three lists, no 'game-changer', 'seamless', 'unlock', 'elevate'.";
 
@@ -103,6 +107,10 @@ export function migrateMedia(raw: Partial<MediaStore>): MediaStore {
   const n = (s.nextIds = { ...{ piece: 1, suggestion: 1 }, ...s.nextIds });
   n.piece = Math.max(n.piece, above(s.pieces.map((p) => p.id)));
   n.suggestion = Math.max(n.suggestion, above(s.suggestions.map((x) => x.id)));
+  if (s.conversations !== undefined && !Array.isArray(s.conversations)) s.conversations = [];
+  if (s.publish !== undefined && !Array.isArray(s.publish)) s.publish = [];
+  if (s.conversations?.length) n.conversation = Math.max(n.conversation ?? 1, above(s.conversations.map((c) => c.id)));
+  if (s.publish?.length) n.publish = Math.max(n.publish ?? 1, above(s.publish.map((j) => j.id)));
   for (const p of s.pieces) {
     p.claims ??= [];
     p.requests ??= [];
@@ -172,6 +180,8 @@ export function mediaSummary(store: MediaStore): MediaSummary {
     review: store.pieces.filter((p) => p.status === 'review').length,
     drafting: store.pieces.filter((p) => p.status === 'drafting' || p.status === 'queued').length,
     openSuggestions: store.suggestions.filter((x) => x.status === 'open').length,
+    conversations: (store.conversations ?? []).filter((c) => c.status === 'draft').length,
+    publishReady: (store.publish ?? []).filter((j) => j.status === 'ready').length,
     ...(working ? { working: { id: working.id, title: working.title, ...(working.progress ? { progress: working.progress } : {}) } } : {}),
   };
 }
@@ -195,11 +205,11 @@ export function requireSuggestion(store: MediaStore, id: string): MediaSuggestio
 
 export const isHerald = (state: MusterState, actor: string) => findAgent(state, actor)?.role === 'media';
 
-function requireHuman(actor: string, what: string): void {
+export function requireHuman(actor: string, what: string): void {
   if (actor !== HUMAN) throw forbidden(`Only you can ${what}`);
 }
 
-function requireHerald(state: MusterState, actor: string, what: string): void {
+export function requireHerald(state: MusterState, actor: string, what: string): void {
   if (!isHerald(state, actor)) throw forbidden(`Only herald (the media agent) can ${what}`);
 }
 
@@ -212,9 +222,9 @@ export function mergedAt(task: Task): string | undefined {
 
 // ------------------------------------------------------------------ validation
 
-const isObj = (v: unknown): v is Record<string, any> => !!v && typeof v === 'object' && !Array.isArray(v);
+export const isObj = (v: unknown): v is Record<string, any> => !!v && typeof v === 'object' && !Array.isArray(v);
 
-function text(v: unknown, what: string, max: number, required = true): string {
+export function text(v: unknown, what: string, max: number, required = true): string {
   if (v === undefined || v === null || v === '') {
     if (required) throw badRequest(`${what} is empty`);
     return '';
@@ -226,14 +236,14 @@ function text(v: unknown, what: string, max: number, required = true): string {
   return t;
 }
 
-function list(v: unknown, what: string, max: number, min = 0): unknown[] {
+export function list(v: unknown, what: string, max: number, min = 0): unknown[] {
   if (!Array.isArray(v)) throw badRequest(`${what} must be a list`);
   if (v.length > max) throw badRequest(`${what}: at most ${max}`);
   if (v.length < min) throw badRequest(`${what}: at least ${min}`);
   return v;
 }
 
-function oneOf<T extends string>(v: unknown, allowed: readonly T[], what: string): T {
+export function oneOf<T extends string>(v: unknown, allowed: readonly T[], what: string): T {
   if (typeof v !== 'string' || !allowed.includes(v as T)) throw badRequest(`${what} must be one of ${allowed.join(', ')}`);
   return v as T;
 }
@@ -293,8 +303,28 @@ function posts(v: unknown, piece: MediaPiece): MediaPost[] {
     const versions = list(raw.versions, `posts[${i}].versions`, MAX_VERSIONS, 1).map((t, j) => text(t, `${platform} version ${String.fromCharCode(65 + j)}`, MAX_VERSION));
     const chosen = raw.chosen === undefined ? 0 : index(raw.chosen, `posts[${i}].chosen`, versions.length);
     if (piece.platforms && !piece.platforms.includes(platform)) piece.platforms.push(platform);
-    return { platform, versions, chosen };
+    const tags = raw.hashtags === undefined || raw.hashtags === null ? undefined : hashtags(raw.hashtags, `posts[${i}].hashtags`);
+    return { platform, versions, chosen, ...(tags?.length ? { hashtags: tags } : {}) };
   });
+}
+
+/** Hashtags as stored: no "#", letters/digits/underscore, no repeats (case-insensitive). */
+export function hashtags(v: unknown, what = 'hashtags'): string[] {
+  const out: string[] = [];
+  for (const [i, raw] of list(v, what, MAX_HASHTAGS).entries()) {
+    const tag = text(raw, `${what}[${i}]`, 51).replace(/^#/, '');
+    if (!HASHTAG_RE.test(tag)) throw badRequest(`${what}[${i}] "${tag}" isn't a hashtag: letters, digits and _ only, up to 50`);
+    if (!out.some((t) => t.toLowerCase() === tag.toLowerCase())) out.push(tag);
+  }
+  return out;
+}
+
+/** What gets copied or posted: the chosen version, then the hashtags on their own line. */
+export function fullText(post: MediaPost): string {
+  const body = post.versions[post.chosen] ?? post.versions[0] ?? '';
+  return post.hashtags?.length ? `${body}
+
+${post.hashtags.map((t) => `#${t}`).join(' ')}` : body;
 }
 
 function images(state: MusterState, v: unknown): MediaImage[] {
@@ -346,7 +376,7 @@ function shots(v: unknown): MediaShot[] {
   });
 }
 
-function claims(v: unknown): MediaClaim[] {
+export function claims(v: unknown): MediaClaim[] {
   return list(v, 'claims', MAX_CLAIMS).map((raw, i) => {
     if (!isObj(raw)) throw badRequest(`claims[${i}] must be an object`);
     const sources = list(raw.sources ?? [], `claims[${i}].sources`, MAX_CLAIM_SOURCES).map((src, j) => {
@@ -587,6 +617,12 @@ export function deletePiece(store: MediaStore, state: MusterState, actor: string
   const piece = requirePiece(store, id);
   store.pieces = store.pieces.filter((p) => p !== piece);
   settleNote(state, piece.id);
+  const at = nowIso();
+  for (const j of store.publish ?? []) {
+    if (j.pieceId !== piece.id || !['queued', 'filling', 'ready', 'signin'].includes(j.status)) continue;
+    j.status = 'cancelled';
+    j.updatedAt = at;
+  }
   return piece;
 }
 
@@ -683,7 +719,7 @@ export function finishDraft(store: MediaStore, state: MusterState, actor: string
 const noteTitle = (piece: MediaPiece) => `herald finished ${piece.id} · ${piece.title}`;
 
 /** The board note of a piece is settled once it's approved, used, deleted or redrafted. */
-function settleNote(state: MusterState, pieceId: string): void {
+export function settleNote(state: MusterState, pieceId: string): void {
   const heads = [`herald finished ${pieceId} ·`, `Demo recording ready for ${pieceId} ·`];
   for (const n of state.notes as Note[]) {
     if (n.topic !== 'media' || !heads.some((h) => n.text.startsWith(h)) || n.dismissed) continue;
@@ -879,7 +915,7 @@ export function aboutTasks(state: MusterState, about: MediaAbout[]): Task[] {
   return [...out.values()];
 }
 
-const clip = (s: string, n: number) => (s.length > n ? `${s.slice(0, n - 1)}…` : s);
+export const clip = (s: string, n: number) => (s.length > n ? `${s.slice(0, n - 1)}…` : s);
 
 /** GET /api/media/brief: what herald works from for the piece it is drafting. `evidenceFile` gives absolute paths. */
 export function mediaBrief(store: MediaStore, state: MusterState, opts: { intel?: IntelStore; evidenceFile?: (task: Task, entryId: string, name: string) => string; userName?: string; projectName?: string; readme?: string } = {}): string {
@@ -889,7 +925,7 @@ export function mediaBrief(store: MediaStore, state: MusterState, opts: { intel?
   const who = opts.userName?.trim() || 'the user';
   L.push(`# ${piece.id} · ${KIND_LABEL[piece.kind]}${opts.projectName ? ` for ${opts.projectName}` : ''}`);
   L.push(`Working title: ${piece.title}`);
-  if (piece.kind === 'social') L.push(`Platforms: ${(piece.platforms ?? DEFAULT_PLATFORMS).map((p) => `${p} (≤ ${PLATFORM_LIMITS[p]} chars)`).join(', ')}`);
+  if (piece.kind === 'social') L.push(`Platforms: ${(piece.platforms ?? DEFAULT_PLATFORMS).map((p) => `${p} (≤ ${PLATFORM_LIMITS[p]} chars with hashtags, ${HASHTAG_RULE[p][0] === HASHTAG_RULE[p][1] ? HASHTAG_RULE[p][0] : HASHTAG_RULE[p].join('–')} hashtag${HASHTAG_RULE[p][1] === 1 ? '' : 's'})`).join(', ')}`);
   if (piece.kind === 'website') L.push(`Target page: ${piece.target ?? '(suggest one, e.g. /features/moderation or /changelog)'}`);
   L.push(`About: ${piece.about.map((a) => a.label).join('; ')}`);
   const purpose = piece.purpose ?? 'progress';
@@ -977,7 +1013,17 @@ export function mediaBrief(store: MediaStore, state: MusterState, opts: { intel?
   L.push('- Every factual sentence needs a claim: {quote: the words as they appear, sources: [{kind: task|stage|goal|idea|intel|chat|evidence|readme, ref: "T38" / "M3" / "F120" / "T38/E2", label: "T38 merged"}]}.');
   L.push(`- Anything you can't source: leave it out, or record it as a claim with sources: [] so ${who} can confirm it. Never invent numbers, quotes or users.`);
   L.push('- Save often with media_draft. Write a title first, then the body piece by piece, with progress ("writing section 3 of 5").');
-  if (piece.kind === 'social') L.push('- Social: 3 versions per platform, each within its limit. Attach 1–3 evidence images that show the feature (images: taskId, evidenceId, name, caption). Open screenshots with Read to choose.');
+  if (piece.kind === 'social') {
+    L.push('- Social: 3 versions per platform, each within its limit. Attach 1–3 evidence images that show the feature (images: taskId, evidenceId, name, caption). Open screenshots with Read to choose.');
+    L.push('- Hashtags: posts[].hashtags per platform (no "#"), as many as the platform line says, picked from the research hashtags when there are any. The limit counts the hashtags too: version + blank line + "#tag #tag". Instagram needs an image.');
+    if (!piece.research)
+      L.push('- Research first: before writing, look at what is being said about this on each platform and in recent articles (the browse tool for the search page of each platform, web search for articles), then save it with media_research. Use it: open with what people care about, pick hashtags people actually use, and add up to 6 media_conversations where a reply from the user would really help.');
+    else {
+      const r = piece.research;
+      L.push(`- Research (${r.at.slice(0, 10)}): themes ${r.themes.map((t) => `"${t.text}" ×${t.count}`).join('; ') || 'none'}; hashtags in use ${r.hashtags.map((h) => `#${h.tag} (${h.platforms.join('/')})`).join(' ') || 'none'}. Build on it and keep research.used up to date with media_research when it changes how you write.`);
+    }
+    L.push('- No good screenshot? You may design a post image in Vellum (see the design steps in your prompt) and attach it with media_designs.');
+  }
   if (piece.kind === 'article') L.push('- Article: 4–6 sections with plain headings, about 800–1,500 words. Mark sections todo/writing/done as you go.');
   if (piece.kind === 'website') L.push('- Website: a target path plus sections (hero line, feature blocks, FAQ or changelog entries). Short, scannable.');
   if (piece.kind === 'video') L.push('- Video: 3 opening hooks, then a shot table (at "0:04", shot, voiceover, onScreen). Use evidence screenshots where they exist (evidence: taskId, evidenceId, name); set record: true where someone has to film it. About 60 seconds unless asked.');

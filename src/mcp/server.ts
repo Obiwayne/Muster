@@ -7,7 +7,7 @@ import { musterFetch } from '../client.js';
 import { formatEvidence } from '../core/evidence.js';
 import { formatGuideline } from '../core/stations.js';
 import { REACTION_EMOJI } from '../types.js';
-import type { Agent, BrowseResult, MediaPiece, MediaSuggestion, Evidence, FeedItem, InboxItem, IntelChange, IntelCheck, IntelJob, IntelStore, MusterState, Note, ResearchIdea, ResearchRun, ResearchState, Role, Roadmap, RoadmapProgress, StationDef, Task } from '../types.js';
+import type { Agent, BrowseResult, MediaConversation, MediaPiece, MediaPublishJob, MediaSuggestion, Evidence, FeedItem, InboxItem, IntelChange, IntelCheck, IntelJob, IntelStore, MusterState, Note, ResearchIdea, ResearchRun, ResearchState, Role, Roadmap, RoadmapProgress, StationDef, Task } from '../types.js';
 import {
   BOARD_FILTERS,
   boardQuery,
@@ -83,7 +83,12 @@ export const RESEARCH_TOOLS = [
   'intel_brief', 'browse', 'record_intel', 'add_opportunity', 'intel_check', 'finish_intel_job',
 ] as const;
 /** herald (the media agent): drafts media pieces; no board, task or code tools. */
-export const MEDIA_TOOLS = ['media_brief', 'media_draft', 'media_finish', 'read_inbox'] as const;
+export const MEDIA_TOOLS = [
+  'media_brief', 'media_draft', 'media_finish', 'read_inbox', 'browse',
+  'media_research', 'media_designs', 'media_conversations', 'media_watch_done',
+  'media_publish_next', 'media_publish_ready', 'media_publish_wait', 'media_publish_done', 'media_publish_failed',
+] as const;
+const MEDIA_PLATFORMS = ['x', 'linkedin', 'facebook', 'instagram', 'bluesky', 'threads'] as const;
 
 // ---- media shapes (the server validates everything again and names the field on a 400) ----
 const claimSourceShape = z.object({
@@ -166,7 +171,7 @@ export function createMusterServer(opts: MusterServerOptions): McpServer {
           : role === 'research'
             ? `You are ${me}, the Muster research agent. In a research run: research_brief, add_idea (then intel_check when competitors are tracked), finish_research. In an intel job: intel_brief, record_intel, add_opportunity + intel_check, finish_intel_job. Read-only; never sign in yourself; never change code.`
             : role === 'media'
-              ? `You are ${me}, the Muster media agent (herald). media_brief first, save with media_draft as you write, then media_finish. Plain text; source every claim; never post anything or change files.`
+              ? `You are ${me}, the Muster media agent (herald). media_brief first: it says what you are on (a draft, post images, research, a post going out, the comment check). Plain text; source every claim; never change files. Post only through media_publish_*, and press Post only after media_publish_wait says go.`
               : role === 'qa'
               ? `You are ${me}, the Muster QA agent. Claim the task waiting at the qa station, review its diff and run its tests. Never edit code.`
               : `You are ${me}, Muster ${role === 'design' ? 'design crew' : 'crew'}. Work only in your worktree; ask crew before the Captain.`,
@@ -767,6 +772,146 @@ ${r.output}`;
   function registerMedia() {
     const pieceLine = (p: MediaPiece) => `${p.id} (${p.kind}, ${p.status}) "${p.title}"`;
 
+    const jobLine = (j: MediaPublishJob) => `${j.id} ${j.kind} on ${j.platform}: ${j.status}${j.error ? ` (${j.error})` : ''}`;
+    registerBrowse();
+
+    tool(
+      'media_research',
+      'Save what you found on the platforms for a social piece: platforms, query (the phrases you searched), read {posts, articles}, top (≤ 8: platform or "article", text, who, engagement, url, at YYYY-MM-DD), themes (≤ 8: what people keep saying, with count), hashtags (≤ 12: tag without "#", platforms, note), used (≤ 6: how it shaped your post). A research refresh is finished by this call.',
+      {
+        piece: z.string().optional().describe('Piece id (default: the one you are on)'),
+        platforms: z.array(z.enum(MEDIA_PLATFORMS)).optional(),
+        query: z.array(z.string().max(100)).max(8).optional(),
+        read: z.object({ posts: z.number().int().min(0).optional(), articles: z.number().int().min(0).optional() }).optional(),
+        top: z.array(z.object({ platform: z.enum([...MEDIA_PLATFORMS, 'article']), text: z.string().min(1).max(300), who: z.string().min(1).max(100), engagement: z.string().max(100).optional(), url: z.string().optional(), at: z.string().optional() })).max(8).optional(),
+        themes: z.array(z.object({ text: z.string().min(1).max(200), count: z.number().int().min(1) })).max(8).optional(),
+        hashtags: z.array(z.object({ tag: z.string().min(1).max(51), platforms: z.array(z.enum(MEDIA_PLATFORMS)), note: z.string().max(100).optional() })).max(12).optional(),
+        used: z.array(z.string().min(1).max(300)).max(6).optional(),
+      },
+      async ({ piece, ...fields }) => {
+        const id = piece?.trim() ? upId(piece) : (await currentPieceId());
+        const p = await api<MediaPiece>(`/api/media/pieces/${enc(id)}/research`, { method: 'POST', body: { actor: me, ...fields } });
+        return `Saved research for ${pieceLine(p)}: ${p.research?.top.length ?? 0} posts/articles, ${p.research?.themes.length ?? 0} themes, ${p.research?.hashtags.length ?? 0} hashtags.`;
+      },
+    );
+
+    tool(
+      'media_designs',
+      'Attach post images you designed in Vellum and exported as PNG into the folder the brief names: designs = [{platform, file (just the file name), caption (alt text), style?, vellum: {fileId, pageId, nodeId}}]. Replaces the images for those platforms.',
+      {
+        piece: z.string().optional().describe('Piece id (default: the one you are on)'),
+        designs: z
+          .array(
+            z.object({
+              platform: z.enum(MEDIA_PLATFORMS),
+              file: z.string().min(1),
+              caption: z.string().min(1).max(300),
+              style: z.enum(['headline', 'features', 'quote']).optional(),
+              vellum: z.object({ fileId: z.string(), pageId: z.string().optional(), nodeId: z.string() }).optional(),
+            }),
+          )
+          .min(1)
+          .max(12),
+      },
+      async ({ piece, designs }) => {
+        const id = piece?.trim() ? upId(piece) : (await currentPieceId());
+        const p = await api<MediaPiece>(`/api/media/pieces/${enc(id)}/designs`, { method: 'POST', body: { actor: me, designs } });
+        return `Attached ${designs.length} post image${designs.length === 1 ? '' : 's'} to ${pieceLine(p)}: ${(p.designs ?? []).map((d) => `${d.platform} ${d.width}×${d.height}`).join(', ')}.`;
+      },
+    );
+
+    tool(
+      'media_conversations',
+      "Add places where a reply from the user would really help: [{pieceId?, platform, kind: thread (someone else's) or own (a comment on the user's post), url, who, quote, engagement?, why, draft (the reply, plain text), claims, mentionsProduct}]. Known URLs are skipped. Follow the reply rules in the brief.",
+      {
+        conversations: z
+          .array(
+            z.object({
+              pieceId: z.string().optional(),
+              platform: z.enum(MEDIA_PLATFORMS),
+              kind: z.enum(['thread', 'own']).optional(),
+              url: z.string().min(1),
+              who: z.string().min(1).max(100),
+              quote: z.string().min(1).max(500),
+              engagement: z.string().max(100).optional(),
+              why: z.string().min(1).max(300),
+              draft: z.string().min(1).max(3000),
+              claims: z.array(z.object({ quote: z.string().min(1).max(300), sources: z.array(claimSourceShape).max(8) })).max(60).optional(),
+              mentionsProduct: z.boolean().optional(),
+            }),
+          )
+          .min(1)
+          .max(10),
+      },
+      async ({ conversations }) => {
+        const r = await api<{ added: MediaConversation[] }>('/api/media/conversations', { method: 'POST', body: { actor: me, conversations } });
+        return r.added.length ? `Added ${r.added.map((c) => `${c.id} (${c.platform} ${c.kind})`).join(', ')}. The user decides on each.` : 'Nothing new: those threads are already there.';
+      },
+    );
+
+    tool('media_watch_done', 'Finish the comment check on the user\'s posts (after adding any media_conversations).', {}, async () => {
+      await api('/api/media/watch/done', { method: 'POST', body: { actor: me } });
+      return 'Comment check done. If more work is waiting it arrives as a new [muster] line; otherwise stop here.';
+    });
+
+    tool('media_publish_next', 'Take the post or reply you were handed: it moves to filling and you get the exact text, images and where to put it.', {}, async () => {
+      const r = await api<{ job: MediaPublishJob | null }>('/api/media/publish/next', { method: 'POST', body: { actor: me } });
+      const j = r.job;
+      if (!j) return 'Nothing to post right now.';
+      return `${jobLine(j)}\nText (exactly):\n<<<\n${j.text}\n>>>\n${j.images.length ? `Images:\n${j.images.map((x) => `- ${x}`).join('\n')}` : 'No images.'}`;
+    });
+
+    tool(
+      'media_publish_ready',
+      "The post is filled in (not sent): composer = the text read back from the page, attached = images attached. The user checks the Chrome tab and presses Post in Muster. Then call media_publish_wait.",
+      { job: z.string().describe('e.g. PJ3'), composer: z.string().min(1), attached: z.number().int().min(0).optional() },
+      async ({ job, composer, attached }) => {
+        const j = await api<MediaPublishJob>(`/api/media/publish/${enc(upId(job))}/ready`, { method: 'POST', body: { actor: me, composer, attached: attached ?? 0 } });
+        return `${jobLine(j)}. The user has been told. Now call media_publish_wait(${j.id}).`;
+      },
+    );
+
+    tool(
+      'media_publish_wait',
+      'Wait for the user (up to 4 minutes per call): go = press Post/Reply once now, then media_publish_done; cancel = discard the draft and close the tab; waiting = call it again.',
+      { job: z.string() },
+      async ({ job }) => {
+        const r = await api<{ decision: string; job: MediaPublishJob }>(`/api/media/publish/${enc(upId(job))}/wait`, { method: 'POST', body: { actor: me } });
+        if (r.decision === 'go') return `go: press ${r.job.kind === 'reply' ? 'Reply' : 'Post'} once now, read the address of the new ${r.job.kind}, then media_publish_done(${r.job.id}, url).`;
+        if (r.decision === 'cancel') return `cancel: discard the draft in the tab and close it. Do not post. ${r.job.id} is done.`;
+        if (r.decision === 'waiting') return `waiting: the user hasn't pressed Post yet. Call media_publish_wait(${r.job.id}) again.`;
+        return `${jobLine(r.job)}: nothing to post. Stop working on it.`;
+      },
+    );
+
+    tool(
+      'media_publish_done',
+      'You pressed Post (after go) and it went out: url = the address of the new post or reply.',
+      { job: z.string(), url: z.string().optional() },
+      async ({ job, url }) => {
+        const j = await api<MediaPublishJob>(`/api/media/publish/${enc(upId(job))}/done`, { method: 'POST', body: { actor: me, ...(url ? { url } : {}) } });
+        return `${jobLine(j)}. Close the tab. If more work is waiting it arrives as a new [muster] line; otherwise stop here.`;
+      },
+    );
+
+    tool(
+      'media_publish_failed',
+      'It could not be put in or posted: error = what happened; signin: true when a login page showed (the user signs in in Chrome, then retries). Never press Post to "try".',
+      { job: z.string(), error: z.string().max(500), signin: z.boolean().optional() },
+      async ({ job, error, signin }) => {
+        const j = await api<MediaPublishJob>(`/api/media/publish/${enc(upId(job))}/failed`, { method: 'POST', body: { actor: me, error, ...(signin ? { signin: true } : {}) } });
+        return `${jobLine(j)}. The user has been told. Close the tab and stop.`;
+      },
+    );
+
+    async function currentPieceId(): Promise<string> {
+      const store = await api<{ current?: { kind: string; id?: string }; pieces: MediaPiece[] }>('/api/media');
+      const id = store.current?.id ?? store.pieces.find((p) => p.status === 'drafting')?.id;
+      if (!id || /^PJ/.test(id)) throw new Error('Say which piece (e.g. piece: "MP3")');
+      return id;
+    }
+
+
     tool(
       'media_brief',
       "Read the brief for the piece you're drafting: kind, platforms, what it's about, the user's note and change requests, the house style, the facts to write from (stages, goals, tasks, evidence files with paths, intel, crew chat) and the rules. Call it first.",
@@ -780,7 +925,16 @@ ${r.output}`;
       {
         piece: z.string().optional().describe('Piece id, e.g. MP3 (default: the one you are drafting)'),
         title: z.string().min(1).max(160).optional(),
-        posts: z.array(z.object({ platform: z.enum(['x', 'linkedin', 'bluesky', 'threads']), versions: z.array(z.string().min(1)).min(1).max(3), chosen: z.number().int().min(0).optional() })).optional(),
+        posts: z
+          .array(
+            z.object({
+              platform: z.enum(MEDIA_PLATFORMS),
+              versions: z.array(z.string().min(1)).min(1).max(3).describe('Without the hashtags'),
+              chosen: z.number().int().min(0).optional(),
+              hashtags: z.array(z.string()).max(30).optional().describe('Without "#", e.g. ["edtech", "teachers"]; counts per platform in the brief'),
+            }),
+          )
+          .optional(),
         images: z.array(evidenceRefShape.extend({ caption: z.string().max(120).optional() })).max(6).optional(),
         gifIds: z.array(z.string()).max(3).optional().describe('Social only: finished demo GIF pieces to attach, e.g. ["MP5"]'),
         sections: z.array(z.object({ heading: z.string().max(200), text: z.string().max(8000), status: z.enum(['todo', 'writing', 'done']).optional() })).max(20).optional(),
@@ -819,9 +973,42 @@ ${r.output}`;
     );
   }
 
+  // ---- browse (scout, and herald while it researches) -----------------------------
+
+  function registerBrowse() {
+    tool(
+      'browse',
+      "Read one page through Muster's research browser (read-only, rate-limited): action read (visible text, links: true for links), screenshot (PNG path; open it with Read) or scroll (by pixels). Pages you are signed in to through the research profile work here; never sign in yourself. In profile or opera mode use it (not curl or Jina) for competitor product and pricing pages and for Reddit, LinkedIn, G2 and other pages that show more signed in; never call it in public mode.",
+      { url: z.string().min(1), action: z.enum(['read', 'screenshot', 'scroll']).optional(), links: z.boolean().optional(), by: z.number().int().optional() },
+      async ({ url, action, links, by }) => {
+        const body: Record<string, unknown> = { actor: me, url, action: action ?? 'read' };
+        if (links !== undefined) body.links = links;
+        if (by !== undefined) body.by = by;
+        let r: BrowseResult;
+        try {
+          r = await api<BrowseResult>('/api/browser/read', { method: 'POST', body });
+        } catch (e) {
+          const msg = e instanceof Error ? e.message : String(e);
+          if (/No route|\b404\b/.test(msg)) return "The research browser isn't available yet; use the web-research tools.";
+          throw e;
+        }
+        const via = r.readVia === 'public_reader' ? 'public reader' : r.via;
+        const head = `${r.title || r.url} (${r.status}, via ${via}${r.loggedIn ? ', signed in' : ''}) · ${r.pagesLeft} pages left${r.blocked ? `
+Blocked: ${r.blocked}.` : ''}${r.note ? `
+${r.note}` : ''}`;
+        if (r.screenshot) return `${head}\nScreenshot: ${r.screenshot}`;
+        if (r.scrolled) return `${head}\nScrolled to ${r.scrolled.y} of ${r.scrolled.height}px.`;
+        const linkLines = r.links?.length ? `\n\nLinks:\n${r.links.map((l) => `- ${clip(l.text, 80)} ${l.url}`).join('\n')}` : '';
+        return `${head}\n${r.url}\n\n${r.text ?? ''}${linkLines}`;
+      },
+    );
+
+  }
+
   // ---- research (scout) ---------------------------------------------------------
 
   function registerResearch() {
+    registerBrowse();
     tool(
       'research_brief',
       'Read the brief for the running research run: the sources to study, focus, depth, the product and its roadmap stages and goals (ids for stage/overlaps), ideas already found (do not repeat them), and the rules. Call it first.',
@@ -873,33 +1060,6 @@ ${r.output}`;
       'Read the brief for the running intel job: the competitors with their sources and areas, the idea for a check (and the previous revision on a re-check), what the store already holds (update, never duplicate), the browse mode and page budget, the rules. Call it first.',
       {},
       async () => (await api<{ text: string }>('/api/intel/brief'))?.text?.trim() || 'No brief: no intel job is running.',
-    );
-
-    tool(
-      'browse',
-      "Read one page through Muster's research browser (read-only, rate-limited): action read (visible text, links: true for links), screenshot (PNG path; open it with Read) or scroll (by pixels). Pages you are signed in to through the research profile work here; never sign in yourself. In profile or opera mode use it (not curl or Jina) for competitor product and pricing pages and for Reddit, LinkedIn, G2 and other pages that show more signed in; never call it in public mode.",
-      { url: z.string().min(1), action: z.enum(['read', 'screenshot', 'scroll']).optional(), links: z.boolean().optional(), by: z.number().int().optional() },
-      async ({ url, action, links, by }) => {
-        const body: Record<string, unknown> = { actor: me, url, action: action ?? 'read' };
-        if (links !== undefined) body.links = links;
-        if (by !== undefined) body.by = by;
-        let r: BrowseResult;
-        try {
-          r = await api<BrowseResult>('/api/browser/read', { method: 'POST', body });
-        } catch (e) {
-          const msg = e instanceof Error ? e.message : String(e);
-          if (/No route|\b404\b/.test(msg)) return "The research browser isn't available yet; use the web-research tools.";
-          throw e;
-        }
-        const via = r.readVia === 'public_reader' ? 'public reader' : r.via;
-        const head = `${r.title || r.url} (${r.status}, via ${via}${r.loggedIn ? ', signed in' : ''}) · ${r.pagesLeft} pages left${r.blocked ? `
-Blocked: ${r.blocked}.` : ''}${r.note ? `
-${r.note}` : ''}`;
-        if (r.screenshot) return `${head}\nScreenshot: ${r.screenshot}`;
-        if (r.scrolled) return `${head}\nScrolled to ${r.scrolled.y} of ${r.scrolled.height}px.`;
-        const linkLines = r.links?.length ? `\n\nLinks:\n${r.links.map((l) => `- ${clip(l.text, 80)} ${l.url}`).join('\n')}` : '';
-        return `${head}\n${r.url}\n\n${r.text ?? ''}${linkLines}`;
-      },
     );
 
     tool(
