@@ -48,6 +48,7 @@ object NeedsSync {
                 state.store.notifiedIds = state.store.notifiedIds - ev.id
             }
             ServerEvent.Test -> Notifier.test(ctx, state.pcName)
+            is ServerEvent.Hosts -> state.updateHosts(ev.hosts)
             else -> Unit
         }
     }

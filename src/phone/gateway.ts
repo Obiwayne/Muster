@@ -264,7 +264,7 @@ export async function startGateway(opts: GatewayOptions = {}): Promise<Gateway> 
   const networkInfo = async () => {
     const lan = getLan();
     const tailscale = await getTailscale();
-    return { lan, tailscale, hosts: hostsFor(state.network.mode, lan, tailscale) };
+    return { lan, tailscale, hosts: hostsFor(lan, tailscale) };
   };
 
   // ------------------------------------------------------------------ remote writes (docs/REMOTE.md)
@@ -918,6 +918,8 @@ export async function startGateway(opts: GatewayOptions = {}): Promise<Gateway> 
       clients.add(client);
       ws.on('close', () => clients.delete(client));
       ws.on('error', () => clients.delete(client));
+      // Phones keep the hosts they got when pairing; this keeps them current (e.g. Tailscale added since).
+      void networkInfo().then(({ hosts }) => { if (hosts.length) send(ws, { type: 'hosts', hosts }); }).catch(() => {});
       // Items already waiting are the baseline: the phone fetches them with GET /api/needs; only new ones are pushed.
       void collect()
         .then(({ items }) => {

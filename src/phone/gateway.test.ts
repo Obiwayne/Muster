@@ -158,7 +158,7 @@ describe('phone gateway: state and pairing', () => {
     expect(r.status).toBe(200);
     expect(r.data.display).toMatch(/^[A-Z2-9]{3}-[A-Z2-9]{3}$/);
     expect(r.data.display.replace('-', '')).toBe(r.data.code);
-    expect(r.data.qrText).toBe(`muster://pair?c=${r.data.code}&p=${gw.port}&f=${gw.fingerprint}&n=${encodeURIComponent(JSON.parse(readFileSync(phoneFiles(gw.dir).state, 'utf8')).pcName)}&h=192.168.1.20`);
+    expect(r.data.qrText).toBe(`muster://pair?c=${r.data.code}&p=${gw.port}&f=${gw.fingerprint}&n=${encodeURIComponent(JSON.parse(readFileSync(phoneFiles(gw.dir).state, 'utf8')).pcName)}&h=192.168.1.20,100.101.102.103,pc.tail.ts.net`);
     expect(r.data.qrSvg).toMatch(/^<svg/);
     expect(Date.parse(r.data.expiresAt) - Date.now()).toBeGreaterThan(100_000);
   });
@@ -167,7 +167,7 @@ describe('phone gateway: state and pairing', () => {
     const code = (await admin('POST', '/admin/pair-code')).data.code;
     const ok = await call('POST', '/pair', { body: { code, deviceName: 'Pixel 9' } });
     expect(ok.status).toBe(200);
-    expect(ok.data).toMatchObject({ deviceId: expect.any(String), pcName: expect.any(String), hosts: ['192.168.1.20'] });
+    expect(ok.data).toMatchObject({ deviceId: expect.any(String), pcName: expect.any(String), hosts: ['192.168.1.20', '100.101.102.103', 'pc.tail.ts.net'] });
     expect(Buffer.from(ok.data.key, 'base64url').length).toBe(32);
     const saved = readFileSync(phoneFiles(gw.dir).state, 'utf8');
     expect(saved).not.toContain(ok.data.key);
@@ -185,10 +185,12 @@ describe('phone gateway: state and pairing', () => {
     expect(r.data.error).toMatch(/expired/);
   });
 
-  it('includes the Tailscale address in tailscale mode', async () => {
-    expect((await admin('PUT', '/admin/network', { mode: 'tailscale' })).status).toBe(200);
-    const r = await admin('POST', '/admin/pair-code');
-    expect(r.data.qrText).toMatch(/&h=192\.168\.1\.20,100\.101\.102\.103,pc\.tail\.ts\.net$/);
+  it('offers the Tailscale address whatever the saved network mode, so mobile data works', async () => {
+    for (const mode of ['lan', 'tailscale']) {
+      expect((await admin('PUT', '/admin/network', { mode })).status).toBe(200);
+      const r = await admin('POST', '/admin/pair-code');
+      expect(r.data.qrText).toMatch(/&h=192\.168\.1\.20,100\.101\.102\.103,pc\.tail\.ts\.net$/);
+    }
     expect((await admin('PUT', '/admin/network', { mode: 'wifi' })).status).toBe(400);
     await admin('PUT', '/admin/network', { mode: 'lan' });
   });
@@ -367,6 +369,9 @@ describe('phone gateway: events websocket', () => {
     await call('PUT', '/api/prefs', { key, body: { quiet: { from, to } } });
     const { ws, messages } = await connect(key);
     await until(() => gw.readyClients() > 0);
+    // Phones paired on Wi-Fi only learn the Tailscale address from this.
+    await until(() => messages.some((m) => m.type === 'hosts'));
+    expect(messages.find((m) => m.type === 'hosts')).toEqual({ type: 'hosts', hosts: ['192.168.1.20', '100.101.102.103', 'pc.tail.ts.net'] });
     await gw.pollNow(); // the baseline (N1, N5) is never pushed
     expect(messages.filter((m) => m.type === 'need')).toEqual([]);
 

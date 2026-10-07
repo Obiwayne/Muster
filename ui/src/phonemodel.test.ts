@@ -31,7 +31,7 @@ describe('pair code countdown', () => {
 describe('network rows', () => {
   it('shows the LAN address with the port and the manual-entry host', () => {
     const [lan, ts] = networkRows(status());
-    expect(lan).toMatchObject({ mode: 'lan', selected: true, detail: '192.168.1.20:47910' });
+    expect(lan).toMatchObject({ mode: 'lan', selected: true, disabled: false, detail: '192.168.1.20:47910' });
     expect(ts).toMatchObject({ mode: 'tailscale', selected: false, disabled: true, detail: 'not installed' });
     expect(ts.link?.href).toBe('https://tailscale.com/download');
     expect(manualHost(status())).toBe('192.168.1.20');
@@ -39,16 +39,19 @@ describe('network rows', () => {
   });
 
   it('shows the MagicDNS name and whether Tailscale is connected', () => {
-    const on = networkRows(status({ mode: 'tailscale', tailscale: { installed: true, ip: '100.101.1.2', dnsName: 'wayne-pc.tail1234.ts.net.', online: true } }))[1];
+    const on = networkRows(status({ tailscale: { installed: true, ip: '100.101.1.2', dnsName: 'wayne-pc.tail1234.ts.net.', online: true } }))[1];
     expect(on).toMatchObject({ selected: true, disabled: false, detail: 'wayne-pc · connected', dot: 'ok' });
     expect(on.link).toBeUndefined();
     const off = networkRows(status({ tailscale: { installed: true, ip: '100.101.1.2', online: false } }))[1];
-    expect(off).toMatchObject({ detail: '100.101.1.2 · offline', dot: 'off', disabled: false });
+    expect(off).toMatchObject({ detail: '100.101.1.2 · offline', dot: 'off', selected: false, disabled: false });
+    // The saved mode no longer matters: Tailscale is used whenever it is connected.
+    const both = networkRows(status({ mode: 'lan', tailscale: { installed: true, ip: '100.101.1.2', online: true } }));
+    expect(both.map((r) => r.selected)).toEqual([true, true]);
     expect(shortDns(undefined)).toBe('');
   });
 
   it('copes with no LAN address', () => {
-    expect(networkRows(status({ lanHosts: [] }))[0].detail).toBe('no network found');
+    expect(networkRows(status({ lanHosts: [] }))[0]).toMatchObject({ detail: 'no network found', selected: false, disabled: true });
   });
 });
 

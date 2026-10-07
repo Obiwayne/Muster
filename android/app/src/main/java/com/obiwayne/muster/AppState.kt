@@ -220,6 +220,16 @@ class AppState(private val app: Application) {
         api = null
     }
 
+    /** Saves the PC's current addresses, so a phone paired on Wi-Fi alone can still reach it over Tailscale. */
+    fun updateHosts(hosts: List<String>) {
+        val l = link.value ?: return
+        if (demo.value || hosts.isEmpty() || hosts == l.hosts) return
+        val next = l.copy(hosts = hosts)
+        store.save(next)
+        link.value = next
+        api = null
+    }
+
     /** Starts the listener service and the 15-minute fallback poll. */
     fun startListening() {
         if (demo.value || link.value == null) return
