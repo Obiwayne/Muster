@@ -17,6 +17,8 @@
   --color-glow-violet: #8b5cf6;
   --color-research: var(--color-glow-blue); /* scout, the research agent */
   --color-research-text: #7fa0ff;
+  --color-media: #f472b6; /* herald, the media agent */
+  --color-media-text: #f9a8d4;
   --color-warm: #ff8a3d;
   --color-primary-btn: #f4f4f5;
   --color-on-primary: #111113;
@@ -76,6 +78,7 @@ a { color: inherit; text-decoration: none; }
 .r-crew { --role: var(--color-crew); }
 .r-design { --role: var(--color-design); }
 .r-research { --role: var(--color-research); }
+.r-media { --role: var(--color-media); }
 .r-human { --role: var(--color-warm); }
 .r-you { --role: var(--color-muted); }
 .r-muster { --role: var(--color-faint); }

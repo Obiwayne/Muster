@@ -113,6 +113,8 @@ const ICONS: Record<string, string> = {
   // remote connector (held writes, "via Claude")
   send: '<path d="M22 2 11 13M22 2l-7 20-4-9-9-4 20-7z"/>',
   timer: '<circle cx="12" cy="13" r="8"/><path d="M12 9v4l2 2M9 2h6"/>',
+  megaphone: '<path d="M3 11l15-6v14L3 13z"/><path d="M11.6 16.8a3 3 0 1 1-5.8-1.6"/><path d="M21 9v6"/>',
+  back: '<path d="M15 18l-6-6 6-6"/>',
   lock2: '<rect x="5" y="11" width="14" height="10" rx="2"/><path d="M8 11V7a4 4 0 0 1 8 0v4"/>',
 };
 
