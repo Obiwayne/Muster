@@ -12,6 +12,7 @@ import type { MusterPaths } from '../core/paths.js';
 import { sanitizeTyped } from '../core/sanitize.js';
 import type { Store } from '../core/store.js';
 import { QA_ID, QA_STATION, qaSkippable } from '../core/qa.js';
+import { HERALD_ID } from '../core/media.js';
 import { failRun, runningRun, SCOUT_ID } from '../core/research.js';
 import { addInput, assignTask, hasReportedDone, MERGE_CONFLICT, requireTask, untake, type QaOpts, type StationBranch } from '../core/tasks.js';
 import { assertNotPaused } from '../core/usage.js';
@@ -67,7 +68,19 @@ export interface AgentManagerOptions {
   onStuck?: (text: string) => void;
   /** Intel jobs scout runs besides research runs (src/core/intel.ts); the store lives outside MusterState. */
   intel?: ScoutIntel;
+  /** The media pieces herald drafts (src/core/media.ts); the store lives outside MusterState. */
+  media?: HeraldMedia;
 }
+
+export interface HeraldMedia {
+  /** The piece herald is drafting, if any. */
+  draftingPiece(): { id: string; title: string } | undefined;
+  /** herald exited or was stopped mid-draft: fail the piece (what it saved stays). */
+  onHeraldExit(reason: string): void;
+}
+
+/** What herald is told when it starts (or is typed into) for a piece. */
+export const heraldPrompt = (agentId: string, piece: { id: string }) => `[muster] You are ${agentId} (media). Draft ${piece.id}: call media_brief and start.`;
 
 export interface ScoutIntel {
   /** The intel job scout is working on, if any. */
@@ -111,9 +124,9 @@ export const CREW_NAMES = [
 ];
 const START_OUTPUT_MAX = 64 * 1024;
 const ID_PATTERN = /^[a-z0-9][a-z0-9_-]{0,39}$/i;
-const ROLES: Role[] = ['captain', 'crew', 'design', 'research', 'qa'];
-/** The Captain and the research agent work in the repo root on the base branch; everyone else gets a worktree. */
-const atRoot = (role: Role) => role === 'captain' || role === 'research';
+const ROLES: Role[] = ['captain', 'crew', 'design', 'research', 'qa', 'media'];
+/** The Captain, the research agent and herald work in the repo root on the base branch; everyone else gets a worktree. */
+const atRoot = (role: Role) => role === 'captain' || role === 'research' || role === 'media';
 const sleep = (ms: number) => new Promise((r) => setTimeout(r, ms));
 const MAX_NUDGE_BACKOFF_MS = 5 * 60_000;
 
@@ -191,12 +204,13 @@ export class AgentManager {
     const internal = input.actor === SYSTEM;
     if (!ROLES.includes(role)) throw badRequest(`Unknown role "${role}"`);
     if (role === 'research' && !internal) throw badRequest('The research agent is started by a research run (Roadmap → Research), not added by hand');
+    if (role === 'media' && !internal) throw badRequest('herald (the media agent) is started from the Media page, not added by hand');
     if (role === 'qa' && !internal) throw badRequest('The QA agent is started when a task reaches the qa station, not added by hand');
     if (role === 'qa' && state.agents.some((a) => a.role === 'qa')) throw conflict('There is already a QA agent');
     if (!internal && input.actor !== HUMAN && !isCaptain(state, input.actor)) throw forbidden('Only the Captain or you can add agents');
     if (!internal) assertNotPaused(state);
     if (role === 'captain' && captainOf(state)) throw conflict(`${captainOf(state)!.id} is already the Captain; change roles instead`);
-    if (role !== 'captain' && role !== 'qa' && !input.name) {
+    if (role !== 'captain' && role !== 'qa' && role !== 'media' && !input.name) {
       const reused = await this.reuseStopped(role, input);
       if (reused) return reused;
     }
@@ -320,6 +334,7 @@ export class AgentManager {
   private resumePromptFor(agent: Agent): string | undefined {
     if (agent.role === 'research') return runningRun(this.state) || this.o.intel?.runningJob() ? this.firstPromptFor(agent) : undefined;
     if (agent.role === 'qa' && !agent.taskId) return this.firstPromptFor(agent);
+    if (agent.role === 'media') return this.o.media?.draftingPiece() ? this.firstPromptFor(agent) : undefined;
     const task = agent.taskId ? this.state.tasks.find((t) => t.id === agent.taskId) : undefined;
     if (!task || task.assignee !== agent.id || task.status !== 'in_progress') return undefined;
     return `[muster] You were restarted. Continue ${task.id} ${task.title}; call read_inbox first.`;
@@ -333,6 +348,10 @@ export class AgentManager {
     if (agent.role === 'research') {
       const job = runningRun(this.state) ? undefined : this.o.intel?.runningJob();
       return job ? intelJobPrompt(agent.id, job) : `[muster] You are ${agent.id} (research). Call research_brief and start.`;
+    }
+    if (agent.role === 'media') {
+      const piece = this.o.media?.draftingPiece();
+      return piece ? heraldPrompt(agent.id, piece) : undefined;
     }
     if (agent.taskId) {
       const task = this.state.tasks.find((t) => t.id === agent.taskId);
@@ -460,6 +479,7 @@ export class AgentManager {
       failRun(this.state, `${id} exited (code ${exitCode}) before finish_research`);
       this.o.intel?.onScoutExit(`${id} exited (code ${exitCode}) before finish_intel_job`);
     }
+    if (agent.role === 'media') this.o.media?.onHeraldExit(`${id} exited (code ${exitCode}) before media_finish`);
     this.o.store.commit();
   }
 
@@ -467,6 +487,7 @@ export class AgentManager {
     const agent = requireAgent(this.state, id);
     const rt = this.runtimes.get(id);
     const heldJob = agent.role === 'research' ? this.o.intel?.runningJob()?.id : undefined; // a job started meanwhile isn't this stop's
+    const heldPiece = agent.role === 'media' ? this.o.media?.draftingPiece()?.id : undefined;
     if (rt) {
       rt.stopping = true;
       rt.pty.kill();
@@ -483,6 +504,7 @@ export class AgentManager {
     }
     // Stopped on purpose (not a shutdown, which keeps work for the resume): an intel job it held can't finish.
     if (heldJob && reason !== undefined && this.o.intel?.runningJob()?.id === heldJob) this.o.intel.onScoutExit(`${id} stopped: ${reason}`);
+    if (heldPiece && reason !== undefined && this.o.media?.draftingPiece()?.id === heldPiece) this.o.media.onHeraldExit(`${id} stopped: ${reason}`);
     return agent;
   }
 
@@ -611,6 +633,10 @@ export class AgentManager {
       const job = this.o.intel?.runningJob();
       return job ? `its intel job ${job.id} is still going (cancel it first)` : null;
     }
+    if (agent.role === 'media') {
+      const piece = this.o.media?.draftingPiece();
+      return piece ? `it is still drafting ${piece.id} (delete the piece on the Media page first)` : null;
+    }
     const config = this.o.config();
     const open = new Set(['blocked', 'ready', 'in_progress', 'review', 'ready_for_merge']);
     const task = agent.taskId ? this.state.tasks.find((t) => t.id === agent.taskId) : undefined;
@@ -684,6 +710,7 @@ export class AgentManager {
     if (!ROLES.includes(role)) throw badRequest(`Unknown role "${role}"`);
     if (agent.role === role) return agent;
     if (role === 'research' || agent.role === 'research') throw conflict('The research agent keeps its role; it is started by a research run');
+    if (role === 'media' || agent.role === 'media') throw conflict('herald keeps its role; it is started from the Media page');
     if (role === 'qa' || agent.role === 'qa') throw conflict('The QA agent keeps its role; it is started when a task reaches the qa station');
     if (role === 'design' && state.agents.some((a) => a.role === 'design' && a.id !== id)) throw conflict('There is already a design crew agent');
     const config = this.o.config();
@@ -767,6 +794,40 @@ export class AgentManager {
 
   get scoutStopDelayMs(): number {
     return this.timings.scoutStopDelayMs;
+  }
+
+  // ---------------------------------------------------------------- media agent
+
+  /**
+   * A piece is waiting in the Media queue: start herald (the one media agent) at the repo root. A stopped herald is
+   * restarted with its session and told about the piece; a running one is told directly.
+   */
+  async startHerald(): Promise<Agent> {
+    const existing = findAgent(this.state, HERALD_ID) ?? this.state.agents.find((a) => a.role === 'media');
+    if (!existing) return this.create({ name: HERALD_ID, role: 'media', actor: SYSTEM });
+    if (existing.role !== 'media') throw conflict(`An agent called "${HERALD_ID}" already exists and isn't the media agent; rename or remove it first`);
+    existing.model = modelFor('media', this.o.config());
+    const rt = this.runtimes.get(existing.id);
+    if (rt?.stopping) await this.until(() => this.runtimes.get(existing.id) !== rt, this.timings.stopConfirmMs * 3);
+    else if (rt) {
+      const prompt = this.firstPromptFor(existing);
+      if (prompt) void this.type(existing.id, prompt).catch(() => {});
+      return existing;
+    }
+    return this.start(existing.id);
+  }
+
+  /** The queue is empty: stop herald, after `delayMs` (unless a new piece started meanwhile). */
+  async stopHerald(reason: string, delayMs = 0): Promise<void> {
+    const herald = this.state.agents.find((a) => a.role === 'media');
+    if (!herald || !this.runtimes.has(herald.id)) return;
+    if (delayMs > 0) {
+      setTimeout(() => {
+        if (!this.o.media?.draftingPiece()) void this.stop(herald.id, reason).catch((e) => this.log(`${herald.id}: not stopped: ${errText(e)}`));
+      }, delayMs).unref();
+      return;
+    }
+    await this.stop(herald.id, reason);
   }
 
   // ---------------------------------------------------------------- tasks and branches

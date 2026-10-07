@@ -26,6 +26,9 @@ import { nodePtyLauncher, type PtyLauncher } from './terminal.js';
 import { Coalescer } from '../core/coalesce.js';
 import { IntelFile, intelFile, intelSummary } from '../core/intel.js';
 import { IntelRuntime } from './intelapi.js';
+import { MediaFile, mediaFile, mediaSummary } from '../core/media.js';
+import type { RenderOptions } from '../core/mediagif.js';
+import { MediaRuntime } from './mediaapi.js';
 import { ResearchBrowser } from '../browser/researchbrowser.js';
 import type { BrowserRouteDeps } from './browserapi.js';
 
@@ -65,6 +68,8 @@ export interface OrchestratorOptions {
   phone?: PhoneLink;
   /** Start the phone gateway and register this repo with it once listening (the real entry point does; tests don't). */
   registerPhone?: boolean;
+  /** Test seam: ffmpeg path / runner / font for demo GIF rendering (default: ffmpeg from MUSTER_FFMPEG or PATH). */
+  mediaGif?: RenderOptions;
 }
 
 export interface Orchestrator {
@@ -77,6 +82,8 @@ export interface Orchestrator {
   agents: AgentManager;
   /** The competitive intelligence store and its dispatcher. */
   intel: IntelRuntime;
+  /** The media store and herald's queue. */
+  media: MediaRuntime;
   shutdown(clean?: boolean): Promise<void>;
 }
 
@@ -141,6 +148,8 @@ export async function startOrchestrator(opts: OrchestratorOptions): Promise<Orch
   const browser = opts.browser ?? new ResearchBrowser({ config: () => config.researchBrowser });
   const intel = new IntelRuntime({ store, file: new IntelFile(intelFile(paths), config.projectName ?? 'Our app', { log }), paths, config: () => config, log, notify: (title, text) => notify(config, title, text) });
 
+  const media = new MediaRuntime({ store, file: new MediaFile(mediaFile(paths), { log }), paths, config: () => config, log, gif: opts.mediaGif });
+
   const agents = new AgentManager({
     store,
     paths,
@@ -156,8 +165,10 @@ export async function startOrchestrator(opts: OrchestratorOptions): Promise<Orch
       notify(config, 'Muster: agent stuck', text);
     },
     intel,
+    media,
   });
   intel.attach(agents);
+  media.attach(agents);
 
   // ---- events websocket: debounced full snapshots plus toasts
   const eventClients = new Set<WebSocket>();
@@ -171,6 +182,17 @@ export async function startOrchestrator(opts: OrchestratorOptions): Promise<Orch
   store.on('change', () => {
     intel.sync();
     intel.kick();
+    media.sync();
+    media.kick();
+  });
+  // .muster/media.json saved: tell the dashboard to refetch (debounced like snapshots).
+  let mediaTimer: NodeJS.Timeout | undefined;
+  media.file.on('change', () => {
+    if (mediaTimer) return;
+    mediaTimer = setTimeout(() => {
+      mediaTimer = undefined;
+      broadcast({ type: 'media', rev: media.store.rev, summary: mediaSummary(media.store) });
+    }, 100);
   });
   // .muster/intel.json saved: tell the dashboard to refetch (debounced like snapshots).
   let intelTimer: NodeJS.Timeout | undefined;
@@ -196,8 +218,10 @@ export async function startOrchestrator(opts: OrchestratorOptions): Promise<Orch
       clearInterval(guardTimer);
       clearInterval(buildTimer);
       clearInterval(intelTimerTick);
+      clearInterval(mediaTimerTick);
       agents.dispose();
       intel.dispose();
+      media.dispose();
       await agents.stopAll();
       await browser.close().catch((e) => log(`research browser close failed: ${e instanceof Error ? e.message : e}`));
       if (clean) {
@@ -206,6 +230,7 @@ export async function startOrchestrator(opts: OrchestratorOptions): Promise<Orch
       }
       store.save();
       intel.file.save();
+      media.file.save();
       rmSync(paths.server, { force: true });
       removeHumanToken(paths.root, token);
       for (const ws of [...eventClients, ...termWss.clients]) ws.terminate();
@@ -218,6 +243,7 @@ export async function startOrchestrator(opts: OrchestratorOptions): Promise<Orch
     paths,
     agents,
     intel,
+    media,
     browser,
     probe: opts.probe,
     publicRead: opts.publicRead,
@@ -399,6 +425,8 @@ export async function startOrchestrator(opts: OrchestratorOptions): Promise<Orch
   const buildTimer = setInterval(checkBuild, opts.buildCheckMs ?? 60_000).unref();
   // Due watches (approved ideas' re-checks, competitors you keep watching) queue one job each; skipped while paused.
   const intelTimerTick = setInterval(() => intel.tick(), opts.intelTickMs ?? 10 * 60_000).unref();
+  // The week that just ended may get a roundup suggestion (checked at startup, then hourly).
+  const mediaTimerTick = setInterval(() => media.tick(), 60 * 60_000).unref();
 
   // A renamed/moved folder: fix stored paths and worktree links before anything starts (never recreates under the old root).
   const moved = relocateState(store, paths, log);
@@ -408,8 +436,11 @@ export async function startOrchestrator(opts: OrchestratorOptions): Promise<Orch
   if (opts.autoStart !== false) await agents.resumeAll().catch((e) => log(`could not start agents: ${e instanceof Error ? e.message : e}`));
   intel.sync();
   intel.kick();
+  media.tick();
+  media.sync();
+  media.kick();
 
-  return { url: `http://127.0.0.1:${port}`, port, token, agentToken: (id) => tokens.agentToken(id), store, agents, intel, shutdown };
+  return { url: `http://127.0.0.1:${port}`, port, token, agentToken: (id) => tokens.agentToken(id), store, agents, intel, media, shutdown };
 }
 
 /** Host must name this server by loopback address: 127.0.0.1:<port> or localhost:<port>. */

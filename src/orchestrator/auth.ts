@@ -65,6 +65,12 @@ const HUMAN_ONLY: [string, RegExp, string][] = [
   ['POST', /^\/api\/intel\/ask$/, 'ask the Captain about the gaps'],
   ['POST', /^\/api\/intel\/changes\/seen$/, 'mark intel changes seen'],
   ['DELETE', /^\/api\/intel\/watches\/[^/]+$/, 'stop intel watches'],
+  ['POST', /^\/api\/media\/pieces$/, 'ask for media pieces'],
+  ['POST', /^\/api\/media\/pieces\/[^/]+\/(?:edit|ask|approve|used|retry|record)$/, 'decide on media pieces'],
+  ['POST', /^\/api\/media\/pieces\/[^/]+\/claims\/[^/]+\/confirm$/, 'confirm claims'],
+  ['DELETE', /^\/api\/media\/pieces\/[^/]+$/, 'delete media pieces'],
+  ['PUT', /^\/api\/media\/style$/, 'change the house style'],
+  ['POST', /^\/api\/media\/suggestions\/(?:dismiss-all|[^/]+\/(?:accept|dismiss))$/, 'decide on media suggestions'],
   ...(['GET', 'POST', 'PUT', 'DELETE'] as const).map((m): [string, RegExp, string] => [m, /^\/api\/phone(?:\/|$)/, 'manage the phone link']),
 ];
 
@@ -95,6 +101,8 @@ export function forbiddenReason(caller: Caller, method: string, path: string): s
   }
   if (method === 'POST' && caller.role === 'research' && /^\/api\/feed\/[^/]+\/react$/.test(path)) return `The research agent doesn't react on the crew chat`;
   if (method === 'GET' && path === '/api/research/brief' && caller.role !== 'research') return `Only the research agent reads the research brief; ${who} is ${caller.role ?? 'an agent'}`;
+  if (method === 'GET' && path === '/api/media/brief' && caller.role !== 'media') return `Only herald (the media agent) reads the media brief; ${who} is ${caller.role ?? 'an agent'}`;
+  if (method === 'POST' && caller.role === 'media' && /^\/api\/feed\/[^/]+\/react$/.test(path)) return `herald doesn't react on the crew chat`;
   if (method === 'GET' && path === '/api/intel/brief' && caller.role !== 'research') return `Only the research agent reads the intel brief; ${who} is ${caller.role ?? 'an agent'}`;
   if (method === 'GET' && caller.role !== 'captain') {
     const id = agentParam(path, /^\/api\/agents\/([^/]+)\/output$/);

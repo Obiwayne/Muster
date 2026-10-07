@@ -398,20 +398,21 @@ const GIT_READ_FORMS: Record<string, (args: string[]) => boolean> = {
   notes: (a) => a[0] === 'list' || a[0] === 'show',
 };
 
-/** The research agent only reads: every git subcommand that writes is refused; read forms (`git branch`, `git stash list`) pass. */
-function researchShell(command: string): Decision {
+/** The research agent and herald only read: every git subcommand that writes is refused; read forms (`git branch`, `git stash list`) pass. */
+function readOnlyShell(command: string, who: string, then: string): Decision {
   for (const seg of splitCommands(command)) {
     const git = parseGit(tokenize(seg));
     if (!git || !GIT_WRITE.has(git.sub) || GIT_READ_FORMS[git.sub]?.(git.args)) continue;
-    return deny(`${SCOUT}: git ${git.sub} is not allowed. Read the code and post what you find with add_idea.`);
+    return deny(`${who}: git ${git.sub} is not allowed. ${then}`);
   }
   return ALLOW;
 }
+const HERALD = 'herald (the media agent) only reads';
 
 export function decide(input: PreToolInput, env: GuardEnv): Decision {
   const role = env.role;
   const tool = input.tool_name ?? '';
-  if (role !== 'captain' && role !== 'crew' && role !== 'design' && role !== 'research' && role !== 'qa') return ALLOW;
+  if (role !== 'captain' && role !== 'crew' && role !== 'design' && role !== 'research' && role !== 'qa' && role !== 'media') return ALLOW;
   const cwd = input.cwd || env.worktree || process.cwd();
 
   if (READ_TOOLS.has(tool)) {
@@ -423,7 +424,8 @@ export function decide(input: PreToolInput, env: GuardEnv): Decision {
     const command = String(input.tool_input?.command ?? '');
     const common = commonShell(command, env);
     if (!common.allow) return common;
-    if (role === 'research') return researchShell(command);
+    if (role === 'research') return readOnlyShell(command, SCOUT, 'Read the code and post what you find with add_idea.');
+    if (role === 'media') return readOnlyShell(command, HERALD, 'Save your writing with media_draft.');
     return role === 'captain' ? captainShell(command) : crewShell(command, env, cwd);
   }
 
@@ -431,6 +433,7 @@ export function decide(input: PreToolInput, env: GuardEnv): Decision {
     if (role === 'captain') return deny("The Captain doesn't write code: post_task or assign it to crew");
     if (role === 'qa') return deny('The QA agent reviews, it never edits code: put what to change in the findings of qa_verdict');
     if (role === 'research') return deny(`${SCOUT}: no file edits. Post what you found with add_idea.`);
+    if (role === 'media') return deny(`${HERALD}: no file edits. Save your writing with media_draft.`);
     const target = toolPath(input);
     if (!target || !env.worktree) return ALLOW;
     return crewEdit(target, cwd, env);

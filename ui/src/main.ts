@@ -14,6 +14,8 @@ import { createRoadmap } from './pages/roadmap';
 import { createResearch } from './pages/research';
 import { createIntel } from './pages/intel';
 import { getIntelSummary } from './intelapi';
+import { createMedia } from './pages/media';
+import { getMediaSummary } from './mediaapi';
 import { currentStageId } from './roadmap';
 import { createBoard } from './pages/board';
 import { createChat } from './pages/chat';
@@ -24,12 +26,13 @@ import { createSettings } from './pages/settings';
 import { projectId as heldProjectId } from './pages/heldcard';
 import { forProject } from './heldmodel';
 
-type RouteId = 'dashboard' | 'roadmap' | 'research' | 'intel' | 'board' | 'chat' | 'tasks' | 'branches' | 'vellum' | 'settings';
+type RouteId = 'dashboard' | 'roadmap' | 'research' | 'intel' | 'media' | 'board' | 'chat' | 'tasks' | 'branches' | 'vellum' | 'settings';
 type NavId = Exclude<RouteId, 'research'>;
 const ROUTES: { id: NavId; label: string; icon: string; create: () => Page }[] = [
   { id: 'dashboard', label: 'Dashboard', icon: 'grid', create: createDashboard },
   { id: 'roadmap', label: 'Roadmap', icon: 'route', create: createRoadmap },
   { id: 'intel', label: 'Intel', icon: 'radar', create: createIntel },
+  { id: 'media', label: 'Media', icon: 'megaphone', create: createMedia },
   { id: 'board', label: 'Bulletin board', icon: 'pin', create: createBoard },
   { id: 'chat', label: 'Crew chat', icon: 'chat', create: createChat },
   { id: 'tasks', label: 'Tasks', icon: 'tasks', create: createTasks },
@@ -53,6 +56,8 @@ export function parseHash(): { route: RouteId; params: URLSearchParams } {
   else if (route === 'roadmap' && rest[0]) params.set('stage', decodeURIComponent(rest[0]));
   // #/intel/reviews → route "intel", params.tab = "reviews" (no tab = overview)
   else if (route === 'intel' && rest[0]) params.set('tab', decodeURIComponent(rest[0]));
+  // #/media/MP3 → route "media", params.id = "MP3" (no id = the library)
+  else if (route === 'media' && rest[0]) params.set('id', decodeURIComponent(rest[0]));
   return { route, params };
 }
 
@@ -245,6 +250,7 @@ function renderShell(s: Snapshot): void {
   rmEl.textContent = !rm ? '' : rm.status === 'draft' && !rm.approvedAt ? 'draft' : currentStageId(rm) ?? '';
   rmEl.title = rm?.status === 'draft' ? 'Roadmap draft waiting for your approval' : rm ? 'Current stage' : '';
   renderIntelBadge();
+  renderMediaBadge();
 
   // agents
   const agents = sortedAgents(state);
@@ -299,6 +305,28 @@ function renderIntelBadge(): void {
   el.title = n > 0 ? `${n} intel alert${n === 1 ? '' : 's'}: changes that may need the plan to respond` : '';
 }
 
+/** Media nav badge: rose, pieces waiting on your review; a pulsing "live" badge while herald writes and none wait. */
+function renderMediaBadge(): void {
+  const el = navCounts.get('media')!;
+  const m = events.media;
+  const n = m?.review ?? 0;
+  if (n > 0) {
+    el.className = 'nav-badge media';
+    el.textContent = String(n);
+    el.title = `${n} piece${n === 1 ? '' : 's'} waiting on your review${m?.working ? ` · herald: ${m.working.title}` : ''}`;
+    return;
+  }
+  if (m?.working) {
+    el.className = 'nav-live media';
+    setChildren(el, h('span.nav-live-dot'), 'live');
+    el.title = `herald: ${m.working.title}${m.working.progress ? ` · ${m.working.progress}` : ''}`;
+    return;
+  }
+  el.className = 'nav-count';
+  el.textContent = '';
+  el.title = '';
+}
+
 function agentRow(s: Snapshot, a: Agent): HTMLElement {
   const word = agentStatusWord(s.state, a);
   const row = h('button.agent-row', {
@@ -319,6 +347,7 @@ events.onSnapshot((s) => {
 });
 events.onToast((t) => toast(t.text, t.level));
 events.onIntel(() => renderIntelBadge());
+events.onMedia(() => renderMediaBadge());
 let everConnected = false;
 events.onConnection((c) => {
   if (c) everConnected = true;
@@ -357,3 +386,5 @@ onHash();
 events.start();
 // Older orchestrators have no /api/intel: the badge just stays empty.
 getIntelSummary().then((s) => events.setIntel(s), () => {});
+// Older orchestrators have no /api/media either.
+getMediaSummary().then((s) => events.setMedia(s), () => {});

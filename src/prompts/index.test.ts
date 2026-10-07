@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { captainPrompt, crewPrompt, designPrompt, qaPrompt, researchPrompt, type PromptContext } from './index.js';
+import { captainPrompt, crewPrompt, designPrompt, mediaPrompt, qaPrompt, researchPrompt, type PromptContext } from './index.js';
 
 const ctx: PromptContext = {
   agentId: 'crew-2',
@@ -144,7 +144,7 @@ describe('designPrompt', () => {
 
 describe('the user’s name', () => {
   it('tells every role to use the name and never "the human"', () => {
-    for (const make of [captainPrompt, crewPrompt, designPrompt, researchPrompt]) {
+    for (const make of [captainPrompt, crewPrompt, designPrompt, researchPrompt, mediaPrompt]) {
       const p = make({ ...ctx, userName: 'Wayne' });
       expect(p).toContain('The person you work for is **Wayne**');
       expect(p).not.toMatch(/\bthe human\b(?!")/i);
@@ -294,4 +294,19 @@ describe('qaPrompt', () => {
     expect(qa).not.toMatch(/Vellum/);
   });
   it('is tight', () => expect(lines(qa)).toBeLessThan(80));
+});
+
+describe('mediaPrompt', () => {
+  it('makes herald a read-only writer that sources every claim and never posts', () => {
+    const p = mediaPrompt({ ...ctx, agentId: 'herald' });
+    expect(p).toContain('you are herald, the media agent (herald)');
+    expect(p).toContain('`media_brief()` — **call first.**');
+    expect(p).toMatch(/Never post, publish, send, push or sign in anywhere/);
+    expect(p).toMatch(/Plain text only/);
+    expect(p).toContain('`sources: []`');
+  });
+  it('tells the Captain to suggest media for features users will notice', () => {
+    expect(captainPrompt(ctx)).toContain('call `suggest_media(task, title, why)` once for it');
+    expect(captainPrompt(ctx)).toContain('`media_recording(piece, task)`');
+  });
 });

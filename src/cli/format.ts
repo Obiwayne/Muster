@@ -10,6 +10,7 @@ export interface Colors {
   teal(s: string): string;
   lavender(s: string): string;
   blue(s: string): string;
+  rose(s: string): string;
   red(s: string): string;
   green(s: string): string;
   dim(s: string): string;
@@ -24,6 +25,7 @@ export function colors(enabled: boolean): Colors {
     teal: wrap('\x1b[38;5;43m', '\x1b[39m'),
     lavender: wrap('\x1b[38;5;183m', '\x1b[39m'),
     blue: wrap('\x1b[38;5;75m', '\x1b[39m'),
+    rose: wrap('\x1b[38;5;211m', '\x1b[39m'),
     red: wrap('\x1b[31m', '\x1b[39m'),
     green: wrap('\x1b[32m', '\x1b[39m'),
     dim: wrap('\x1b[2m', '\x1b[22m'),
@@ -32,7 +34,7 @@ export function colors(enabled: boolean): Colors {
 }
 
 export function roleColor(c: Colors, role: Role): (s: string) => string {
-  return role === 'captain' ? c.amber : role === 'design' ? c.lavender : role === 'research' ? c.blue : c.teal;
+  return role === 'captain' ? c.amber : role === 'design' ? c.lavender : role === 'research' ? c.blue : role === 'media' ? c.rose : c.teal;
 }
 
 const ANSI = /\x1b\[[0-9;?]*[A-Za-z]/g;
@@ -157,7 +159,7 @@ export function formatStatus(
   if (!state.agents.length) {
     out.push('No agents yet. Run `muster up` to start the Captain, `muster add` for crew.');
   } else {
-    const order: Record<Role, number> = { captain: 0, crew: 1, design: 2, research: 3, qa: 4, human: 5 };
+    const order: Record<Role, number> = { captain: 0, crew: 1, design: 2, research: 3, media: 4, qa: 5, human: 6 };
     const agents = [...state.agents].sort((a, b) => order[a.role] - order[b.role]);
     const rows = agents.map((a) => {
       const color = roleColor(c, a.role);

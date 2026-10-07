@@ -1,6 +1,6 @@
 // Reconnecting client for ws://<host>/ws/events. Holds the latest {state, config}
 // snapshot and forwards toast events.
-import type { IntelSummary, MusterConfig, MusterEvent, MusterState } from '../../src/types';
+import type { IntelSummary, MediaSummary, MusterConfig, MusterEvent, MusterState } from '../../src/types';
 import { api, getToken, refreshToken } from './api';
 
 export interface Snapshot { state: MusterState; config: MusterConfig }
@@ -9,6 +9,7 @@ type SnapListener = (s: Snapshot) => void;
 type ToastListener = (t: { level: 'info' | 'warn'; text: string }) => void;
 type ConnListener = (connected: boolean) => void;
 type IntelListener = (summary: IntelSummary) => void;
+type MediaListener = (summary: MediaSummary) => void;
 
 export function wsUrl(path: string): string {
   const proto = location.protocol === 'https:' ? 'wss:' : 'ws:';
@@ -20,12 +21,15 @@ class EventClient {
   connected = false;
   /** The latest intel summary (GET /api/intel/summary on load, then each `intel` event). */
   intel: IntelSummary | null = null;
+  /** The latest media summary (GET /api/media/summary on load, then each `media` event). */
+  media: MediaSummary | null = null;
   private ws: WebSocket | null = null;
   private retry = 0;
   private snapL = new Set<SnapListener>();
   private toastL = new Set<ToastListener>();
   private connL = new Set<ConnListener>();
   private intelL = new Set<IntelListener>();
+  private mediaL = new Set<MediaListener>();
 
   start(): void {
     // Fetch once over HTTP so the first paint doesn't wait on the socket.
@@ -43,6 +47,7 @@ class EventClient {
       if (msg.type === 'state') this.set({ state: msg.state, config: msg.config });
       else if (msg.type === 'toast') this.toastL.forEach((l) => l({ level: msg.level, text: msg.text }));
       else if (msg.type === 'intel') this.setIntel(msg.summary);
+      else if (msg.type === 'media') this.setMedia(msg.summary);
     };
     ws.onclose = () => {
       if (this.ws !== ws) return;
@@ -73,10 +78,18 @@ class EventClient {
     this.intelL.forEach((l) => l(summary));
   }
 
+  /** Keep a newer media summary (by rev) and notify listeners: the nav badge and the Media page refetch. */
+  setMedia(summary: MediaSummary): void {
+    if (this.media && summary.rev < this.media.rev) return;
+    this.media = summary;
+    this.mediaL.forEach((l) => l(summary));
+  }
+
   onSnapshot(l: SnapListener): () => void { this.snapL.add(l); return () => this.snapL.delete(l); }
   onToast(l: ToastListener): () => void { this.toastL.add(l); return () => this.toastL.delete(l); }
   onConnection(l: ConnListener): () => void { this.connL.add(l); return () => this.connL.delete(l); }
   onIntel(l: IntelListener): () => void { this.intelL.add(l); return () => this.intelL.delete(l); }
+  onMedia(l: MediaListener): () => void { this.mediaL.add(l); return () => this.mediaL.delete(l); }
 }
 
 export const events = new EventClient();

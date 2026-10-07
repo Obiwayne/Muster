@@ -32,6 +32,18 @@ allowed-tools:
 - Pages that need clicks or typing first: a Playwright script
   (`npx --yes --package=playwright node <script>.mjs`, see `muster:evidence-driven-testing`).
 
+### Demo recording (a Media demo GIF)
+
+When your task is to record a demo for the Media page, the brief gives you the steps:
+- Run the app with **sample data only** (seeded test accounts, made-up names); never real users or real classes.
+- Write the steps as code in `.muster-evidence/<task id>/actions.mjs`:
+  `export default async (page) => { await page.click('text=Approve'); await page.waitForTimeout(800); }`.
+  Pause 0.5–1 s between steps so a viewer can follow, and keep the whole demo under 30 seconds.
+- Record it: `node <this skill's folder>/scripts/record.mjs <url> .muster-evidence/<task id>/demo.webm .muster-evidence/<task id>/actions.mjs [--size 1280x800] [--hold 1200]`.
+  It uses the same Chrome or Edge as `shot.mjs`, and Playwright from Muster's own install.
+- Attach the video with `add_evidence(files: [".muster-evidence/<task id>/demo.webm"], summary)`. Muster turns it into
+  the GIF with the frame captions and tells the user. A screen recorder's .mp4 or a ready .gif works too.
+
 
 # Before-After Screenshot Skill
 

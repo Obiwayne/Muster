@@ -13,6 +13,7 @@
 //   MOCK_SANDBOX=<dir> …                       → research, roadmap, intel store and intel config read from <dir>/.muster (a live run's data; read only)
 //   MOCK_PHONE=down|empty …                      → /api/phone/*: gateway won't start / no linked phones, no Tailscale
 //   MOCK_REMOTE=warn|off|empty …                 → /api/phone/remote/*: hold off + locked + tunnel not set / remote off / nothing signed in
+//   MOCK_MEDIA=none …                            → /api/media/*: nothing written yet, no suggestions (default: the Vellum sample pieces)
 //   MOCK_WEEKLY=84 …                             → weekly usage % (default 38; at 75+ an open weekly usage alert note)
 //   MOCK_REMOTE=off …                            → /api/phone/remote/pending fails (remote off / gateway down: no held writes shown)
 //
@@ -27,6 +28,7 @@ import { dirname, extname, join, normalize } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { WebSocketServer } from 'ws';
 import { createIntelMock } from './intel-mock.mjs';
+import { createMediaMock } from './media-mock.mjs';
 
 const PORT = Number(process.env.PORT ?? 47800);
 const TOKEN = process.env.MOCK_TOKEN ?? 'dev-token';
@@ -135,6 +137,7 @@ const state = {
     agent('bea', 'crew', 'bea/share-dialog', 'stuck', 'T4', 40),
     agent('design', 'design', 'design/check', 'waiting', undefined, 38),
     agent('cleo', 'crew', 'cleo/tests', 'working', 'T3', 20),
+    agent('herald', 'media', 'main', 'working', undefined, 6),
   ],
   tasks: EMPTY ? [] : [
     task('T1', 'Invites table + migration', 'ready_for_merge', ['build', 'review'], 1, { branch: 'ada/invites-db', assignee: 'captain', created: 44, updated: 3,
@@ -523,6 +526,11 @@ const findNote = (id) => { const n = state.notes.find((x) => x.id === id); need(
 // competitive intelligence (/api/intel/*, GET /api/browser and the `intel` event)
 const intel = createIntelMock({
   state, config, now, need, HttpError, toastAll, readBody: (req) => body(req), broadcast: () => broadcast(),
+  send: (msg) => { const t = JSON.stringify(msg); for (const ws of eventClients) if (ws.readyState === 1) ws.send(t); },
+});
+// Media (/api/media/* and the `media` event)
+const media = createMediaMock({
+  state, now, need, HttpError, toastAll, readBody: (req) => body(req),
   send: (msg) => { const t = JSON.stringify(msg); for (const ws of eventClients) if (ws.readyState === 1) ws.send(t); },
 });
 // MOCK_SANDBOX: replay a live run's research, roadmap and intel store (the files are only read).
@@ -1357,6 +1365,13 @@ const server = http.createServer(async (req, res) => {
       const out = await intel.route(req, req.method, url.pathname);
       if (out?.text !== undefined) { res.writeHead(200, { 'content-type': 'text/markdown; charset=utf-8' }); res.end(out.text); return; }
       if (out) { res.writeHead(200, { 'content-type': 'application/json' }); res.end(JSON.stringify(out.body ?? null)); return; }
+    }
+    if (url.pathname.startsWith('/api/media') && req.headers['x-muster-token'] === TOKEN) {
+      const out = await media.route(req, req.method, url.pathname);
+      if (out?.file) { res.writeHead(200, { 'content-type': out.type }); res.end(out.file); return; }
+      res.writeHead(200, { 'content-type': 'application/json' });
+      res.end(JSON.stringify(out ?? null));
+      return;
     }
     if (url.pathname.startsWith('/api/')) {
       const out = await api(req, url);
