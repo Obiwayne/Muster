@@ -24,6 +24,7 @@ import { applyUsage, refreshGuard, setWeeklyAlert, type RawUsage } from '../core
 import type { AgentManager } from './agents.js';
 import { applyIdentity, forbiddenReason, type Caller } from './auth.js';
 import { registerIntelRoutes, type IntelRuntime } from './intelapi.js';
+import { registerMediaRoutes, type MediaRuntime } from './mediaapi.js';
 import { registerBrowserRoutes, type BrowserRouteDeps } from './browserapi.js';
 import * as intel from '../core/intel.js';
 import * as intelcheck from '../core/intelcheck.js';
@@ -34,6 +35,8 @@ export interface ApiContext {
   agents: AgentManager;
   /** The intel store's runtime (core/intel.ts + dispatcher); see intelapi.ts. */
   intel: IntelRuntime;
+  /** The media store's runtime (core/media.ts + herald's queue); see mediaapi.ts. Absent in older tests. */
+  media?: MediaRuntime;
   /** The research browser (src/browser/researchbrowser.ts), or a fake in tests. */
   browser: BrowserRouteDeps['browser'];
   /** Test seam: replaces the real site probe behind POST /api/intel/probe. */
@@ -848,6 +851,8 @@ ${pushed ? `Pushed ${base} to origin.` : `Push to origin failed: ${(r.stderr || 
     toast: ctx.toast,
     markdown: (text, filename) => new TextReply(text, 'text/markdown; charset=utf-8', filename),
   });
+  // ------------------------------------------------------------------ media (mediaapi.ts)
+  if (ctx.media) registerMediaRoutes(route, { store, runtime: ctx.media, agents, intel: () => ctx.intel.store, notify: ctx.notify, toast: ctx.toast });
   // The research browser (/api/browser/*) and the add-competitor probe (POST /api/intel/probe).
   registerBrowserRoutes(route, {
     browser: ctx.browser,

@@ -7,7 +7,7 @@ import { musterFetch } from '../client.js';
 import { formatEvidence } from '../core/evidence.js';
 import { formatGuideline } from '../core/stations.js';
 import { REACTION_EMOJI } from '../types.js';
-import type { Agent, BrowseResult, Evidence, FeedItem, InboxItem, IntelChange, IntelCheck, IntelJob, IntelStore, MusterState, Note, ResearchIdea, ResearchRun, ResearchState, Role, Roadmap, RoadmapProgress, StationDef, Task } from '../types.js';
+import type { Agent, BrowseResult, MediaPiece, MediaSuggestion, Evidence, FeedItem, InboxItem, IntelChange, IntelCheck, IntelJob, IntelStore, MusterState, Note, ResearchIdea, ResearchRun, ResearchState, Role, Roadmap, RoadmapProgress, StationDef, Task } from '../types.js';
 import {
   BOARD_FILTERS,
   boardQuery,
@@ -69,6 +69,7 @@ export const CAPTAIN_TOOLS = [
   'roadmap', 'set_roadmap', 'update_stage', 'check_criterion', 'complete_stage', 'add_goal', 'update_goal', 'link_tasks', 'roadmap_status',
   'list_ideas', 'get_idea', 'advise_idea', 'react',
   'intel_overview', 'intel_check_status', 'request_intel_check', 'intel_reply', 'intel_suggest', 'run_sweep',
+  'suggest_media',
 ] as const;
 export const CREW_TOOLS = [
   'claim_task', 'list_agents', 'list_tasks', 'post_note', 'read_board', 'reply', 'ask_captain',
@@ -81,6 +82,16 @@ export const RESEARCH_TOOLS = [
   'research_brief', 'add_idea', 'finish_research', 'read_inbox',
   'intel_brief', 'browse', 'record_intel', 'add_opportunity', 'intel_check', 'finish_intel_job',
 ] as const;
+/** herald (the media agent): drafts media pieces; no board, task or code tools. */
+export const MEDIA_TOOLS = ['media_brief', 'media_draft', 'media_finish', 'read_inbox'] as const;
+
+// ---- media shapes (the server validates everything again and names the field on a 400) ----
+const claimSourceShape = z.object({
+  kind: z.enum(['task', 'stage', 'goal', 'idea', 'intel', 'chat', 'evidence']),
+  ref: z.string().describe('"T38", "M3", "G4", "R12", "IN3", "F120" (crew chat), "T38/E2" (evidence)'),
+  label: z.string().min(1).max(120).describe('What the chip says, e.g. "T38 merged", "intel · #1 complaint", "screenshot 2"'),
+});
+const evidenceRefShape = z.object({ taskId: z.string(), evidenceId: z.string(), name: z.string().describe('File name from the brief') });
 
 // ---- intel shapes (the server validates everything again and names the field on a 400) ----
 const sourceShape = z
@@ -154,7 +165,9 @@ export function createMusterServer(opts: MusterServerOptions): McpServer {
           ? `You are ${me}, the Muster Captain. Check read_board first every turn. Never write code; merge only tasks the user approved, with merge_task.`
           : role === 'research'
             ? `You are ${me}, the Muster research agent. In a research run: research_brief, add_idea (then intel_check when competitors are tracked), finish_research. In an intel job: intel_brief, record_intel, add_opportunity + intel_check, finish_intel_job. Read-only; never sign in yourself; never change code.`
-            : role === 'qa'
+            : role === 'media'
+              ? `You are ${me}, the Muster media agent (herald). media_brief first, save with media_draft as you write, then media_finish. Plain text; source every claim; never post anything or change files.`
+              : role === 'qa'
               ? `You are ${me}, the Muster QA agent. Claim the task waiting at the qa station, review its diff and run its tests. Never edit code.`
               : `You are ${me}, Muster ${role === 'design' ? 'design crew' : 'crew'}. Work only in your worktree; ask crew before the Captain.`,
     },
@@ -198,6 +211,10 @@ export function createMusterServer(opts: MusterServerOptions): McpServer {
 
   if (role === 'research') {
     registerResearch();
+    return server;
+  }
+  if (role === 'media') {
+    registerMedia();
     return server;
   }
 
@@ -608,6 +625,20 @@ ${r.output}`;
       },
     );
 
+    tool(
+      'suggest_media',
+      'Suggest a post about a merged task users will notice (once per task). It shows as a card on the Media page; herald writes nothing until the user says so.',
+      {
+        task: z.string().describe('Merged task id, e.g. T41'),
+        title: z.string().min(1).max(160).describe('What users get, e.g. "One-click PDF export of a whole wall"'),
+        why: z.string().min(1).max(400).describe('Why it is worth a post, in a sentence'),
+      },
+      async ({ task, title, why }) => {
+        const sg = await api<MediaSuggestion>('/api/media/suggestions', { method: 'POST', body: { actor: me, task: upId(task), title, why } });
+        return `Suggested ${sg.id} for ${sg.ref} on the Media page.`;
+      },
+    );
+
     // ---- research ideas ----
 
     tool(
@@ -719,6 +750,54 @@ ${r.output}`;
     const i = (await getResearch()).ideas.find((x) => x.id.toUpperCase() === want);
     if (!i) throw new Error(`No idea ${id}. list_ideas shows them.`);
     return i;
+  }
+
+  // ---- media (herald) ------------------------------------------------------------
+
+  function registerMedia() {
+    const pieceLine = (p: MediaPiece) => `${p.id} (${p.kind}, ${p.status}) "${p.title}"`;
+
+    tool(
+      'media_brief',
+      "Read the brief for the piece you're drafting: kind, platforms, what it's about, the user's note and change requests, the house style, the facts to write from (stages, goals, tasks, evidence files with paths, intel, crew chat) and the rules. Call it first.",
+      {},
+      async () => (await api<{ text: string }>('/api/media/brief'))?.text?.trim() || 'No piece is being drafted.',
+    );
+
+    tool(
+      'media_draft',
+      'Save part of the draft; each field you send replaces the old value (send whole lists). Plain text only. posts (social): one per platform with 1-3 versions. images (social): evidence screenshots. sections (article/website): heading + text + status. target (website): the page path. hooks + shots (video). claims: every factual phrase with its sources ([] = unsourced, the user confirms or cuts it). progress: a short line the user sees live.',
+      {
+        piece: z.string().optional().describe('Piece id, e.g. MP3 (default: the one you are drafting)'),
+        title: z.string().min(1).max(160).optional(),
+        posts: z.array(z.object({ platform: z.enum(['x', 'linkedin', 'bluesky', 'threads']), versions: z.array(z.string().min(1)).min(1).max(3), chosen: z.number().int().min(0).optional() })).optional(),
+        images: z.array(evidenceRefShape.extend({ caption: z.string().max(120).optional() })).max(6).optional(),
+        sections: z.array(z.object({ heading: z.string().max(200), text: z.string().max(8000), status: z.enum(['todo', 'writing', 'done']).optional() })).max(20).optional(),
+        target: z.string().max(200).optional().describe('Website only, e.g. /features/moderation'),
+        hooks: z.array(z.string().min(1).max(300)).max(3).optional(),
+        hookChosen: z.number().int().min(0).optional(),
+        shots: z.array(z.object({ at: z.string().describe('e.g. 0:04'), shot: z.string().min(1), voiceover: z.string(), onScreen: z.string().optional(), evidence: evidenceRefShape.optional(), record: z.boolean().optional() })).max(40).optional(),
+        claims: z.array(z.object({ quote: z.string().min(1).max(300), sources: z.array(claimSourceShape).max(8) })).max(60).optional(),
+        progress: z.string().max(200).optional().describe('e.g. "writing section 3 of 5"'),
+      },
+      async ({ piece, ...fields }) => {
+        const body: Record<string, unknown> = { actor: me };
+        for (const [k, v] of Object.entries(fields)) if (v !== undefined) body[k] = v;
+        const p = await api<MediaPiece>(`/api/media/pieces/${enc(piece?.trim() ? upId(piece) : 'current')}/draft`, { method: 'POST', body });
+        const unsourced = p.claims.filter((c) => !c.sources.length).length;
+        return `Saved ${pieceLine(p)}: ${Object.keys(body).filter((k) => k !== 'actor').join(', ') || 'nothing'}.${unsourced ? ` ${unsourced} claim(s) have no source.` : ''}`;
+      },
+    );
+
+    tool(
+      'media_finish',
+      'Hand the finished draft to the user for review. summary = one or two sentences on what you wrote and anything they should check. Muster gives you the next piece, or stops you.',
+      { piece: z.string().optional().describe('Piece id (default: the one you are drafting)'), summary: z.string().max(1000).optional() },
+      async ({ piece, summary }) => {
+        const p = await api<MediaPiece>(`/api/media/pieces/${enc(piece?.trim() ? upId(piece) : 'current')}/finish`, { method: 'POST', body: { actor: me, ...(summary ? { summary } : {}) } });
+        return `Finished ${pieceLine(p)}. The user has been told. If another piece is queued it arrives as a new [muster] line; otherwise you are done, stop here.`;
+      },
+    );
   }
 
   // ---- research (scout) ---------------------------------------------------------
