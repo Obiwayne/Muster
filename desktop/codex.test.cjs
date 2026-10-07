@@ -51,3 +51,20 @@ test('process death rejects outstanding requests and retains conversation identi
   child.emit('exit'); assert.equal(session.threadId, 'thread-1'); assert.equal(session.busy, false); assert.equal(session.ready, null);
   session.close();
 });
+
+test('completed messages survive missing deltas without duplicating streamed messages', async () => {
+  const { session } = fixture(); await session.connect();
+  session.receive({ method: 'item/completed', params: { item: { type: 'agentMessage', id: 'a', text: 'Complete' } } });
+  session.receive({ method: 'item/agentMessage/delta', params: { itemId: 'b', delta: 'Part' } });
+  session.receive({ method: 'item/completed', params: { item: { type: 'agentMessage', id: 'b', text: 'Full response' } } });
+  assert.deepEqual(session.messages.map(m => m.text), ['Complete', 'Full response']); session.close();
+});
+
+test('a tool finishing after disconnect does not write to a dead connection', async () => {
+  let finish;
+  const { session, child, sent } = fixture({ toolCall: () => new Promise(resolve => { finish = resolve; }) });
+  await session.connect();
+  const pending = session.callTool(91, { tool: 'muster_status', arguments: { section: 'status' } });
+  child.emit('exit'); const count = sent.length;
+  finish('Old result'); await pending; assert.equal(sent.length, count); session.close();
+});
