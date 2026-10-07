@@ -5,9 +5,10 @@ import { McpServer } from '@modelcontextprotocol/sdk/server/mcp.js';
 import { z } from 'zod';
 import { musterFetch } from '../client.js';
 import { formatEvidence } from '../core/evidence.js';
+import { formatJots } from '../core/jots.js';
 import { formatGuideline } from '../core/stations.js';
 import { REACTION_EMOJI } from '../types.js';
-import type { Agent, BrowseResult, MediaConversation, MediaPiece, MediaPublishJob, MediaSuggestion, Evidence, FeedItem, InboxItem, IntelChange, IntelCheck, IntelJob, IntelStore, MusterState, Note, ResearchIdea, ResearchRun, ResearchState, Role, Roadmap, RoadmapProgress, StationDef, Task } from '../types.js';
+import type { Agent, BrowseResult, Jot, MediaConversation, MediaPiece, MediaPublishJob, MediaSuggestion, Evidence, FeedItem, InboxItem, IntelChange, IntelCheck, IntelJob, IntelStore, MusterState, Note, ResearchIdea, ResearchRun, ResearchState, Role, Roadmap, RoadmapProgress, StationDef, Task } from '../types.js';
 import {
   BOARD_FILTERS,
   boardQuery,
@@ -70,6 +71,7 @@ export const CAPTAIN_TOOLS = [
   'list_ideas', 'get_idea', 'advise_idea', 'react',
   'intel_overview', 'intel_check_status', 'request_intel_check', 'intel_reply', 'intel_suggest', 'run_sweep',
   'suggest_media', 'media_recording',
+  'list_notes',
 ] as const;
 export const CREW_TOOLS = [
   'claim_task', 'list_agents', 'list_tasks', 'post_note', 'read_board', 'reply', 'ask_captain',
@@ -652,6 +654,15 @@ ${r.output}`;
         const p = await api<MediaPiece>(`/api/media/pieces/${enc(upId(piece))}/recording`, { method: 'POST', body: { actor: me, task: upId(task) } });
         return `Linked ${p.gif?.recording?.taskId} to ${p.id}. Its worker attaches the recording with add_evidence (a .webm/.mp4 or .gif); Muster makes the GIF from it.`;
       },
+    );
+
+    // ---- the user's Notes (read-only) ----
+
+    tool(
+      'list_notes',
+      "Read the user's Notes: ideas they keep on the Notes page (typed there or saved through Claude). Pinned first, then newest. query filters by words in the title, text or tags. Read them when planning; you can't change them, and a note is not a goal unless the user sends it to you.",
+      { query: z.string().max(200).optional() },
+      async ({ query }) => formatJots(await api<Jot[]>(`/api/jots${query?.trim() ? `?q=${enc(query.trim())}` : ''}`)),
     );
 
     // ---- research ideas ----

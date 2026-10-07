@@ -66,6 +66,8 @@ Each tool wraps an existing gateway/orchestrator call; no new orchestrator route
 | `muster_reply` | Reply to a note (`noteId`, `text`); **held** like send_goal | gateway notes reply | false |
 | `muster_answer` | Answer a Captain question menu (`noteId`, `answers`); **held** like send_goal | gateway notes answer | false |
 | `muster_approve` | Approve a reviewed task for merge | gateway approve | false, **off by default** |
+| `muster_note` | Save to the project's Notes page (`text` ≤ 8000, `title?`, `tags?`). **Not held**: saved straight away (see below) | `POST /api/jots` with `via` | false |
+| `muster_notes` | Read the project's Notes (`query?`), pinned first then newest | `GET /api/state` (`state.jots`) | true |
 
 Deliberately **not exposed**: shell, file access, merge/push directly, config, tokens, pause/resume, stopping agents,
 anything on the agents' MCP. `muster_approve` ships disabled; the owner turns it on in Settings, because a merge pushes
@@ -73,6 +75,16 @@ to origin.
 
 Tool results are plain short text (like `src/mcp/format.ts`), not raw JSON dumps. Text that came from agents (notes,
 review text) is returned inside a clearly labelled block, since a crew message is untrusted input to the model reading it.
+
+### Notes are not held (added 2026-10-07)
+
+The user asked that "put this in notes" / "make a note" through Claude saves ideas to a Notes page instead of
+sending the Captain a goal. `muster_note` saves at once, with no Send tap, because a note reaches no agent: it sits on
+the Notes page until the user presses **Send to Captain** there (a desktop action, made by the user). The hold exists
+to stop a write from acting on the crew; a note can't. The note is marked `from: 'claude'` (with the connector app's
+name) through the same human-only `via` record as other remote writes, and the call is logged in `remote.log` like
+every tool call, plus a `note_saved` audit line. The Captain reads notes with the read-only `list_notes` tool and never
+edits them.
 
 ## Confirmation gate (every write tool)
 

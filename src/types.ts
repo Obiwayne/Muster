@@ -321,7 +321,8 @@ export interface MusterState {
   goal?: { text: string; at: string }; // last goal given to the Captain (muster ask)
   roadmap?: Roadmap; // drafted by the Captain before work starts, approved by you
   research?: ResearchState; // scout runs and the ideas they found
-  nextIds: { agent: number; task: number; note: number; feed: number; inbox: number; stage: number; goal: number; idea: number; run: number };
+  jots?: Jot[]; // the Notes page: your ideas, saved by you or through Claude (absent = none yet)
+  nextIds: { agent: number; task: number; note: number; feed: number; inbox: number; stage: number; goal: number; idea: number; run: number; jot: number };
 }
 
 // ---- Roadmap (src/core/roadmap.ts) ----
@@ -1320,4 +1321,22 @@ export interface MediaWork {
   kind: 'publish' | 'design' | 'draft' | 'research' | 'watch';
   id?: string; // the job (PJ3) or piece (MP3); none for watch
   startedAt: string;
+}
+
+// ---- Notes (src/core/jots.ts) ----
+// The Notes page: ideas you keep, typed on the page or saved through Claude ("put this in notes"; the muster_note
+// connector tool). A note never reaches an agent unless you press "Send to Captain". Called Jot in code because
+// "note" already means a bulletin-board note.
+
+export interface Jot {
+  id: string; // "J1"
+  title?: string; // ≤ 120; absent = the first line of text is shown
+  text: string; // plain text, newlines kept, ≤ 8000
+  tags: string[]; // ≤ 8, each ≤ 30
+  from: 'you' | 'claude' | 'captain'; // claude = saved through the remote connector
+  client?: string; // from 'claude': the connector app's name ("Claude")
+  pinned?: boolean;
+  createdAt: string;
+  updatedAt: string;
+  sentAt?: string; // you sent it to the Captain as a goal
 }

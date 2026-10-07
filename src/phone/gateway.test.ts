@@ -52,6 +52,7 @@ function startFakeOrchestrator(): Promise<number> {
       if (/^\/api\/notes\/N\d+\/reply$/.test(path)) return json(200, { id: 'N5', replies: [{ from: 'you', text: JSON.parse(text).text }] });
       if (path === '/api/checkout/commit' || path === '/api/checkout/stash') return json(200, { ok: true, waiting: [] });
       if (path === '/api/remote/alert') return json(200, { ok: true, noteId: 'N99' });
+      if (path === '/api/jots' && req.method === 'POST') return json(200, { id: 'J1', text: JSON.parse(text).text, title: JSON.parse(text).title, tags: [], from: 'claude', createdAt: 'now', updatedAt: 'now' });
       if (path === '/api/ask') return askFails ? json(409, { error: 'captain is not running' }) : json(200, { ok: true });
       json(404, { error: `No route ${path}` });
     });
@@ -529,6 +530,17 @@ describe('phone gateway: held remote writes (docs/REMOTE.md, confirmation gate)'
 
   afterAll(async () => {
     await gw3?.close();
+  });
+
+  it('muster_note saves to Notes straight away (no hold), marked via the connector, and nothing reaches the Captain', async () => {
+    const before = calls.length;
+    const r = await tool('muster_note', { text: 'Mirror mode for glass rigs\nVoice-paced scrolling', title: 'Teleprompter ideas' });
+    expect(r.isError).toBe(false);
+    expect(r.text).toMatch(/^Saved to Notes in Fake Project as J1 "Teleprompter ideas"\. .*nothing was sent to the Captain\.$/);
+    const [save] = orchCalls('/api/jots', before);
+    expect(save.body).toMatchObject({ text: 'Mirror mode for glass rigs\nVoice-paced scrolling', title: 'Teleprompter ideas', via: { approvedOn: 'not held' } });
+    expect(orchCalls('/api/ask', before)).toHaveLength(0);
+    expect(await remoteItems()).toHaveLength(0);
   });
 
   it('a goal is held, shows in Needs you with Send/Discard, and nothing reaches the Captain', async () => {

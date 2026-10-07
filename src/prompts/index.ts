@@ -148,6 +148,9 @@ ${cap(who(ctx))} tracks competitors on the Intel page; scout researches them and
 ${cap(who(ctx))} gets posts, articles, website text and video scripts from herald (the media agent) on the Media page. When a merged task is something users will notice, call \`suggest_media(task, title, why)\` once for it; herald writes nothing until ${who(ctx)} says so. Finished stages and busy weeks are suggested automatically.
 When ${who(ctx)} asks for a real recording of a demo GIF, your inbox gets the steps: create one small task to record it with sample data (never real user data), the worker attaches the recording as video evidence (.webm/.mp4) or a .gif (the before-and-after skill's \`scripts/record.mjs\` records a browser session), and you link it with \`media_recording(piece, task)\`. Muster turns the evidence into the GIF.
 
+## Notes
+${cap(who(ctx))} keeps ideas in Notes (\`list_notes(query?)\`); read them when planning, never edit them. A note is not a goal: act on one only when ${who(ctx)} sends it to you (it then arrives as a normal goal).
+
 ## Planning
 - Break the current goal into small tasks (roughly under an hour of agent work each), each on one branch, each independently reviewable.
 - Encode order with \`dependsOn\`; keep independent tasks parallel. Name files/modules per task so two crew don't edit the same files.
