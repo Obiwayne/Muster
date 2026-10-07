@@ -361,8 +361,8 @@ a.md-row:hover { background: color-mix(in oklab, var(--color-surface-2) 50%, tra
 .md-panel.rose { border-color: color-mix(in oklab, var(--color-media) 40%, transparent); background: color-mix(in oklab, var(--color-media) 4%, var(--color-surface)); gap: 12px; }
 .md-panel-head { display: flex; align-items: center; gap: 10px; padding: 14px 16px; border-bottom: 1px solid var(--color-line); }
 .md-panel-t { font-size: 14px; font-weight: 600; flex-shrink: 0; }
-.md-panel-head .md-panel-t { flex: 1; }
-.md-panel-q { font-size: 12px; color: var(--color-faint); text-align: right; }
+.md-panel-head .md-panel-t { flex: 1 0 auto; white-space: nowrap; }
+.md-panel-q { font-size: 12px; color: var(--color-faint); text-align: right; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .md-rpost { display: flex; gap: 12px; padding: 12px 16px; border-bottom: 1px solid var(--color-line); }
 .md-rpost:last-child { border-bottom: none; }
 .md-rpost-p { width: 72px; flex-shrink: 0; font-family: var(--font-mono); font-size: 11px; color: var(--color-muted); padding-top: 2px; }
