@@ -1,6 +1,6 @@
 // Muster desktop app: a project picker, then the dashboard of the chosen project in its own window.
 // The app drives the same CLI as the terminal (`muster up` / `muster down`), so behaviour is identical.
-const { app, BrowserWindow, dialog, ipcMain, Menu, nativeImage, shell } = require('electron');
+const { app, BrowserWindow, clipboard, dialog, ipcMain, Menu, nativeImage, shell } = require('electron');
 const { execFile, execFileSync, spawn } = require('node:child_process');
 const fs = require('node:fs');
 const path = require('node:path');
@@ -386,6 +386,26 @@ ipcMain.handle('muster:getName', () => readUserName());
 // ---------------------------------------------------------------- dashboard project switcher IPC
 // Only the window's own dashboard can call these (the preload exposes them to localhost pages only).
 const fromWindow = (event) => win && event.sender === win.webContents;
+// Media page: copy an image (PNG/JPEG bytes) to the clipboard, and save a file with a Save dialog that opens on the Desktop.
+ipcMain.handle('app:copyImage', (event, bytes) => {
+  if (!fromWindow(event)) return false;
+  const img = nativeImage.createFromBuffer(Buffer.from(bytes));
+  if (img.isEmpty()) return false;
+  clipboard.writeImage(img);
+  return true;
+});
+ipcMain.handle('app:saveFile', async (event, { name, bytes } = {}) => {
+  if (!fromWindow(event)) return null;
+  const safe = String(name || 'image').replace(/[\\/:*?"<>|]+/g, '-').slice(0, 120);
+  const ext = path.extname(safe).slice(1).toLowerCase();
+  const r = await dialog.showSaveDialog(win, {
+    defaultPath: path.join(app.getPath('desktop'), safe),
+    filters: ext ? [{ name: ext.toUpperCase(), extensions: [ext] }] : [],
+  });
+  if (r.canceled || !r.filePath) return null;
+  await fs.promises.writeFile(r.filePath, Buffer.from(bytes));
+  return r.filePath;
+});
 ipcMain.handle('app:projects', async (event) => {
   if (!fromWindow(event)) return null;
   const { recent } = loadSettings();

@@ -48,6 +48,64 @@ async function copy(text: string, what = 'Copied'): Promise<void> {
   }
 }
 
+// ---------------------------------------------------------------- copy and save images
+// The desktop app has no right-click menu, so images get their own Copy and Save buttons. In the app they go through
+// its preload bridge (Electron clipboard; a Save dialog that opens on the Desktop); in a browser, the web APIs.
+
+interface MediaBridge { copyImage?: (bytes: Uint8Array) => Promise<boolean>; saveFile?: (name: string, bytes: Uint8Array) => Promise<string | null> }
+const bridge = () => (window as unknown as { musterApp?: MediaBridge }).musterApp;
+
+/** Clipboards take PNG: anything else (JPEG, WebP) is redrawn as one. */
+async function toPng(blob: Blob): Promise<Blob> {
+  if (blob.type === 'image/png') return blob;
+  const bmp = await createImageBitmap(blob);
+  const c = document.createElement('canvas');
+  c.width = bmp.width;
+  c.height = bmp.height;
+  c.getContext('2d')!.drawImage(bmp, 0, 0);
+  return new Promise((res, rej) => c.toBlob((b) => (b ? res(b) : rej(new Error('it could not be converted'))), 'image/png'));
+}
+
+/** Copy image: puts a still image on the clipboard, ready to paste into a post. */
+async function copyImage(url: string): Promise<void> {
+  try {
+    const png = await toPng(await (await fetch(url)).blob());
+    const b = bridge();
+    if (b?.copyImage) {
+      if (!(await b.copyImage(new Uint8Array(await png.arrayBuffer())))) throw new Error('it could not be read');
+    } else await navigator.clipboard.write([new ClipboardItem({ 'image/png': png })]);
+    toast('Image copied. Paste it into your post.');
+  } catch (e) {
+    toast(`Could not copy the image: ${e instanceof Error ? e.message : String(e)}`, 'error');
+  }
+}
+
+/** Save: a Save dialog on the Desktop in the app, a normal download in a browser. */
+async function saveImage(url: string, name: string): Promise<void> {
+  try {
+    const b = bridge();
+    if (b?.saveFile) {
+      const where = await b.saveFile(name, new Uint8Array(await (await fetch(url)).arrayBuffer()));
+      if (where) toast(`Saved to ${where}`);
+      return;
+    }
+    const a = h('a', { href: url, download: name }) as HTMLAnchorElement;
+    document.body.append(a);
+    a.click();
+    a.remove();
+  } catch (e) {
+    errToast(e);
+  }
+}
+
+/** Copy and Save buttons for a thumbnail's caption row (GIFs get Save only: a clipboard can't hold an animation). */
+function imageButtons(url: Promise<string>, name: string, still: boolean): HTMLElement[] {
+  const out: HTMLElement[] = [];
+  if (still) out.push(h('button.md-x', { title: 'Copy image', onclick: () => void url.then(copyImage, errToast) }, icon('copy', 12, 2.2)));
+  out.push(h('button.md-x', { title: 'Save…', onclick: () => void url.then((u) => saveImage(u, name), errToast) }, icon('down', 12, 2.4)));
+  return out;
+}
+
 // ---------------------------------------------------------------- evidence images (blob URLs, cached)
 
 const imgCache = new Map<string, Promise<string>>();
@@ -65,7 +123,12 @@ function evidenceImg(taskId: string, evidenceId: string, name: string, cls = 'md
   const box = h(`div.${cls}`, { title: `${taskId}/${evidenceId} · ${name}` });
   void evidenceUrl(taskId, evidenceId, name).then((url) => {
     const img = h('img', { src: url, alt: name }) as HTMLImageElement;
-    img.onclick = () => showModal({ title: `${taskId} · ${name}`, body: h('img.md-full', { src: url, alt: name }), cancelLabel: 'Close' });
+    img.onclick = () => showModal({
+      title: `${taskId} · ${name}`,
+      body: h('img.md-full', { src: url, alt: name }),
+      cancelLabel: 'Close',
+      actions: [{ label: 'Copy image', onClick: () => copyImage(url) }, { label: 'Save…', kind: 'primary', onClick: () => saveImage(url, `${taskId}-${name}`) }],
+    });
     box.replaceChildren(img);
   }, () => box.classList.add('missing'));
   return box;
@@ -95,7 +158,12 @@ function gifImg(p: MediaPiece, cls = 'md-thumb'): HTMLElement {
   const alt = p.gif?.altText || p.title;
   void u.then((url) => {
     const img = h('img', { src: url, alt }) as HTMLImageElement;
-    img.onclick = () => showModal({ title: `${p.id} · ${p.title}`, body: h('img.md-full', { src: url, alt }), cancelLabel: 'Close' });
+    img.onclick = () => showModal({
+      title: `${p.id} · ${p.title}`,
+      body: h('img.md-full', { src: url, alt }),
+      cancelLabel: 'Close',
+      actions: [{ label: 'Save GIF…', kind: 'primary', onClick: () => saveImage(url, `${p.id}-${p.gif!.source}.gif`) }],
+    });
     box.replaceChildren(img);
   }, () => box.classList.add('missing'));
   return box;
@@ -105,10 +173,7 @@ async function saveGif(p: MediaPiece): Promise<void> {
   const u = p.gif ? gifUrl(p, p.gif.source) : null;
   if (!u) { toast('The GIF is not ready yet', 'error'); return; }
   try {
-    const a = h('a', { href: await u, download: `${p.id}-${p.gif!.source}.gif` }) as HTMLAnchorElement;
-    document.body.append(a);
-    a.click();
-    a.remove();
+    await saveImage(await u, `${p.id}-${p.gif!.source}.gif`);
   } catch (e) {
     errToast(e);
   }
@@ -633,16 +698,18 @@ export function createMedia(): Page {
         gifs.map((g) => h('div.md-img', null,
           gifImg(g),
           h('div.md-img-cap', null, h('span.md-gif-tag', null, 'GIF'), h('a.flex1.md-img-link', { href: `#/media/${g.id}` }, g.title),
+            g.gif && gifUrl(g, g.gif.source) ? imageButtons(gifUrl(g, g.gif.source)!, `${g.id}-${g.gif.source}.gif`, false) : null,
             ro ? null : h('button.md-x', { title: 'Remove', onclick: () => { p.gifIds = gifIds.filter((x) => x !== g.id); scheduleSave(p); renderEditor(); } }, icon('x', 11, 2.5))))),
         imgs.map((im, i) => h('div.md-img', null,
           evidenceImg(im.taskId, im.evidenceId, im.name),
           h('div.md-img-cap', null, h('span.flex1', null, im.caption || `${im.taskId} · ${im.name}`),
+            imageButtons(evidenceUrl(im.taskId, im.evidenceId, im.name), `${im.taskId}-${im.name}`, true),
             ro ? null : h('button.md-x', { title: 'Remove', onclick: () => { p.images = imgs.filter((_, j) => j !== i); scheduleSave(p); renderEditor(); } }, icon('x', 11, 2.5))))),
         pickBtn));
 
     return h('div.md-ebody', null,
       h('div.md-col', null, tabs, card, attachments, ro ? null : askBox(p, ['Shorter', 'More personal', 'Make a thread', 'Another version'])),
-      claimsRail(p, 'Copy the chosen version for each platform and post it yourself. Save the screenshots and GIFs from the full-size view. Mark it used once it is posted, and herald won\'t suggest it again.'));
+      claimsRail(p, 'Copy the chosen version for each platform and post it yourself. Copy or save each screenshot with the buttons under it, or from the full-size view. Mark it used once it is posted, and herald won\'t suggest it again.'));
   }
 
   // ---- article / website ----
