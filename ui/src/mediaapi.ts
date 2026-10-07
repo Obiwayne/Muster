@@ -1,6 +1,6 @@
 // Typed client for the Media routes (/api/media/*, docs/MEDIA.md). Every write is yours (actor "you").
 import type {
-  MediaAbout, MediaGif, MediaImage, MediaKind, MediaPiece, MediaPlatform, MediaPost, MediaSection, MediaShot, MediaStore, MediaSuggestion, MediaSummary,
+  MediaAbout, MediaGif, MediaImage, MediaKind, MediaPiece, MediaPlatform, MediaPost, MediaPurpose, MediaSection, MediaShot, MediaStore, MediaSuggestion, MediaSummary,
 } from '../../src/types';
 import { ApiError, getToken, refreshToken } from './api';
 
@@ -35,6 +35,8 @@ export interface NewPieceBody {
   kind: MediaKind;
   about: Pick<MediaAbout, 'kind' | 'ref'>[];
   note?: string;
+  purpose?: MediaPurpose;
+  link?: string;
   platforms?: MediaPlatform[];
   suggestionId?: string;
 }

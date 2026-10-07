@@ -1,6 +1,6 @@
 // Media in the orchestrator: the media store's runtime (herald's queue, suggestion checks) and every /api/media/*
 // route. See docs/MEDIA.md.
-import { existsSync } from 'node:fs';
+import { existsSync, readFileSync } from 'node:fs';
 import { join } from 'node:path';
 import type { Evidence, IntelStore, MediaPiece, MediaStore, MusterConfig, MusterState, Task } from '../types.js';
 import * as board from '../core/board.js';
@@ -202,7 +202,17 @@ export class MediaRuntime implements HeraldMedia {
       evidenceFile: (task, entryId, name) => evidencePath(this.o.paths, task, entryId, name),
       userName: config.userName,
       projectName: config.projectName,
+      readme: readReadme(this.state.repoRoot),
     });
+  }
+}
+
+/** The project's README.md (first 8 KB) for whole-product pieces; '' when there is none. */
+function readReadme(root: string): string {
+  try {
+    return readFileSync(join(root, 'README.md'), 'utf8').slice(0, 8000);
+  } catch {
+    return '';
   }
 }
 
@@ -244,7 +254,7 @@ export function registerMediaRoutes(route: (method: string, path: string, handle
 
   // ---- pieces (you)
   route('POST', '/api/media/pieces', ({ body }) =>
-    write(() => media.createPiece(st(), state(), str(body.actor, 'actor'), { kind: body.kind, about: body.about, note: body.note, platforms: body.platforms, suggestionId: body.suggestionId }), true),
+    write(() => media.createPiece(st(), state(), str(body.actor, 'actor'), { kind: body.kind, about: body.about, note: body.note, platforms: body.platforms, suggestionId: body.suggestionId, purpose: body.purpose, link: body.link }), true),
   );
   route('POST', '/api/media/pieces/:id/edit', ({ params, body }) => {
     const before = framesOf(st(), params.id);

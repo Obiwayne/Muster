@@ -84,7 +84,7 @@ export function sourceTone(s: MediaClaimSource): ClaimTone {
     case 'intel': case 'idea': return 'intel';
     case 'task': case 'stage': case 'goal': return 'task';
     case 'opinion': return 'opinion';
-    case 'evidence': return 'evidence';
+    case 'evidence': case 'readme': return 'evidence';
     default: return 'other';
   }
 }
