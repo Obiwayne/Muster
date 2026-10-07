@@ -11,6 +11,76 @@ const ICON = path.join(__dirname, 'muster.ico');
 const SETTINGS = () => path.join(app.getPath('userData'), 'settings.json');
 const { updateStatus } = require('./update.cjs');
 const APP_STARTED_AT = Date.now();
+const { CodexSession } = require('./codex.cjs');
+const { createHash } = require('node:crypto');
+const codexSessions = new Map();
+
+function codexAllowed(event) {
+  return !!current && event.sender === win?.webContents && event.senderFrame === win.webContents.mainFrame
+    && new URL(event.senderFrame.url).origin === new URL(current.url).origin;
+}
+function codexFile(root) {
+  return path.join(app.getPath('userData'), 'codex', createHash('sha256').update(path.resolve(root).toLowerCase()).digest('hex') + '.json');
+}
+function codexSession() {
+  const root = current.root;
+  if (codexSessions.has(root)) return codexSessions.get(root);
+  let saved = {};
+  try { saved = JSON.parse(fs.readFileSync(codexFile(root), 'utf8')); } catch { /* first conversation */ }
+  const tools = [
+    { type: 'function', name: 'muster_status', description: 'Read Muster project status, tasks or bulletin board.', inputSchema: {
+      type: 'object', properties: { section: { type: 'string', enum: ['status', 'tasks', 'board'] } }, required: ['section'], additionalProperties: false } },
+    { type: 'function', name: 'muster_message_captain', description: 'Send a message to the project Captain after the user approves the text.', inputSchema: {
+      type: 'object', properties: { text: { type: 'string' } }, required: ['text'], additionalProperties: false } },
+  ];
+  const session = new CodexSession(root, { ...saved, tools, toolCall: async (name, args) => {
+    let command;
+    if (name === 'muster_status' && ['status', 'tasks', 'board'].includes(args?.section)) command = [args.section];
+    else if (name === 'muster_message_captain' && typeof args?.text === 'string' && args.text.trim() && args.text.length <= 8000) command = ['say', 'captain', args.text];
+    else throw new Error('Invalid Muster tool call.');
+    const result = await cli(command, root);
+    if (!result.ok) throw new Error(result.out || 'Muster tool failed.');
+    return result.out;
+  } });
+  codexSessions.set(root, session);
+  let saveTimer = null;
+  let latestState = session.snapshot();
+  session.flush = () => {
+    clearTimeout(saveTimer); saveTimer = null;
+    try {
+      const file = codexFile(root); fs.mkdirSync(path.dirname(file), { recursive: true });
+      fs.writeFileSync(file + '.tmp', JSON.stringify({ threadId: latestState.threadId, messages: latestState.messages }));
+      fs.renameSync(file + '.tmp', file);
+    } catch { /* conversation remains available in memory */ }
+  };
+  session.on('state', state => {
+    latestState = state;
+    if (!saveTimer) saveTimer = setTimeout(session.flush, 500);
+    if (current?.root === root && win && !win.isDestroyed()) win.webContents.send('app:codexState', state);
+  });
+  return session;
+}
+function codexHandle(channel, action) {
+  ipcMain.handle(channel, async (event, payload) => {
+    if (!codexAllowed(event)) throw new Error('Codex is only available in the current project dashboard.');
+    try { return await action(codexSession(), payload); }
+    catch (e) { return { error: e.message }; }
+  });
+}
+codexHandle('app:codexState', session => session.snapshot());
+codexHandle('app:codexSend', (session, payload) => {
+  if (typeof payload?.context !== 'string' || payload.context.length > 16000) throw new Error('Invalid project context');
+  return session.send(payload.text, payload.context);
+});
+codexHandle('app:codexStop', session => session.interrupt());
+codexHandle('app:codexApprove', (session, payload) => session.approve(payload?.id, payload?.decision));
+codexHandle('app:codexNew', session => {
+  if (session.busy) throw new Error('Stop the current response before starting a new conversation.');
+  session.flush(); session.removeAllListeners('state'); session.close(); codexSessions.delete(current.root);
+  try { fs.unlinkSync(codexFile(current.root)); } catch { /* no saved conversation */ }
+  return codexSession().snapshot();
+});
+app.on('will-quit', () => { for (const session of codexSessions.values()) { session.flush(); session.removeAllListeners('state'); session.close(); } });
 
 app.setAppUserModelId('com.obiwayne.muster');
 if (!app.requestSingleInstanceLock()) app.quit();

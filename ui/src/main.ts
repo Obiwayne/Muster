@@ -1,5 +1,6 @@
 // Muster dashboard: shell (sidebar, top bar), hash router, toasts.
 import './styles.css';
+import { createCodexPanel } from './codexpanel';
 import type { Agent } from '../../src/types';
 import { h, icon, logo, setChildren, showMenu, showModal, toast, type MenuItem } from './dom';
 import { events, type Snapshot } from './events';
@@ -148,7 +149,8 @@ const weekFill = h('div.usage-fill');
 const week = h('div.usage.weekly', null, h('div.usage-head', null, h('div.usage-label', null, 'WEEKLY'), weekVal), h('div.usage-track', null, weekFill));
 const addTop = h('button.btn.secondary', { style: 'height:32px' }, icon('plus', 14), 'Add agent');
 addTop.onclick = () => openAddAgent(addTop, 'right');
-const topbar = h('header.topbar', null, h('div.goal', null, goalTitle, goalSub), dashboardSwitch, five, week, addTop);
+const codex = createCodexPanel();
+const topbar = h('header.topbar', null, h('div.goal', null, goalTitle, goalSub), dashboardSwitch, five, week, addTop, codex.toggle);
 const connBanner = h('div.conn-banner', { hidden: true }, 'Reconnecting to the Muster orchestrator…');
 const pagesHost = h('div', { style: 'flex:1;min-height:0;display:flex;flex-direction:column' });
 
@@ -177,7 +179,7 @@ function renderGithubOffer(s: Snapshot, project: string): void {
 }
 
 const main = h('main.main', null, topbar, connBanner, ghBanner, pagesHost);
-app.appendChild(h('div.app', null, sidebar, main));
+app.appendChild(h('div.app', null, sidebar, main, codex.pane));
 
 // ---------- pages ----------
 const pages = new Map<RouteId, Page>();
@@ -220,6 +222,7 @@ function renderShell(s: Snapshot): void {
   const { state, config } = s;
   const project = config.projectName || state.repoRoot.split(/[\\/]/).filter(Boolean).pop() || '';
   projectEl.textContent = project;
+  codex.update(project, state.goal?.text || '');
   document.title = project ? `Muster · ${project}` : 'Muster';
   renderGithubOffer(s, project);
 

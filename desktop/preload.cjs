@@ -19,6 +19,16 @@ if (location.protocol === 'file:') contextBridge.exposeInMainWorld('muster', {
 // The dashboard (served by the project's own orchestrator on localhost) gets project switching and the needs-you badge only.
 if (location.protocol === 'http:' && (location.hostname === '127.0.0.1' || location.hostname === 'localhost')) {
   contextBridge.exposeInMainWorld('musterApp', {
+    codexState: () => ipcRenderer.invoke('app:codexState'),
+    codexSend: (text, context) => ipcRenderer.invoke('app:codexSend', { text, context }),
+    codexStop: () => ipcRenderer.invoke('app:codexStop'),
+    codexNew: () => ipcRenderer.invoke('app:codexNew'),
+    codexApprove: (id, decision) => ipcRenderer.invoke('app:codexApprove', { id, decision }),
+    onCodexState: (callback) => {
+      const listener = (_event, state) => callback(state);
+      ipcRenderer.on('app:codexState', listener);
+      return () => ipcRenderer.removeListener('app:codexState', listener);
+    },
     projects: () => ipcRenderer.invoke('app:projects'),
     switchTo: (root) => ipcRenderer.invoke('app:switch', root),
     openFolder: () => ipcRenderer.invoke('app:openFolder'),
