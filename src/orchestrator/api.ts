@@ -566,6 +566,13 @@ ${pushed ? `Pushed ${base} to origin.` : `Push to origin failed: ${(r.stderr || 
       t.updatedAt = record.at;
       board.feedEvent(state(), actor, `attached evidence ${record.id} to ${t.id} (${record.files.length} file${record.files.length === 1 ? '' : 's'}): ${record.summary.split('\n')[0].slice(0, 120)}`);
     });
+    // A demo recording for a Media GIF (docs/MEDIA.md "Demo GIF"): converted in the background, then you're told.
+    void ctx.media?.onEvidence(task, record).then((piece) => {
+      if (!piece) return;
+      const text = `Demo recording ready for ${piece.id}: ${piece.title}`;
+      ctx.toast('info', text);
+      ctx.notify('Muster: demo recording ready', text);
+    });
     return record;
   });
   route('GET', '/api/tasks/:id/evidence/:entry/:file', ({ params }) => {
@@ -852,7 +859,7 @@ ${pushed ? `Pushed ${base} to origin.` : `Push to origin failed: ${(r.stderr || 
     markdown: (text, filename) => new TextReply(text, 'text/markdown; charset=utf-8', filename),
   });
   // ------------------------------------------------------------------ media (mediaapi.ts)
-  if (ctx.media) registerMediaRoutes(route, { store, runtime: ctx.media, agents, intel: () => ctx.intel.store, notify: ctx.notify, toast: ctx.toast });
+  if (ctx.media) registerMediaRoutes(route, { store, runtime: ctx.media, agents, intel: () => ctx.intel.store, notify: ctx.notify, toast: ctx.toast, file: (path, type) => new FileReply(path, type) });
   // The research browser (/api/browser/*) and the add-competitor probe (POST /api/intel/probe).
   registerBrowserRoutes(route, {
     browser: ctx.browser,

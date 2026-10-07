@@ -27,6 +27,7 @@ import { Coalescer } from '../core/coalesce.js';
 import { IntelFile, intelFile, intelSummary } from '../core/intel.js';
 import { IntelRuntime } from './intelapi.js';
 import { MediaFile, mediaFile, mediaSummary } from '../core/media.js';
+import type { RenderOptions } from '../core/mediagif.js';
 import { MediaRuntime } from './mediaapi.js';
 import { ResearchBrowser } from '../browser/researchbrowser.js';
 import type { BrowserRouteDeps } from './browserapi.js';
@@ -67,6 +68,8 @@ export interface OrchestratorOptions {
   phone?: PhoneLink;
   /** Start the phone gateway and register this repo with it once listening (the real entry point does; tests don't). */
   registerPhone?: boolean;
+  /** Test seam: ffmpeg path / runner / font for demo GIF rendering (default: ffmpeg from MUSTER_FFMPEG or PATH). */
+  mediaGif?: RenderOptions;
 }
 
 export interface Orchestrator {
@@ -145,7 +148,7 @@ export async function startOrchestrator(opts: OrchestratorOptions): Promise<Orch
   const browser = opts.browser ?? new ResearchBrowser({ config: () => config.researchBrowser });
   const intel = new IntelRuntime({ store, file: new IntelFile(intelFile(paths), config.projectName ?? 'Our app', { log }), paths, config: () => config, log, notify: (title, text) => notify(config, title, text) });
 
-  const media = new MediaRuntime({ store, file: new MediaFile(mediaFile(paths), { log }), paths, config: () => config, log });
+  const media = new MediaRuntime({ store, file: new MediaFile(mediaFile(paths), { log }), paths, config: () => config, log, gif: opts.mediaGif });
 
   const agents = new AgentManager({
     store,

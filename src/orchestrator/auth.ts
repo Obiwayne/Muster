@@ -66,7 +66,7 @@ const HUMAN_ONLY: [string, RegExp, string][] = [
   ['POST', /^\/api\/intel\/changes\/seen$/, 'mark intel changes seen'],
   ['DELETE', /^\/api\/intel\/watches\/[^/]+$/, 'stop intel watches'],
   ['POST', /^\/api\/media\/pieces$/, 'ask for media pieces'],
-  ['POST', /^\/api\/media\/pieces\/[^/]+\/(?:edit|ask|approve|used|retry)$/, 'decide on media pieces'],
+  ['POST', /^\/api\/media\/pieces\/[^/]+\/(?:edit|ask|approve|used|retry|record)$/, 'decide on media pieces'],
   ['POST', /^\/api\/media\/pieces\/[^/]+\/claims\/[^/]+\/confirm$/, 'confirm claims'],
   ['DELETE', /^\/api\/media\/pieces\/[^/]+$/, 'delete media pieces'],
   ['PUT', /^\/api\/media\/style$/, 'change the house style'],

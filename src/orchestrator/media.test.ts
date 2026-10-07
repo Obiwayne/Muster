@@ -1,9 +1,10 @@
 // Media routes through the HTTP API: who may call them, herald's queue and lifecycle, the board note and the event.
-import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs';
+import { existsSync, mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
-import type { MediaPiece, MediaStore, MediaSummary, MusterState, Task } from '../types.js';
+import type { Evidence, MediaPiece, MediaStore, MediaSummary, MusterState, Task } from '../types.js';
+import type { Runner } from '../core/mediagif.js';
 import { tempRepo } from '../core/testutil.js';
 import { startOrchestrator, type Orchestrator } from './server.js';
 import type { PtyLauncher, PtyProcess } from './terminal.js';
@@ -29,6 +30,17 @@ const launches: { cwd: string }[] = [];
 const launcher: PtyLauncher = (_file, _args, opts) => {
   launches.push({ cwd: opts.cwd });
   return new FakePty();
+};
+
+// A stand-in ffmpeg: writes a tiny GIF at the output path, or prints a duration for the probe (`ffmpeg -i <file>`).
+const ffmpegCalls: string[][] = [];
+let ffmpegFails = false;
+const fakeFfmpeg: Runner = async (_cmd, args) => {
+  ffmpegCalls.push(args);
+  if (ffmpegFails) return { code: 1, stderr: 'Error opening input file' };
+  if (args.length === 3 && args[1] === '-i') return { code: 1, stderr: '  Duration: 00:00:06.00, start: 0.000000' };
+  writeFileSync(args.at(-1)!, Buffer.from('GIF89a fake'));
+  return { code: 0, stderr: '' };
 };
 
 let repo: string;
@@ -76,6 +88,7 @@ beforeAll(async () => {
     uiDir: ui,
     log: () => {},
     timings: { enterDelayMs: 1, firstPromptDelayMs: 1, nudgeDebounceMs: 10, scoutStopDelayMs: 20, stopConfirmMs: 200 },
+    mediaGif: { ffmpeg: 'ffmpeg', font: null, run: fakeFfmpeg },
   });
   task = await ok<Task>('you', 'POST', '/api/tasks', { title: 'Approval queue' });
 });
@@ -175,7 +188,62 @@ describe('media API', () => {
     expect(sg).toMatchObject({ id: 'MS1', trigger: 'feature', status: 'open' });
     expect((await call('captain', 'POST', '/api/media/suggestions/MS1/accept')).status).toBe(403);
     const { pieces } = await ok<{ pieces: MediaPiece[] }>('you', 'POST', '/api/media/suggestions/MS1/accept');
-    expect(pieces.map((p) => p.kind)).toEqual(['social', 'website']);
+    expect(pieces.map((p) => p.kind)).toEqual(['social', 'website', 'gif']);
     expect(await ok('you', 'POST', '/api/media/suggestions/dismiss-all')).toEqual({ dismissed: 0 });
+    for (const p of pieces) await ok('you', 'DELETE', `/api/media/pieces/${p.id}`);
+    await until(() => herald()!.status === 'stopped');
+  });
+
+  it('demo GIF: herald drafts frames, Muster renders, you approve; a real recording replaces it', async () => {
+    // evidence: a screenshot on the merged task, attached by you from the repo
+    mkdirSync(join(repo, '.muster-evidence', task.id), { recursive: true });
+    writeFileSync(join(repo, '.muster-evidence', task.id, 'queue.png'), 'png');
+    const shot = await ok<Evidence>('you', 'POST', `/api/tasks/${task.id}/evidence`, { files: [`.muster-evidence/${task.id}/queue.png`], summary: 'Approval queue' });
+
+    const g = await ok<MediaPiece>('you', 'POST', '/api/media/pieces', { kind: 'gif', about: [{ kind: 'task', ref: task.id }] });
+    expect(g.gif).toEqual({ source: 'slideshow', frames: [], steps: [], altText: '' });
+    await until(() => piece(g.id)?.status === 'drafting');
+    const frame = { taskId: task.id, evidenceId: shot.id, name: 'queue.png', caption: 'New posts wait for you first', seconds: 2 };
+    await ok('herald', 'POST', `/api/media/pieces/${g.id}/draft`, { title: 'Demo: approve a post', gif: { frames: [frame], steps: ['Open a wall', 'Tap Approve'], altText: 'A teacher approves a post.' } });
+    expect((await call('you', 'GET', `/api/media/pieces/${g.id}/gif`)).status).toBe(404); // not rendered yet
+    await ok('herald', 'POST', `/api/media/pieces/${g.id}/finish`);
+    await until(() => !!piece(g.id)?.gif?.slideshow);
+    expect(piece(g.id)!.gif!.slideshow).toMatchObject({ name: 'slideshow.gif', width: 800, height: 500, seconds: 2 });
+    expect(existsSync(join(repo, '.muster', 'media', g.id, 'slideshow.gif'))).toBe(true);
+    const res = await fetch(`${orch.url}/api/media/pieces/${g.id}/gif`, { headers: { 'x-muster-token': orch.token } });
+    expect(res.status).toBe(200);
+    expect(res.headers.get('content-type')).toBe('image/gif');
+    expect((await res.text()).startsWith('GIF89a')).toBe(true);
+
+    // you change a caption: the slideshow is dropped and rendered again; a failed render says why
+    ffmpegFails = true;
+    const edited = await ok<MediaPiece>('you', 'POST', `/api/media/pieces/${g.id}/edit`, { gif: { frames: [{ ...frame, caption: 'Edited' }] } });
+    expect(edited.gif!.slideshow).toBeUndefined();
+    await until(() => !!piece(g.id)?.gif?.renderError);
+    expect(piece(g.id)!.gif!.renderError).toMatch(/^ffmpeg failed: Error opening input file/);
+    expect((await call('you', 'POST', `/api/media/pieces/${g.id}/approve`)).status).toBe(409);
+    ffmpegFails = false;
+    await ok('you', 'POST', `/api/media/pieces/${g.id}/edit`, { gif: { frames: [{ ...frame, caption: 'Again' }] } });
+    await until(() => !!piece(g.id)?.gif?.slideshow);
+    expect(piece(g.id)!.gif!.renderError).toBeUndefined();
+    await ok('you', 'POST', `/api/media/pieces/${g.id}/approve`);
+
+    // a real recording: you ask, the Captain links a task, its video evidence becomes the GIF
+    expect((await call('captain', 'POST', `/api/media/pieces/${g.id}/record`)).status).toBe(403);
+    await ok('you', 'POST', `/api/media/pieces/${g.id}/record`);
+    expect(state().inbox.some((i) => i.agentId === 'captain' && i.text.includes(`media_recording("${g.id}"`))).toBe(true);
+    const rec = await ok<Task>('you', 'POST', '/api/tasks', { title: `Record demo ${g.id}` });
+    expect((await call('you', 'POST', `/api/media/pieces/${g.id}/recording`, { task: rec.id })).status).toBe(403);
+    await ok('captain', 'POST', `/api/media/pieces/${g.id}/recording`, { task: rec.id });
+    mkdirSync(join(repo, '.muster-evidence', rec.id), { recursive: true });
+    writeFileSync(join(repo, '.muster-evidence', rec.id, 'demo.webm'), 'webm');
+    await ok('you', 'POST', `/api/tasks/${rec.id}/evidence`, { files: [`.muster-evidence/${rec.id}/demo.webm`], summary: 'The demo, recorded' });
+    await until(() => piece(g.id)?.gif?.recording?.status === 'done');
+    expect(piece(g.id)).toMatchObject({ status: 'review', gif: { source: 'recording', recording: { taskId: rec.id, file: { name: 'recording.gif', seconds: 6 } } } });
+    expect(ffmpegCalls.at(-1)!.join(' ')).toContain('demo.webm');
+    expect(state().notes.some((n) => n.topic === 'media' && n.text.startsWith(`Demo recording ready for ${g.id} ·`))).toBe(true);
+    const slide = await fetch(`${orch.url}/api/media/pieces/${g.id}/gif?source=slideshow`, { headers: { 'x-muster-token': orch.token } });
+    expect(slide.status).toBe(200);
+    expect((await call('you', 'GET', `/api/media/pieces/${g.id}/gif?source=nope`)).status).toBe(400);
   });
 });

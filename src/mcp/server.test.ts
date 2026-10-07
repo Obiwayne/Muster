@@ -571,4 +571,14 @@ describe('muster-mcp media tools', () => {
     expect((await call('suggest_media', { task: 't41', title: 'PDF export', why: 'Teachers asked.' })).text).toBe('Suggested MS2 for T41 on the Media page.');
     expect(calls[0]).toEqual({ path: '/api/media/suggestions', method: 'POST', body: { actor: 'captain', task: 'T41', title: 'PDF export', why: 'Teachers asked.' } });
   });
+
+  it('herald saves demo GIF frames; the Captain links a recording task', async () => {
+    const h = await connect('media', () => piece({ kind: 'gif' }));
+    const gif = { frames: [{ taskId: 'T38', evidenceId: 'E2', name: 'queue.png', caption: 'New posts wait for you first' }], steps: ['Open a wall'], altText: 'A teacher approves a post.' };
+    await h.call('media_draft', { gif });
+    expect(h.calls[0].body).toEqual({ actor: 'herald', gif });
+    const c = await connect('captain', () => piece({ kind: 'gif', gif: { recording: { status: 'recording', taskId: 'T52' } } }));
+    expect((await c.call('media_recording', { piece: 'mp5', task: 't52' })).text).toMatch(/^Linked T52 to MP3\./);
+    expect(c.calls[0]).toEqual({ path: '/api/media/pieces/MP5/recording', method: 'POST', body: { actor: 'captain', task: 'T52' } });
+  });
 });
