@@ -208,7 +208,12 @@ const state = {
     updatedAt: iso(0.2), perAgentCostUsd: {}, paused: false, weeklyWarned: false,
   },
   goal: EMPTY ? undefined : { text: 'Build the invite-link sharing flow', at: iso(42) },
-  nextIds: { agent: 6, task: 10, note: 28, feed: 1, inbox: 1, stage: 6, goal: 15, idea: 12, run: 2 },
+  jots: process.env.MOCK_NOTES === 'none' ? [] : [
+    { id: 'J1', title: 'Mirror mode for glass rigs', text: 'Flip the script horizontally so it reads right through a beam-splitter.\nRemember the per-device setting: phone mirrored, laptop not.', tags: ['ideas', 'hardware'], from: 'claude', client: 'Claude', pinned: true, createdAt: iso(60 * 26), updatedAt: iso(60 * 26) },
+    { id: 'J2', text: 'Voice-paced scrolling\nScroll speed follows how fast you talk; pause when you stop. Needs a mic permission screen on first use.\nTry Whisper small on-device first, fall back to cloud.\nOpen question: what happens when you ad-lib?\nCould highlight the line you are on.\nMaybe a "catch up" jump when you skip ahead.\nTest with 3 presenters before building.', tags: ['ux', 'voice'], from: 'claude', client: 'Claude', createdAt: iso(180), updatedAt: iso(180) },
+    { id: 'J3', title: 'Pricing thought', text: 'Free for one script, paid for teams. Look at what Teleprompter Premium charges before deciding.', tags: [], from: 'you', createdAt: iso(60 * 50), updatedAt: iso(60 * 50), sentAt: iso(60 * 20) },
+  ],
+  nextIds: { agent: 6, task: 10, note: 28, feed: 1, inbox: 1, stage: 6, goal: 15, idea: 12, run: 2, jot: 4 },
 };
 if (!EMPTY && WEEKLY >= config.warnAtWeeklyPct) {
   state.usage.weeklyWarned = true;
@@ -1078,6 +1083,39 @@ async function api(req, url) {
     if (cap) cap.status = 'working';
     broadcast();
     return { ok: true };
+  }
+  // ---- notes (/api/jots)
+  if (m === 'GET' && p === '/api/jots') return state.jots;
+  if (m === 'POST' && p === '/api/jots') {
+    const b = await body(req);
+    need(typeof b.text === 'string' && b.text.trim(), 400, 'The note is empty');
+    const at = new Date().toISOString();
+    const j = { id: `J${state.nextIds.jot++}`, text: b.text.trim(), tags: b.tags ?? [], from: 'you', createdAt: at, updatedAt: at, ...(b.title ? { title: b.title } : {}) };
+    state.jots.push(j);
+    broadcast();
+    return j;
+  }
+  {
+    const jm = /^\/api\/jots\/(J\d+)(?:\/(edit|pin|send))?$/.exec(p);
+    if (jm) {
+      const j = state.jots.find((x) => x.id === jm[1]);
+      need(j, 404, `No note "${jm[1]}"`);
+      const b = m === 'GET' ? {} : await body(req);
+      if (m === 'DELETE' && !jm[2]) state.jots = state.jots.filter((x) => x !== j);
+      else if (jm[2] === 'edit') {
+        if (b.text !== undefined) j.text = b.text;
+        if (b.title !== undefined) { if (b.title) j.title = b.title; else delete j.title; }
+        if (b.tags !== undefined) j.tags = b.tags;
+        j.updatedAt = new Date().toISOString();
+      } else if (jm[2] === 'pin') { if (b.pinned) j.pinned = true; else delete j.pinned; }
+      else if (jm[2] === 'send') {
+        j.sentAt = new Date().toISOString();
+        state.goal = { text: j.text, at: j.sentAt };
+        addFeed('message', 'you', 'captain', j.text);
+      }
+      broadcast();
+      return j;
+    }
   }
   // ---- research
   if (m === 'GET' && p === '/api/research') return state.research;

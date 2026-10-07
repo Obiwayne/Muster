@@ -328,6 +328,31 @@ describe('remote messages carry a via record (docs/REMOTE.md)', () => {
     expect((await feedNow()).some((f) => f.text === 'bad' || f.text === 'sneaky')).toBe(false);
   });
 
+  it('Notes: you add, edit, pin and delete; via marks a note as saved through Claude; agents only read', async () => {
+    const mine = await call('POST', '/api/jots', human(), { text: 'Mirror mode\nfor glass rigs', tags: ['ideas'] });
+    expect(mine.status).toBe(200);
+    expect(mine.data).toMatchObject({ from: 'you', text: 'Mirror mode\nfor glass rigs', tags: ['ideas'] });
+    const viaClaude = await call('POST', '/api/jots', human(), { text: 'Voice scroll', title: 'Scrolling', via: { ...via, approvedOn: 'not held' } });
+    expect(viaClaude.data).toMatchObject({ from: 'claude', client: 'Claude Desktop', title: 'Scrolling' });
+    for (const tok of [agentTok('captain'), agentTok('crew-2')]) {
+      expect((await call('POST', '/api/jots', tok, { text: 'sneaky' })).status).toBe(403);
+      expect((await call('POST', '/api/jots', tok, { text: 'sneaky', via })).status).toBe(403);
+      expect((await call('POST', `/api/jots/${mine.data.id}/edit`, tok, { text: 'x' })).status).toBe(403);
+      expect((await call('POST', `/api/jots/${mine.data.id}/send`, tok, {})).status).toBe(403);
+      expect((await call('DELETE', `/api/jots/${mine.data.id}`, tok, {})).status).toBe(403);
+    }
+    expect((await call('GET', '/api/jots?q=voice', agentTok('captain'))).data.map((j: { id: string }) => j.id)).toEqual([viaClaude.data.id]);
+    expect((await call('POST', `/api/jots/${mine.data.id}/pin`, human(), { pinned: true })).data.pinned).toBe(true);
+    expect((await call('POST', `/api/jots/${mine.data.id}/edit`, human(), { title: 'Mirror' })).data.title).toBe('Mirror');
+    expect((await call('GET', '/api/jots', human())).data[0].id).toBe(mine.data.id);
+    const sent = await call('POST', `/api/jots/${mine.data.id}/send`, human(), {});
+    expect(sent.status).toBe(200);
+    expect(sent.data.sentAt).toBeTruthy();
+    expect((await feedNow()).filter((f) => f.kind === 'message' && f.to === 'captain' && f.text === 'Mirror mode\nfor glass rigs')).toHaveLength(1);
+    expect((await call('DELETE', `/api/jots/${viaClaude.data.id}`, human(), {})).status).toBe(200);
+    expect((await call('GET', '/api/jots', human())).data).toHaveLength(1);
+  });
+
   it('sanitises the client name and fills a missing or bad approvedAt', async () => {
     const n = await newNote('sanitise');
     const t0 = Date.now();

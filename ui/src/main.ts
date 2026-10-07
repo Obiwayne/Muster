@@ -16,6 +16,7 @@ import { createIntel } from './pages/intel';
 import { getIntelSummary } from './intelapi';
 import { createMedia } from './pages/media';
 import { getMediaSummary } from './mediaapi';
+import { createNotes } from './pages/notes';
 import { currentStageId } from './roadmap';
 import { createBoard } from './pages/board';
 import { createChat } from './pages/chat';
@@ -26,13 +27,14 @@ import { createSettings } from './pages/settings';
 import { projectId as heldProjectId } from './pages/heldcard';
 import { forProject } from './heldmodel';
 
-type RouteId = 'dashboard' | 'roadmap' | 'research' | 'intel' | 'media' | 'board' | 'chat' | 'tasks' | 'branches' | 'vellum' | 'settings';
+type RouteId = 'dashboard' | 'roadmap' | 'research' | 'intel' | 'media' | 'notes' | 'board' | 'chat' | 'tasks' | 'branches' | 'vellum' | 'settings';
 type NavId = Exclude<RouteId, 'research'>;
 const ROUTES: { id: NavId; label: string; icon: string; create: () => Page }[] = [
   { id: 'dashboard', label: 'Dashboard', icon: 'grid', create: createDashboard },
   { id: 'roadmap', label: 'Roadmap', icon: 'route', create: createRoadmap },
   { id: 'intel', label: 'Intel', icon: 'radar', create: createIntel },
   { id: 'media', label: 'Media', icon: 'megaphone', create: createMedia },
+  { id: 'notes', label: 'Notes', icon: 'note', create: createNotes },
   { id: 'board', label: 'Bulletin board', icon: 'pin', create: createBoard },
   { id: 'chat', label: 'Crew chat', icon: 'chat', create: createChat },
   { id: 'tasks', label: 'Tasks', icon: 'tasks', create: createTasks },
@@ -244,6 +246,7 @@ function renderShell(s: Snapshot): void {
   reportNeedsYou(needsYou);
   setCount('chat', state.feed.length);
   setCount('tasks', state.tasks.filter((t) => t.status !== 'cancelled').length);
+  setCount('notes', state.jots?.length ?? 0);
   const rm = state.roadmap;
   const rmEl = navCounts.get('roadmap')!;
   rmEl.className = 'nav-count mono';

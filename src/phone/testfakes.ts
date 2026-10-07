@@ -22,6 +22,6 @@ export function fakeState(notes: Note[], tasks: Task[] = []): MusterState {
     feed: [],
     inbox: [],
     usage: { perAgentCostUsd: {}, paused: false, weeklyWarned: false, fiveHour: { usedPercentage: 42, resetsAt: at } },
-    nextIds: { agent: 1, task: 1, note: 1, feed: 1, inbox: 1, stage: 1, goal: 1, idea: 1, run: 1 },
+    nextIds: { agent: 1, task: 1, note: 1, feed: 1, inbox: 1, stage: 1, goal: 1, idea: 1, run: 1, jot: 1 },
   };
 }

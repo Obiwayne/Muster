@@ -34,8 +34,13 @@ const ctx: RemoteContext = {
     writes.push({ input, client });
     return nextWrite();
   },
+  note: async (input, client) => {
+    notesSaved.push({ input, client });
+    return { projectName: 'StarCut', id: 'J4', title: input.title ?? input.text.split('\n')[0] };
+  },
   settings: () => ({ ...settings }),
 };
+const notesSaved: { input: { text: string; title?: string; tags?: string[]; project?: string }; client: string }[] = [];
 
 /** Raw request, so tests can set Host and auth freely. */
 function raw(opts: { host?: string; token?: string | null; method?: string; body?: unknown }): Promise<{ status: number; headers: Record<string, unknown>; text: string }> {
@@ -104,7 +109,9 @@ describe('remote connector', () => {
   it('lists read and write tools with matching annotations; muster_approve is off by default', async () => {
     const c = await client();
     const { tools } = await c.listTools();
-    expect(tools.map((t) => t.name).sort()).toEqual(['muster_answer', 'muster_needs', 'muster_reply', 'muster_send_goal', 'muster_status']);
+    expect(tools.map((t) => t.name).sort()).toEqual(['muster_answer', 'muster_needs', 'muster_note', 'muster_notes', 'muster_reply', 'muster_send_goal', 'muster_status']);
+    expect(tools.find((t) => t.name === 'muster_note')!.description).toContain('never reaches the Captain');
+    expect(tools.find((t) => t.name === 'muster_notes')!.annotations).toMatchObject({ readOnlyHint: true });
     const by = new Map(tools.map((t) => [t.name, t]));
     for (const n of ['muster_status', 'muster_needs']) expect(by.get(n)!.annotations).toMatchObject({ readOnlyHint: true, destructiveHint: false });
     for (const n of ['muster_send_goal', 'muster_reply', 'muster_answer']) {

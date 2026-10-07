@@ -45,6 +45,8 @@ const HUMAN_ONLY: [string, RegExp, string][] = [
   ['POST', /^\/api\/remote\/alert$/, 'raise remote-access alerts'],
   ['POST', /^\/api\/project\/github$/, 'create a GitHub repo'],
   ['POST', /^\/api\/ask$/, 'set the goal'],
+  ['POST', /^\/api\/jots(?:\/[^/]+\/(?:edit|pin|send))?$/, 'write notes'],
+  ['DELETE', /^\/api\/jots\/[^/]+$/, 'delete notes'],
   ['POST', /^\/api\/agents\/[^/]+\/role$/, 'change roles'],
   ['DELETE', /^\/api\/agents\/[^/]+$/, 'remove agents'],
   ['POST', /^\/api\/agents\/[^/]+\/input$/, 'type into terminals'],

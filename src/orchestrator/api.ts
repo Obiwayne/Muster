@@ -11,6 +11,7 @@ import { repoKey } from '../core/tokens.js';
 import * as gitOps from '../core/git.js';
 import type { MusterPaths } from '../core/paths.js';
 import type { Store } from '../core/store.js';
+import * as jots from '../core/jots.js';
 import * as lines from '../core/lines.js';
 import { isHerald } from '../core/media.js';
 import * as research from '../core/research.js';
@@ -530,6 +531,33 @@ ${pushed ? `Pushed ${base} to origin.` : `Push to origin failed: ${(r.stderr || 
     });
     await agents.type(captain.id, text, true);
     return { ok: true };
+  });
+
+  // ------------------------------------------------------------------ notes (core/jots.ts; the Notes page)
+  route('GET', '/api/jots', ({ query }) => jots.listJots(state(), query.get('q') ?? undefined));
+  // `via` (the connector, docs/REMOTE.md): only you may say so; it marks the note as saved through Claude.
+  route('POST', '/api/jots', ({ body }) => {
+    const via = remoteVia(body);
+    return mutate(() => jots.addJot(state(), str(body.actor, 'actor'), { text: body.text, title: body.title, tags: body.tags }, via?.client));
+  });
+  route('POST', '/api/jots/:id/edit', ({ params, body }) => mutate(() => jots.editJot(state(), str(body.actor, 'actor'), params.id, { text: body.text, title: body.title, tags: body.tags })));
+  route('POST', '/api/jots/:id/pin', ({ params, body }) => mutate(() => jots.pinJot(state(), str(body.actor, 'actor'), params.id, body.pinned)));
+  route('DELETE', '/api/jots/:id', ({ params, body }) => mutate(() => jots.deleteJot(state(), str(body.actor, 'actor'), params.id)));
+  // Send to Captain: the note becomes the goal, the same way POST /api/ask sets one.
+  route('POST', '/api/jots/:id/send', async ({ params, body }) => {
+    if (body.actor !== board.HUMAN) throw forbidden('Only you send notes to the Captain');
+    const jot = jots.requireJot(state(), params.id);
+    const captain = board.captainOf(state());
+    if (!captain) throw conflict('There is no Captain');
+    if (!agents.isRunning(captain.id)) throw conflict(`${captain.id} is not running (muster start ${captain.id})`);
+    const text = jots.jotGoal(jot);
+    const sent = mutate(() => {
+      state().goal = { text, at: board.nowIso() };
+      board.addFeed(state(), { kind: 'message', from: board.HUMAN, to: captain.id, text });
+      return jots.markJotSent(state(), jot.id);
+    });
+    await agents.type(captain.id, text, true);
+    return sent;
   });
 
   // ------------------------------------------------------------------ tasks

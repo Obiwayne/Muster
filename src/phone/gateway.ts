@@ -12,7 +12,7 @@ import { appendFileSync, existsSync, readFileSync } from 'node:fs';
 import { Readable } from 'node:stream';
 import QRCode from 'qrcode';
 import { WebSocketServer, type WebSocket } from 'ws';
-import type { Agent, MusterConfig, MusterState, Note, RemoteVia, Task } from '../types.js';
+import type { Agent, Jot, MusterConfig, MusterState, Note, RemoteVia, Task } from '../types.js';
 import { computeProgress, localDate } from '../core/roadmap.js';
 import { repoKey, sameToken } from '../core/tokens.js';
 import { clonePrefs, mergePrefs, needsFromState, shouldNotify, type NeedItem, type Prefs } from './needs.js';
@@ -20,7 +20,8 @@ import { hostsFor, lanHosts as realLanHosts, tailscaleInfo as realTailscale, typ
 import { displayCode, Pairing } from './pairing.js';
 import { digestOf, PENDING_TTL_MS, pendingSummary, pendingTitle, pendingToNeed, pendingView, newlyOverdue, type PendingWrite } from './pending.js';
 import { RemoteAuth } from './oauth.js';
-import { DEFAULT_REMOTE_PORT, startRemote, type Remote, type RemoteSettings, type Tunnel, type WriteInput, type WriteOutcome } from './remote.js';
+import { DEFAULT_REMOTE_PORT, startRemote, type NoteInput, type Remote, type RemoteSettings, type Tunnel, type WriteInput, type WriteOutcome } from './remote.js';
+import { jotTitle } from '../core/jots.js';
 import { desktopSettingsFile, listProjects, orchestratorFetch, orchestratorJson, OrchestratorError, recentRoots, type Project } from './projects.js';
 import {
   DEFAULT_PHONE_PORT,
@@ -303,7 +304,7 @@ export async function startGateway(opts: GatewayOptions = {}): Promise<Gateway> 
       if (!c.enabled) return;
       try {
         remote = await startRemote(
-          { projects, state: stateOf, needs: () => collect(), write: remoteWrite, settings: remoteSettings },
+          { projects, state: stateOf, needs: () => collect(), write: remoteWrite, note: remoteNote, settings: remoteSettings },
           {
             port: c.port,
             publicHost: c.publicHost ?? undefined,
@@ -412,6 +413,19 @@ export async function startGateway(opts: GatewayOptions = {}): Promise<Gateway> 
     }
     auditRemote({ event: 'write_sent', id: w.id, kind: w.kind, project: p.name, client: w.client, approvedOn });
     return summary;
+  };
+
+  /** RemoteContext.note (muster_note): saved to the project's Notes now, never held. A note reaches no agent until you
+   *  press Send to Captain in Muster, so there is nothing for the hold to protect. Marked via the connector. */
+  const remoteNote = async (input: NoteInput, client: string): Promise<{ projectName: string; id: string; title: string }> => {
+    const p = await writeProject(input.project);
+    if (typeof input.text !== 'string' || !input.text.trim()) throw new Error('The note is empty.');
+    const { config } = await stateOf(p);
+    if (config?.projectName) p.name = config.projectName; // the name you know it by
+    const via: RemoteVia = { client, approvedOn: 'not held', approvedAt: now().toISOString() };
+    const jot = await orchestratorJson<Jot>(p, 'POST', '/api/jots', { text: input.text, title: input.title, tags: input.tags, via });
+    auditRemote({ event: 'note_saved', id: jot.id, project: p.name, client });
+    return { projectName: p.name, id: jot.id, title: jotTitle(jot) };
   };
 
   /** RemoteContext.write: hold it for your tap (default), or run it now when the hold is off. */

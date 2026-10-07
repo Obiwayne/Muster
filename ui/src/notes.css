@@ -1,0 +1,51 @@
+/* Notes page (pages/notes.ts): your ideas, typed here or saved through Claude. */
+
+.nt-sub { display: flex; align-items: center; gap: 12px; height: 62px; padding: 0 20px; border-bottom: 1px solid var(--color-line); flex-shrink: 0; }
+.nt-sub-t { display: flex; flex-direction: column; gap: 2px; flex: 1; min-width: 0; }
+.nt-title { font-size: 16px; font-weight: 600; }
+.nt-meta { font-family: var(--font-mono); font-size: 11px; color: var(--color-faint); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.nt-search { width: 260px; height: 34px; }
+.nt-new { display: inline-flex; align-items: center; gap: 6px; }
+
+.nt-scroll { flex: 1; min-height: 0; overflow-y: auto; display: flex; flex-direction: column; gap: 18px; padding: 20px; }
+
+.nt-quickbox { display: flex; flex-direction: column; gap: 10px; padding: 14px; border: 1px solid var(--color-line); border-radius: var(--radius-md); background: var(--color-surface); max-width: 920px; width: 100%; }
+.nt-quick { resize: vertical; min-height: 64px; font-size: 14px; line-height: 21px; }
+.nt-quick-row { display: flex; align-items: center; gap: 10px; }
+.nt-quick-tags { width: 180px; height: 30px; font-size: 12px; }
+.nt-hint { font-size: 12px; line-height: 17px; color: var(--color-faint); flex: 1; min-width: 0; }
+
+.nt-list { display: flex; flex-direction: column; gap: 12px; max-width: 920px; width: 100%; }
+.nt-card { display: flex; flex-direction: column; gap: 10px; padding: 14px 16px; border: 1px solid var(--color-line); border-radius: var(--radius-md); background: var(--color-surface); }
+.nt-card.pinned { border-color: color-mix(in oklab, var(--color-captain) 45%, var(--color-line)); }
+.nt-card.editing { border-color: color-mix(in oklab, var(--color-glow-blue) 50%, var(--color-line)); }
+.nt-head { display: flex; align-items: center; gap: 8px; min-width: 0; }
+.nt-pin { color: var(--color-captain); display: inline-flex; flex-shrink: 0; }
+.nt-card-title { font-size: 14px; font-weight: 600; flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.nt-from { font-size: 11px; color: var(--color-faint); padding: 1px 7px; border-radius: 999px; border: 1px solid var(--color-line); flex-shrink: 0; }
+.nt-time { font-family: var(--font-mono); font-size: 11px; color: var(--color-faint); flex-shrink: 0; }
+.nt-text { font-size: 13px; line-height: 20px; color: var(--color-muted); white-space: pre-wrap; overflow-wrap: anywhere; }
+.nt-text.folded { display: -webkit-box; -webkit-line-clamp: 6; -webkit-box-orient: vertical; overflow: hidden; }
+.nt-more { align-self: flex-start; font-size: 12px; color: var(--color-text); padding: 0; margin-top: -4px; }
+.nt-more:hover { text-decoration: underline; }
+.nt-tags { display: flex; flex-wrap: wrap; gap: 6px; }
+.nt-tag { height: 22px; padding: 0 8px; border-radius: 11px; background: color-mix(in oklab, var(--color-glow-blue) 14%, transparent); font-size: 12px; color: #9db4ff; }
+.nt-tag:hover { background: color-mix(in oklab, var(--color-glow-blue) 24%, transparent); }
+.nt-sent { display: flex; align-items: center; gap: 6px; font-size: 12px; color: var(--color-success); }
+.nt-actions { display: flex; align-items: center; gap: 4px; padding-top: 2px; border-top: 1px solid var(--color-line); padding-top: 10px; }
+.nt-act { display: inline-flex; align-items: center; gap: 5px; height: 28px; padding: 0 9px; border-radius: var(--radius-sm); font-size: 12px; color: var(--color-muted); }
+.nt-act:hover { background: var(--color-surface-2); color: var(--color-text); }
+.nt-act.on { color: var(--color-captain); }
+.nt-act.danger:hover { color: var(--color-stuck); }
+.nt-edit-title { height: 34px; font-size: 14px; font-weight: 600; }
+.nt-edit-text { resize: vertical; font-size: 13px; line-height: 20px; }
+.nt-edit-tags { height: 30px; font-size: 12px; width: 260px; }
+
+.nt-empty { display: flex; flex-direction: column; gap: 8px; align-items: flex-start; padding: 28px 4px; font-size: 13px; line-height: 19px; color: var(--color-faint); max-width: 560px; }
+.nt-empty-t { font-size: 14px; font-weight: 600; color: var(--color-muted); }
+
+@media (max-width: 900px) {
+  .nt-search { width: 160px; }
+  .nt-quick-row { flex-wrap: wrap; }
+  .nt-hint { flex-basis: 100%; order: 3; }
+}

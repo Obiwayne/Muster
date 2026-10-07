@@ -1,6 +1,6 @@
 // Typed client for the orchestrator HTTP API (see docs/ARCHITECTURE.md).
 import type {
-  Agent, FeedItem, InboxItem, MusterConfig, MusterState, Note, NoteType, ResearchIdea, ResearchRun, ResearchSources, ResearchState, Role, Roadmap,
+  Agent, FeedItem, InboxItem, Jot, MusterConfig, MusterState, Note, NoteType, ResearchIdea, ResearchRun, ResearchSources, ResearchState, Role, Roadmap,
   RoadmapProgress, SkillInfo, Task, UsageState, VellumStatus,
 } from '../../src/types';
 // Phone gateway admin API types (forwarded by the orchestrator's /api/phone/*, docs/PHONE.md).
@@ -137,6 +137,13 @@ export const api = {
     req<{ ok: boolean; output: string }>('POST', `/api/agents/${enc(id)}/merge`, { force, actor: YOU, ...(taskId ? { taskId } : {}) }),
 
   ask: (text: string) => req<{ ok: boolean }>('POST', '/api/ask', { text }),
+
+  // Notes (the Notes page; /api/jots)
+  addJot: (body: { text: string; title?: string; tags?: string[] }) => req<Jot>('POST', '/api/jots', { ...body, actor: YOU }),
+  editJot: (id: string, body: { text?: string; title?: string; tags?: string[] }) => req<Jot>('POST', `/api/jots/${enc(id)}/edit`, { ...body, actor: YOU }),
+  pinJot: (id: string, pinned: boolean) => req<Jot>('POST', `/api/jots/${enc(id)}/pin`, { pinned, actor: YOU }),
+  sendJot: (id: string) => req<Jot>('POST', `/api/jots/${enc(id)}/send`, { actor: YOU }),
+  deleteJot: (id: string) => req<Jot>('DELETE', `/api/jots/${enc(id)}`, { actor: YOU }),
 
   tasks: () => req<Task[]>('GET', '/api/tasks'),
   createTask: (body: { title: string; description: string; dependsOn?: string[]; stations?: string[]; assignee?: string }) =>
