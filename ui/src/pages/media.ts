@@ -1,11 +1,12 @@
 // Media (docs/MEDIA.md, Vellum "Muster" page "Media"): herald writes social posts, articles, website text, video
 // scripts and demo GIFs from what really shipped. #/media is the library (herald's suggestions, the pieces table, "What herald
-// writes from"); #/media/MP3 opens one piece in its editor. Everything is plain text; Muster never posts anything.
+// writes from"); #/media/MP3 opens one piece in its editor. Everything is plain text. Social posts can go out through your own Chrome (herald fills them in, you press Post).
 // GET /api/media on show and after each `media` event (debounced). Your text edits save on their own (debounced
 // POST …/edit); while herald drafts, the editor is read-only.
 import '../media.css';
 import type {
-  MediaAbout, MediaClaim, MediaGif, MediaGifFrame, MediaImage, MediaKind, MediaPiece, MediaPlatform, MediaPurpose, MediaShot, MediaStore, MediaSuggestion, MusterState,
+  MediaAbout, MediaClaim, MediaConversation, MediaDesign, MediaDesignStyle, MediaGif, MediaGifFrame, MediaImage, MediaKind, MediaPiece, MediaPlatform, MediaPost,
+  MediaPublishJob, MediaPurpose, MediaShot, MediaStore, MediaSuggestion, MusterState,
 } from '../../../src/types';
 import { closeFloating, confirmDialog, h, icon, setChildren, showMenu, showModal, showPopover, toast, type Child } from '../dom';
 import { events, type Snapshot } from '../events';
@@ -19,7 +20,11 @@ import {
   gifFile, gifFits, moveFrame, recordingLine, totalSeconds, PLATFORMS, PLATFORM_LABEL, STATUS, charCount, evidenceImages, filterPieces,
   isBusy, isUnsourced, kindCounts, openSuggestions, pieceFor, pieceMeta, postText, reviewCount, scriptText, sectionsText, shotCounts,
   shotListCsv, sortPieces, sourceCounts, sourceTone, suggestionTag, unsourcedCount, versionLetter, type KindFilter,
+  DESIGN_STYLES, PLATFORM_SHORT, cleanTag, conversationsFor, conversationsLine, designSizesLine, fullPostText, hashtagHint, isLiveJob, jobLine, jobsFor,
+  postRows, publishChip, replyBlock, replyPolicy, researchLine, showPublishRail, sortedDesigns, themeTone,
 } from '../mediamodel';
+
+type SocialView = 'post' | 'research' | 'conversations';
 
 const go = (hash: string) => { location.hash = hash; };
 const svg = (paths: string, size = 14) => {
@@ -347,6 +352,8 @@ export function createMedia(): Page {
   let platform: MediaPlatform | null = null;
   let showAllShots = false;
   let frameSel: number | null = null; // the demo GIF frame you are editing
+  let view: SocialView = 'post'; // a social piece's tab
+  let noVellum = false; // the design route said Vellum isn't set up: hide "+ Make an image"
 
   refreshAll = async () => {
     try {
@@ -549,7 +556,10 @@ export function createMedia(): Page {
           return t;
         })()
       : null;
-    const chipText = ro ? `${p.status === 'queued' ? 'Queued' : 'Drafting'}${p.progress ? ` · ${p.progress}` : ''}` : st.label;
+    const jobs = p.kind === 'social' ? jobsFor(store, p.id) : [];
+    const posting = jobs.some((j) => j.kind === 'post' && isLiveJob(j));
+    const chipText = ro ? `${p.status === 'queued' ? 'Queued' : 'Drafting'}${p.progress ? ` · ${p.progress}` : ''}` : publishChip(jobs) ?? st.label;
+    const chipTone = posting ? 'media' : st.tone;
     const unsourced = unsourcedCount(p);
     const noFile = p.kind === 'gif' && !(p.gif && gifFile(p.gif));
     const copyBtns: Child = p.kind === 'gif'
@@ -564,8 +574,21 @@ export function createMedia(): Page {
       main = h('button.btn.primary', {
         disabled: ro || unsourced > 0 || noFile,
         title: ro ? 'herald is still writing' : unsourced ? `Confirm or cut ${unsourced} unsourced claim${unsourced === 1 ? '' : 's'} first` : noFile ? 'Wait for the GIF to render' : 'Approve it',
-        onclick: () => void flush().then(() => run(mapi.approvePiece(p.id), 'Approved. Copy it and mark it used once it is posted')).then(() => refresh()),
+        onclick: () => void flush().then(() => run(mapi.approvePiece(p.id), p.kind === 'social' ? 'Approved' : 'Approved. Copy it and mark it used once it is posted')).then(async (ok) => {
+          await refresh();
+          const now = current();
+          if (ok && now?.kind === 'social') openPostDialog(now, true);
+        }),
       }, 'Approve');
+    } else if (p.kind === 'social' && (p.status === 'approved' || p.status === 'used')) {
+      main = [
+        p.status === 'approved' ? h('button.btn', { onclick: () => void run(mapi.usedPiece(p.id), 'Marked used').then(() => refresh()) }, 'Mark used') : null,
+        posting
+          ? h('button.btn.primary', { onclick: () => void confirmDialog('Stop posting?', 'herald cancels the posts that are not out yet and discards their drafts in Chrome. Posts already out stay up.', 'Stop posting', 'danger').then((ok) => {
+              if (ok) void run(mapi.stopPublish(p.id), 'Stopped').then(() => refresh());
+            }) }, 'Stop posting')
+          : h('button.btn.primary', { onclick: () => openPostDialog(p, false) }, 'Post it for me'),
+      ];
     } else if (p.status === 'approved') {
       main = h('button.btn.primary', { onclick: () => void run(mapi.usedPiece(p.id), 'Marked used').then(() => refresh()) }, 'Mark used');
     } else if (p.status === 'failed') {
@@ -582,7 +605,7 @@ export function createMedia(): Page {
       backLink(),
       h('div.md-vsep'),
       h('div.md-etitle-wrap', null, title, h('div.md-meta', null, metaBits.join(' · '), target ? ' · ' : null, target)),
-      h('div.md-chip', { class: `t-${st.tone}` }, h('span.md-dot', { class: ro && 'pulse' }), chipText),
+      h('div.md-chip', { class: `t-${chipTone}` }, h('span.md-dot', { class: (ro || posting) && 'pulse' }), chipText),
       copyBtns, main, more);
   }
 
@@ -634,14 +657,31 @@ export function createMedia(): Page {
 
   // ---- social ----
 
+  /** Post | Research | Conversations, with what herald read or found on the right. */
+  function socialTabs(p: MediaPiece): HTMLElement {
+    const convs = conversationsFor(store, p.id);
+    const drafts = convs.filter((c) => c.status === 'draft').length;
+    const meta = view === 'research'
+      ? (p.research ? [`${researchLine(p.research)} · ${ago(p.research.at)} ·`, h('button.md-vlink', { disabled: isBusy(p), onclick: () => void run(mapi.researchPiece(p.id), 'herald will research it again').then(() => refresh()) }, 'Refresh')] : null)
+      : view === 'conversations' ? conversationsLine(convs, replyPolicy(store)) : null;
+    const tab = (id: SocialView, label: string, badge?: number) =>
+      h('button.md-vtab', { class: view === id && 'on', onclick: () => { view = id; renderEditor(); } }, label, badge ? h('span.md-vbadge', null, String(badge)) : null);
+    return h('div.md-vtabs', null, tab('post', 'Post'), tab('research', 'Research'), tab('conversations', 'Conversations', drafts), h('div.flex1'), h('div.md-vmeta', null, meta));
+  }
+
   function socialBody(p: MediaPiece, ro: boolean): HTMLElement {
+    const inner = view === 'research' ? researchBody(p) : view === 'conversations' ? conversationsBody(p) : postBody(p, ro);
+    return h('div.md-social', null, socialTabs(p), inner);
+  }
+
+  function postBody(p: MediaPiece, ro: boolean): HTMLElement {
     const posts = p.posts ?? [];
     const plats = posts.length ? posts.map((x) => x.platform) : (p.platforms ?? []);
     if (!platform || !plats.includes(platform)) platform = plats[0] ?? null;
     const post = posts.find((x) => x.platform === platform);
     const tabs = h('div.md-ptabs', null, plats.map((pl) => {
       const ps = posts.find((x) => x.platform === pl);
-      const cc = charCount(pl, ps ? ps.versions[ps.chosen] ?? '' : '');
+      const cc = charCount(pl, ps && ps.versions.length ? fullPostText(ps) : '');
       return h('button.md-ptab', { class: pl === platform && 'on', onclick: () => { platform = pl; renderEditor(); } },
         PLATFORM_LABEL[pl], ps ? h('span.md-cc', { class: cc.over ? 'over' : cc.limit ? 'ok' : '' }, cc.text) : null);
     }));
@@ -651,14 +691,15 @@ export function createMedia(): Page {
       card = h('div.md-textcard', null, h('div.md-wait', null, ro ? 'herald is writing this one…' : 'No text for this platform yet.'));
     } else {
       const idx = Math.min(post.chosen, post.versions.length - 1);
-      const ta = h('textarea.md-posttext', { disabled: ro, rows: 8 }) as HTMLTextAreaElement;
+      const ta = h('textarea.md-posttext', { disabled: ro, rows: 3 }) as HTMLTextAreaElement;
       ta.value = post.versions[idx];
       const cc = h('span.md-cc');
-      const upd = () => { const c = charCount(post.platform, ta.value); cc.textContent = c.text; cc.className = `md-cc ${c.over ? 'over' : c.limit ? 'ok' : ''}`; };
+      const upd = () => { const c = charCount(post.platform, fullPostText(post, idx)); cc.textContent = c.text; cc.className = `md-cc ${c.over ? 'over' : c.limit ? 'ok' : ''}`; };
       upd();
       ta.oninput = () => { post.versions[idx] = ta.value; upd(); scheduleSave(p); };
       autosize(ta);
       card = h('div.md-textcard', null, ta,
+        hashtagRow(p, post, ro),
         h('div.md-textfoot', null,
           h('div.flex1', null, `Version ${versionLetter(idx)} of ${post.versions.length}${p.editedAt ? ` · edited by you ${ago(p.editedAt)}` : ''}`),
           cc,
@@ -668,6 +709,80 @@ export function createMedia(): Page {
           }, versionLetter(i))))));
     }
 
+    const jobs = jobsFor(store, p.id);
+    const rail = showPublishRail(jobs) ? postingRail(p, jobs) : claimsRail(p, 'Copy the chosen version for each platform and post it yourself, or press Post it for me and herald fills each post in your Chrome for you to check. Mark it used once it is posted.');
+    return h('div.md-ebody', null,
+      h('div.md-col', null, tabs, card, attachmentsRow(p, ro), ro ? null : askBox(p, ['Shorter', 'More personal', 'Make a thread', 'Another version'])),
+      rail);
+  }
+
+  /** "#edtech ✕  #teachers ✕  + hashtag" with the platform's rule on the right. */
+  function hashtagRow(p: MediaPiece, post: MediaPost, ro: boolean): HTMLElement {
+    const tags = post.hashtags ?? [];
+    const hint = hashtagHint(post.platform, tags.length);
+    const chips = tags.map((t, i) => h('span.md-tag-chip', null, `#${t}`,
+      ro ? null : h('button.md-tag-x', { title: `Remove #${t}`, onclick: () => { post.hashtags = tags.filter((_, j) => j !== i); scheduleSave(p); renderEditor(); } }, icon('x', 10, 2.6))));
+    const add = ro ? null : h('button.md-tag-add', null, '+ hashtag');
+    if (add) {
+      add.onclick = () => {
+        const input = h('input.md-tag-in', { placeholder: 'hashtag', maxLength: 51 }) as HTMLInputElement;
+        const commit = () => {
+          const raw = input.value.trim();
+          if (raw) {
+            const t = cleanTag(raw);
+            if (!t) { toast('A hashtag is letters, digits and _ only, with no spaces', 'error'); return; }
+            if (!tags.some((x) => x.toLowerCase() === t.toLowerCase())) { post.hashtags = [...tags, t]; scheduleSave(p); }
+          }
+          renderEditor();
+        };
+        input.addEventListener('keydown', (e) => { if (e.key === 'Enter') { e.preventDefault(); commit(); } else if (e.key === 'Escape') renderEditor(); });
+        input.addEventListener('blur', commit);
+        add.replaceWith(input);
+        input.focus();
+      };
+    }
+    return h('div.md-tags', null, chips, add, h('div.flex1'), h('div.md-tag-hint', { class: hint.warn && 'warn' }, hint.text));
+  }
+
+  // ---- attachments: Vellum designs, screenshots, demo GIFs ----
+
+  const designCache = new Map<string, Promise<string>>();
+  function designUrl(p: MediaPiece, d: MediaDesign): Promise<string> {
+    const key = `${p.id}/${d.file}/${d.createdAt}`;
+    let u = designCache.get(key);
+    if (!u) {
+      u = mapi.designBlob(p.id, d.file).then((b) => URL.createObjectURL(b));
+      u.catch(() => designCache.delete(key));
+      designCache.set(key, u);
+    }
+    return u;
+  }
+
+  function designCard(p: MediaPiece, d: MediaDesign): HTMLElement {
+    const square = d.width <= d.height * 1.2;
+    const name = `${p.id}-${d.platform}-${d.width}x${d.height}.png`;
+    const box = h('div.md-thumb.md-design-thumb', { class: square && 'sq', title: d.caption });
+    const url = designUrl(p, d);
+    void url.then((u) => {
+      const img = h('img', { src: u, alt: d.caption }) as HTMLImageElement;
+      img.onclick = () => showModal({
+        title: `${PLATFORM_LABEL[d.platform]} · ${d.width}×${d.height}`,
+        body: h('img.md-full', { src: u, alt: d.caption }),
+        cancelLabel: 'Close',
+        actions: [{ label: 'Copy image', onClick: () => copyImage(u) }, { label: 'Save…', kind: 'primary', onClick: () => saveImage(u, name) }],
+      });
+      box.replaceChildren(img);
+    }, () => box.classList.add('missing'));
+    const open = d.vellum
+      ? h('button.md-vellum-open', { title: `Vellum file ${d.vellum.fileId}, artboard ${d.vellum.nodeId}`, onclick: () => toast(`Open Vellum: it's on the Media page of your project's file, artboard "${p.id} · ${PLATFORM_LABEL[d.platform]} ${d.width}×${d.height}"`) }, square ? 'Vellum ↗' : 'Open in Vellum ↗')
+      : null;
+    return h('div.md-img', { class: square ? 'sq' : 'wide' },
+      box,
+      h('div.md-img-cap', { title: `${PLATFORM_LABEL[d.platform]} · ${d.width}×${d.height}` }, h('span.md-vellum-tag', null, 'VELLUM'), h('span.flex1', null, square ? PLATFORM_LABEL[d.platform] : `${PLATFORM_LABEL[d.platform]} · ${d.width}×${d.height}`)),
+      h('div.md-img-cap', null, open ?? h('span'), h('span.flex1'), imageButtons(url, name, true)));
+  }
+
+  function attachmentsRow(p: MediaPiece, ro: boolean): HTMLElement {
     const state = snap?.state;
     const imgs = p.images ?? [];
     const pickable = state ? evidenceImages(state, p).filter((e) => !imgs.some((i) => i.taskId === e.taskId && i.evidenceId === e.evidenceId && i.name === e.name)) : [];
@@ -692,24 +807,244 @@ export function createMedia(): Page {
       }, evidenceImg(e.taskId, e.evidenceId, e.name, 'md-pickthumb'), h('div.md-pickcap', null, `${e.taskId} · ${e.name}`))));
       showPopover(pickBtn, grid, 'left');
     };
-    const attachments = h('div.md-attach', null,
-      h('div.md-sec-head', null, h('div.md-label', null, 'ATTACHED'), h('div.md-sec-sub', null, 'from task evidence and demo GIFs · click to open full size')),
+    return h('div.md-attach', null,
+      h('div.md-sec-head', null, h('div.md-label', null, 'ATTACHED'), h('div.md-sec-sub', null, 'post images made in Vellum, screenshots and demo GIFs')),
       h('div.md-imgs', null,
-        gifs.map((g) => h('div.md-img', null,
-          gifImg(g),
-          h('div.md-img-cap', null, h('span.md-gif-tag', null, 'GIF'), h('a.flex1.md-img-link', { href: `#/media/${g.id}` }, g.title),
-            g.gif && gifUrl(g, g.gif.source) ? imageButtons(gifUrl(g, g.gif.source)!, `${g.id}-${g.gif.source}.gif`, false) : null,
-            ro ? null : h('button.md-x', { title: 'Remove', onclick: () => { p.gifIds = gifIds.filter((x) => x !== g.id); scheduleSave(p); renderEditor(); } }, icon('x', 11, 2.5))))),
+        sortedDesigns(p).map((d) => designCard(p, d)),
         imgs.map((im, i) => h('div.md-img', null,
           evidenceImg(im.taskId, im.evidenceId, im.name),
           h('div.md-img-cap', null, h('span.flex1', null, im.caption || `${im.taskId} · ${im.name}`),
             imageButtons(evidenceUrl(im.taskId, im.evidenceId, im.name), `${im.taskId}-${im.name}`, true),
             ro ? null : h('button.md-x', { title: 'Remove', onclick: () => { p.images = imgs.filter((_, j) => j !== i); scheduleSave(p); renderEditor(); } }, icon('x', 11, 2.5))))),
-        pickBtn));
+        gifs.map((g) => h('div.md-img', null,
+          gifImg(g),
+          h('div.md-img-cap', null, h('span.md-gif-tag', null, 'GIF'), h('a.flex1.md-img-link', { href: `#/media/${g.id}` }, g.title),
+            g.gif && gifUrl(g, g.gif.source) ? imageButtons(gifUrl(g, g.gif.source)!, `${g.id}-${g.gif.source}.gif`, false) : null,
+            ro ? null : h('button.md-x', { title: 'Remove', onclick: () => { p.gifIds = gifIds.filter((x) => x !== g.id); scheduleSave(p); renderEditor(); } }, icon('x', 11, 2.5))))),
+        pickBtn,
+        makeImageCard(p, ro)));
+  }
 
-    return h('div.md-ebody', null,
-      h('div.md-col', null, tabs, card, attachments, ro ? null : askBox(p, ['Shorter', 'More personal', 'Make a thread', 'Another version'])),
-      claimsRail(p, 'Copy the chosen version for each platform and post it yourself. Copy or save each screenshot with the buttons under it, or from the full-size view. Mark it used once it is posted, and herald won\'t suggest it again.'));
+  /** "+ Make an image in Vellum": hidden when the project has no Vellum file (or the server said so). */
+  function makeImageCard(p: MediaPiece, ro: boolean): HTMLElement | null {
+    if (!snap?.config.vellumFile || noVellum) return null;
+    if (p.designRequest) {
+      return h('div.md-make.busy', null, h('span.md-dot.pulse.t-media'), h('div', null, 'Making images'), h('div.md-make-s', null, `in Vellum · ${p.designRequest.platforms.map((x) => PLATFORM_LABEL[x]).join(', ')}`));
+    }
+    const btn = h('button.md-make', { disabled: ro }, h('div', null, '+ Make an image'), h('div.md-make-s', null, 'in Vellum')) as HTMLButtonElement;
+    btn.onclick = () => openMakeImage(btn, p);
+    return btn;
+  }
+
+  function openMakeImage(anchor: HTMLElement, p: MediaPiece): void {
+    const plats = (p.posts?.length ? p.posts.map((x) => x.platform) : p.platforms ?? DEFAULT_PLATFORMS);
+    let style: MediaDesignStyle = 'headline';
+    const styles = h('div.md-styles');
+    const drawStyles = () => setChildren(styles, DESIGN_STYLES.map((s) => h('button.md-style-opt', { class: style === s.id && 'on', onclick: () => { style = s.id; drawStyles(); } }, s.label)));
+    drawStyles();
+    const note = h('input.field.md-make-note', { placeholder: 'Anything to change? e.g. "use the queue screenshot"', maxLength: 500 }) as HTMLInputElement;
+    const err = h('div.md-err', { hidden: true });
+    const make = h('button.btn.primary', null, `Make ${plats.length} image${plats.length === 1 ? '' : 's'}`) as HTMLButtonElement;
+    let close: () => void = () => {};
+    make.onclick = async () => {
+      make.disabled = true;
+      try {
+        await mapi.designPiece(p.id, { style, note: note.value.trim() || undefined, platforms: plats });
+        close();
+        toast('herald is designing them in Vellum');
+        void refresh();
+      } catch (e) {
+        if (e instanceof mapi.ApiError && e.status === 409 && /vellum/i.test(e.message)) { noVellum = true; close(); renderEditor(); }
+        err.textContent = e instanceof Error ? e.message : String(e);
+        err.hidden = false;
+      } finally { make.disabled = false; }
+    };
+    const body = h('div.md-makepop', null,
+      h('div.md-rail-head', null, h('div.md-rail-t', null, 'Make a post image in Vellum'),
+        h('div.md-rail-s', null, 'herald designs it in your design system, on the Media page of your Vellum file, then attaches the PNG.')),
+      h('div.md-field', null, h('div.md-label', null, 'STYLE'), styles),
+      h('div.md-field', null, h('div.md-label', null, 'SIZES (FROM YOUR PLATFORMS)'), h('div.md-rail-s', null, designSizesLine(plats))),
+      note, err,
+      h('div.md-makepop-foot', null, h('button.btn', { onclick: () => close() }, 'Cancel'), make));
+    close = showPopover(anchor, body, 'right');
+  }
+
+  // ---- posting through your Chrome ----
+
+  /** A filled-in post or reply waiting for you: what herald read back from the composer, then Post / Cancel. */
+  function readyCard(j: MediaPublishJob): HTMLElement {
+    const where = PLATFORM_LABEL[j.platform];
+    return h('div.md-ready', null,
+      h('div.md-ready-top', null, h('div.md-ready-t', null, j.kind === 'reply' ? `Reply on ${where}` : where), h('div.md-ready-s', null, 'Ready: check and post')),
+      h('div.md-composer', null, j.composer ?? j.text),
+      h('div.md-ready-note', null, `${j.attached ?? 0} image${j.attached === 1 ? '' : 's'} attached · this is the text in the ${where} tab in Chrome. Check the tab, then post.`),
+      h('div.md-ready-acts', null,
+        h('button.btn.primary.flex1', { onclick: () => void run(mapi.publishGo(j.id), `Posting on ${where}…`).then(() => refresh()) }, j.kind === 'reply' ? `Reply on ${where}` : `Post on ${where}`),
+        h('button.btn', { onclick: () => void run(mapi.publishCancel(j.id), 'Cancelled: herald discards the draft').then(() => refresh()) }, 'Cancel')));
+  }
+
+  function jobRow(p: MediaPiece, j: MediaPublishJob): HTMLElement {
+    if (j.status === 'ready') return readyCard(j);
+    const line = jobLine(j);
+    const retry = j.status === 'signin' || j.status === 'failed'
+      ? h('button.md-pill.sm', { onclick: () => void run(mapi.publishPiece(p.id, [j.platform]), 'herald will try again').then(() => refresh()) }, 'Retry')
+      : null;
+    const right: Child = j.status === 'posted' && j.url
+      ? h('a.md-job-link', { href: j.url, target: '_blank', rel: 'noreferrer' }, 'Posted · View post ↗')
+      : h('div.md-job-s', { class: `t-${line.tone}` }, line.text);
+    return h('div.md-job', { class: j.status === 'posted' && 'done' },
+      h('span.md-dot', { class: `t-${line.tone} ${j.status === 'filling' || j.status === 'posting' ? 'pulse' : ''}` }),
+      h('div.md-job-t', null, PLATFORM_LABEL[j.platform]), h('div.flex1'), right, retry);
+  }
+
+  function postingRail(p: MediaPiece, jobs: MediaPublishJob[]): HTMLElement {
+    const posts = jobs.filter((j) => j.kind === 'post' && j.status !== 'cancelled');
+    return h('div.md-rail.md-post-rail', null,
+      h('div.md-rail-head', null,
+        h('div.md-rail-t', null, 'Posting in your Chrome'),
+        h('div.md-rail-s', null, 'Each post waits for your Post. Check the tab in Chrome: what you see there is exactly what will go out.')),
+      posts.map((j) => jobRow(p, j)),
+      h('div.md-hint', null, "Not signed in on a site? herald stops on that one and asks you to sign in in Chrome. When every post is out, the piece is marked Used."));
+  }
+
+  /** "Approved. Want me to post it for you?" — one row per platform. */
+  function openPostDialog(p: MediaPiece, approvedNow: boolean): void {
+    const rows = postRows(p);
+    if (!rows.length) { toast('There is no text to post yet', 'error'); return; }
+    const picked = new Set(rows.filter((r) => r.checked).map((r) => r.platform));
+    const list = h('div.md-postrows');
+    let yes: HTMLButtonElement | null = null;
+    const label = () => `Yes, get ${picked.size} post${picked.size === 1 ? '' : 's'} ready`;
+    const draw = () => {
+      setChildren(list, rows.map((r) => h('button.md-postrow', {
+        class: [picked.has(r.platform) && 'on', r.disabled && 'off'].filter(Boolean).join(' '), disabled: !!r.disabled,
+        onclick: () => { if (picked.has(r.platform)) picked.delete(r.platform); else picked.add(r.platform); draw(); },
+      }, h('span.md-check', null, picked.has(r.platform) ? icon('check', 11, 3.2) : null), h('span.md-postrow-t', null, PLATFORM_LABEL[r.platform]), h('span.md-postrow-s', null, r.line))));
+      if (yes) { yes.textContent = label(); yes.disabled = !picked.size; }
+    };
+    draw();
+    const close = showModal({
+      title: h('span.md-modal-title', null, h('span.md-rose-dot'), approvedNow ? 'Approved. Want me to post it for you?' : 'Want me to post it for you?'),
+      body: [h('p.md-post-intro', null, "I'll fill in each post in your Chrome, where you're signed in, and show you it ready to go. Nothing goes out until you press Post for that platform."), list,
+        h('div.md-hint', null, 'You can also post later from this page with Post it for me.')],
+      cancelLabel: "No, I'll copy it myself",
+      actions: [{
+        label: label(), kind: 'primary', onClick: async (done) => {
+          if (await run(mapi.publishPiece(p.id, [...picked]), `herald is filling in ${picked.size} post${picked.size === 1 ? '' : 's'} in Chrome`)) { done(); view = 'post'; void refresh(); }
+        },
+      }],
+    });
+    yes = [...document.querySelectorAll<HTMLButtonElement>('.modal-foot .btn.primary')].pop() ?? null;
+    draw();
+    void close;
+  }
+
+  // ---- research ----
+
+  function researchBody(p: MediaPiece): HTMLElement {
+    const r = p.research;
+    if (!r) {
+      return h('div.md-empty', null,
+        isBusy(p) ? 'herald is researching the platforms before it writes…' : 'No research yet. herald reads what people already say about this on your platforms, then writes.',
+        isBusy(p) ? null : h('button.btn.primary', { onclick: () => void run(mapi.researchPiece(p.id), 'herald will research it').then(() => refresh()) }, 'Research now'));
+    }
+    const top = h('div.md-panel', null,
+      h('div.md-panel-head', null, h('div.md-panel-t', null, "What's doing well on this subject"), h('div.md-panel-q', null, r.query.map((q) => `"${q}"`).join(' · '))),
+      r.top.length ? r.top.map((t) => h('div.md-rpost', null,
+        h('div.md-rpost-p', null, t.platform === 'article' ? 'Article' : PLATFORM_LABEL[t.platform]),
+        h('div.md-rpost-b', null,
+          h('div.md-rpost-q', null, t.platform === 'article' ? t.text : `"${t.text}"`),
+          h('div.md-rpost-m', null, [t.who, t.engagement].filter(Boolean).join(', '), t.at ? ` · ${t.at}` : '', t.url ? [' · ', h('a', { href: t.url, target: '_blank', rel: 'noreferrer' }, 'open ↗')] : null))))
+        : h('div.md-rail-s', { style: 'padding:14px 16px' }, 'Nothing stood out.'));
+    const themes = h('div.md-panel.pad', null,
+      h('div.md-panel-t', null, 'What people keep saying'),
+      r.themes.map((t, i) => h('div.md-theme', null, h('div.md-theme-n', { class: `t-${themeTone(i)}` }, `${t.count}×`), h('div.md-theme-t', null, t.text))));
+    const used = h('div.md-panel.pad.rose', null,
+      h('div.md-panel-t', null, 'How herald used it'),
+      r.used.length ? r.used.map((u) => h('div.md-used', null, h('span.md-used-dot'), h('div', null, u))) : h('div.md-rail-s', null, 'Not used yet: herald writes after it researches.'));
+    const tags = h('div.md-panel.pad', null,
+      h('div.md-panel-t', null, 'Hashtags people actually use'),
+      r.hashtags.map((t) => h('div.md-rtag', null, h('div.md-rtag-t', null, `#${t.tag}`), h('div.md-rtag-s', null, [t.platforms.map((x) => PLATFORM_SHORT[x]).join(' '), t.note].filter(Boolean).join(' · ')))),
+      h('div.md-hint', null, "herald picks the post's hashtags from these, per platform."));
+    return h('div.md-cols', null,
+      h('div.md-col', null, top, themes),
+      h('div.md-col.md-side', null, used, tags, h('div.md-hint', null, "Read in Muster's research browser with your sign-ins. Themes are what people said, not facts.")));
+  }
+
+  // ---- conversations ----
+
+  function conversationsBody(p: MediaPiece): HTMLElement {
+    const list = conversationsFor(store, p.id);
+    const policy = replyPolicy(store);
+    const shown = list.filter((c) => c.status !== 'skipped');
+    const skipped = list.length - shown.length;
+    const cards = shown.length
+      ? shown.map((c) => conversationCard(c))
+      : [h('div.md-empty', null, isBusy(p) ? 'herald looks for conversations while it researches.' : 'No conversations yet. herald finds them when it researches, and checks comments on your posts once a day.')];
+    const per = h('input.field.md-num', { type: 'number', min: 0, max: 20, value: String(policy.perDay) }) as HTMLInputElement;
+    per.onchange = () => {
+      const n = Math.max(0, Math.min(20, Math.round(Number(per.value) || 0)));
+      void run(mapi.saveReplyPolicy({ perDay: n }), `Up to ${n} repl${n === 1 ? 'y' : 'ies'} a day`).then(() => refresh());
+    };
+    const watch = h('button.md-switch', { class: policy.watchOwn && 'on', title: policy.watchOwn ? 'On' : 'Off', onclick: () => void run(mapi.saveReplyPolicy({ watchOwn: !policy.watchOwn }), policy.watchOwn ? 'herald stops checking comments on your posts' : 'herald checks comments on your posts once a day').then(() => refresh()) }, h('span'));
+    const rules = h('div.md-panel.pad.md-rules', null,
+      h('div.md-panel-t', null, 'How herald replies'),
+      h('div.md-rule', null, 'Only where you have something useful to add: an answer, your experience, a real fix.'),
+      h('div.md-rule', null, "No copy-paste promo. It mentions your product only when someone asks for a tool, and says it's yours."),
+      h('div.md-rule', null, `At most ${policy.perDay} repl${policy.perDay === 1 ? 'y' : 'ies'} a day, never more than one per thread.`),
+      h('div.md-rule', null, 'Every reply waits for your Reply: herald fills it in, you check the tab in Chrome.'),
+      h('div.md-rule-sep'),
+      h('div.md-setting', null, h('div.flex1', null, 'Replies a day'), per),
+      h('div.md-setting', null, h('div.flex1', null, 'Watch replies to my posts'), watch),
+      skipped ? h('div.md-hint', null, `${skipped} skipped`) : null);
+    return h('div.md-cols', null, h('div.md-col', null, cards), h('div.md-side.narrow', null, rules));
+  }
+
+  function conversationCard(c: MediaConversation): HTMLElement {
+    const job = (store.publish ?? []).filter((j) => j.conversationId === c.id).pop();
+    const block = replyBlock(c, store);
+    const unsourced = c.claims.filter(isUnsourced);
+    const editing = c.status === 'draft';
+    const ta = h('textarea.md-reply-in', { disabled: !editing, rows: 3 }) as HTMLTextAreaElement;
+    ta.value = c.draft;
+    autosize(ta);
+    let timer: ReturnType<typeof setTimeout> | null = null;
+    ta.oninput = () => {
+      c.draft = ta.value;
+      if (timer) clearTimeout(timer);
+      timer = setTimeout(() => { void mapi.editConversation(c.id, c.draft).catch(errToast); }, 700);
+    };
+    const kindLine = c.kind === 'own'
+      ? h('div.md-conv-k.own', null, `Comment on YOUR post${c.engagement ? ` · ${c.engagement}` : ''} · ${ago(c.createdAt)}`)
+      : h('div.md-conv-k', null, [c.why, c.engagement].filter(Boolean).join(' · '));
+    let foot: Child;
+    if (job && job.status === 'ready') foot = readyCard(job);
+    else if (c.status === 'posted') foot = h('div.md-conv-foot', null, c.postedUrl ? h('a.md-job-link', { href: c.postedUrl, target: '_blank', rel: 'noreferrer' }, 'Replied · View reply ↗') : h('div.md-job-s.t-success', null, 'Replied'));
+    else if (c.status === 'queued') foot = h('div.md-conv-foot', null, h('span.md-dot.pulse.t-media'), h('div.md-job-s', null, job ? jobLine(job).text : 'Going out through Chrome'),
+      job && (job.status === 'signin' || job.status === 'failed') ? h('button.md-pill.sm', { onclick: () => void run(mapi.replyConversation(c.id), 'herald will try again').then(() => refresh()) }, 'Retry') : null);
+    else {
+      foot = h('div.md-conv-foot', null,
+        h('button.btn.primary.sm', { disabled: !!block, title: block ?? 'herald fills it in in Chrome; you press Reply', onclick: () => void (async () => {
+          if (timer) { clearTimeout(timer); timer = null; await mapi.editConversation(c.id, c.draft).catch(errToast); }
+          if (await run(mapi.replyConversation(c.id), 'herald is filling in the reply in Chrome')) void refresh();
+        })() }, 'Reply for me'),
+        h('button.btn.sm', { onclick: () => { ta.focus(); ta.setSelectionRange(ta.value.length, ta.value.length); } }, 'Edit'),
+        h('button.md-link', { onclick: () => void run(mapi.skipConversation(c.id), 'Skipped').then(() => refresh()) }, 'Skip'),
+        h('div.flex1'),
+        unsourced.length ? h('div.md-conv-why.t-stuck', null, 'Confirm the red line above, or edit it out')
+          : block && block !== 'Write a reply first' ? h('div.md-conv-why.t-stuck', null, block)
+          : c.mentionsProduct ? h('div.md-conv-why', null, 'Mentions your product: someone asked') : null);
+    }
+    return h('div.md-conv', null,
+      h('div.md-conv-top', null, h('span.md-plat-tag', null, PLATFORM_LABEL[c.platform]), kindLine, h('div.flex1'), h('a.md-conv-open', { href: c.url, target: '_blank', rel: 'noreferrer' }, c.kind === 'own' ? 'Open ↗' : 'Open thread ↗')),
+      h('div.md-conv-q', null, `"${c.quote}"`, h('span.md-conv-who', null, ` · ${c.who}`)),
+      h('div.md-reply', { class: unsourced.length > 0 && 'warn' },
+        h('div.md-reply-head', null, h('div.md-reply-l', null, c.status === 'posted' ? 'YOUR REPLY' : 'YOUR REPLY (DRAFT)'), h('div.flex1'),
+          unsourced.length ? h('div.md-reply-need', null, `${unsourced.length} claim${unsourced.length === 1 ? '' : 's'} need${unsourced.length === 1 ? 's' : ''} you`) : null),
+        ta,
+        unsourced.length && editing ? h('div.md-reply-claims', null, unsourced.map((u) => h('div.md-reply-claim', null, h('span.flex1', null, `"${u.quote}"`),
+          h('button.md-pill.sm', { onclick: () => void run(mapi.confirmConversationClaim(c.id, u.id), 'Kept as your own words').then(() => refresh()) }, 'Confirm')))) : null),
+      foot);
   }
 
   // ---- article / website ----
@@ -966,7 +1301,11 @@ export function createMedia(): Page {
         platform = null;
         showAllShots = false;
         frameSel = null;
+        view = 'post';
       }
+      // #/media/MP6?view=research (or conversations) opens that tab, e.g. from a board note.
+      const v = p.get('view');
+      if (v === 'post' || v === 'research' || v === 'conversations') view = v;
       render();
       // #/media?new=1 opens New piece (a link from elsewhere); the hash is cleaned so Back doesn't reopen it.
       if (!next && p.get('new')) {
@@ -979,7 +1318,7 @@ export function createMedia(): Page {
   };
 }
 
-/** The media nav badge text for main.ts: the number waiting on your review. */
+/** The media nav badge number: pieces waiting on your review plus posts filled in and waiting for your Post. */
 export function mediaBadge(): number {
-  return events.media?.review ?? 0;
+  return (events.media?.review ?? 0) + (events.media?.publishReady ?? 0);
 }

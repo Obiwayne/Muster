@@ -309,11 +309,14 @@ function renderIntelBadge(): void {
 function renderMediaBadge(): void {
   const el = navCounts.get('media')!;
   const m = events.media;
-  const n = m?.review ?? 0;
+  const review = m?.review ?? 0;
+  const ready = m?.publishReady ?? 0;
+  const n = review + ready;
   if (n > 0) {
     el.className = 'nav-badge media';
     el.textContent = String(n);
-    el.title = `${n} piece${n === 1 ? '' : 's'} waiting on your review${m?.working ? ` · herald: ${m.working.title}` : ''}`;
+    const bits = [review ? `${review} piece${review === 1 ? '' : 's'} waiting on your review` : '', ready ? `${ready} post${ready === 1 ? '' : 's'} ready for your Post` : ''].filter(Boolean);
+    el.title = `${bits.join(' · ')}${m?.working ? ` · herald: ${m.working.title}` : ''}`;
     return;
   }
   if (m?.working) {
