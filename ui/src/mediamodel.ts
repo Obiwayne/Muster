@@ -2,14 +2,15 @@
 // character limits, plain-text copy formats (article, website, video script), the CSV shot list and claim colours.
 // No DOM, no fetch: tested in mediamodel.test.ts.
 import type {
-  MediaClaim, MediaClaimSource, MediaKind, MediaPiece, MediaPlatform, MediaShot, MediaStatus, MediaStore, MediaSuggestion, MusterState,
+  MediaClaim, MediaClaimSource, MediaGif, MediaGifFile, MediaGifFrame, MediaKind, MediaPiece, MediaPlatform, MediaShot, MediaStatus, MediaStore, MediaSuggestion, MusterState,
 } from '../../src/types';
 
 export const EMPTY_MEDIA: MediaStore = { version: 1, rev: 0, pieces: [], suggestions: [], houseStyle: '', nextIds: { piece: 1, suggestion: 1 } };
 
-export const KIND_LABEL: Record<MediaKind, string> = { social: 'Social post', article: 'Article', website: 'Website', video: 'Video script' };
-export const KIND_TAB: Record<MediaKind, string> = { social: 'Social posts', article: 'Articles', website: 'Website', video: 'Video scripts' };
-export const KINDS: MediaKind[] = ['social', 'article', 'website', 'video'];
+export const KIND_LABEL: Record<MediaKind, string> = { social: 'Social post', article: 'Article', website: 'Website', video: 'Video script', gif: 'Demo GIF' };
+export const KIND_TAB: Record<MediaKind, string> = { social: 'Social posts', article: 'Articles', website: 'Website', video: 'Video scripts', gif: 'Demo GIFs' };
+export const KIND_HINT: Record<MediaKind, string> = { social: 'X, LinkedIn, Bluesky', article: 'Devlog, blog, roundup', website: 'Feature page, changelog', video: 'Shorts, YouTube', gif: 'Screenshots or a recording' };
+export const KINDS: MediaKind[] = ['social', 'article', 'website', 'video', 'gif'];
 
 export const PLATFORM_LABEL: Record<MediaPlatform, string> = { x: 'X', linkedin: 'LinkedIn', bluesky: 'Bluesky', threads: 'Threads' };
 export const PLATFORMS: MediaPlatform[] = ['x', 'linkedin', 'bluesky', 'threads'];
@@ -41,7 +42,7 @@ export function filterPieces(pieces: MediaPiece[], f: KindFilter): MediaPiece[] 
 }
 
 export function kindCounts(pieces: MediaPiece[]): Record<KindFilter, number> {
-  const c: Record<KindFilter, number> = { all: pieces.length, social: 0, article: 0, website: 0, video: 0 };
+  const c: Record<KindFilter, number> = { all: pieces.length, social: 0, article: 0, website: 0, video: 0, gif: 0 };
   for (const p of pieces) c[p.kind]++;
   return c;
 }
@@ -155,6 +156,12 @@ export function pieceMeta(p: MediaPiece): string {
   } else if (p.kind === 'video') {
     const shots = p.shots?.length ?? 0;
     if (shots) bits.push(`${shots} shots`);
+  } else if (p.kind === 'gif') {
+    const g = p.gif;
+    const f = g ? gifFile(g) : undefined;
+    if (g?.source === 'recording') bits.push('real recording');
+    else if (g?.frames.length) bits.push(`${g.frames.length} frame${g.frames.length === 1 ? '' : 's'}`);
+    if (f) bits.push(`${formatSeconds(f.seconds)}`, formatBytes(f.bytes));
   } else {
     const words = wordCount(p);
     if (words) bits.push(`~${roundWords(words)} words`);
@@ -174,6 +181,7 @@ export function pieceFor(p: MediaPiece): string {
   if (p.kind === 'social') return (p.platforms ?? p.posts?.map((x) => x.platform) ?? []).map((x) => PLATFORM_LABEL[x]).join(' · ') || 'Social';
   if (p.kind === 'website') return p.target || 'Website';
   if (p.kind === 'video') return 'YouTube Shorts · TikTok';
+  if (p.kind === 'gif') return 'Social · website';
   return 'Devlog / blog';
 }
 
@@ -200,4 +208,82 @@ export function evidenceImages(state: MusterState, p: MediaPiece): { taskId: str
   const out: { taskId: string; evidenceId: string; name: string; summary: string }[] = [];
   for (const t of tasks) for (const e of t.evidence ?? []) for (const f of e.files) if (f.kind === 'image') out.push({ taskId: t.id, evidenceId: e.id, name: f.name, summary: e.summary });
   return out;
+}
+
+// ---------------------------------------------------------------- demo GIF
+
+/** Upload limits for an animated GIF, per platform (the FITS card): X 15 MB, LinkedIn 5 MB, Bluesky 1 MB. */
+export const GIF_LIMIT_BYTES: Partial<Record<MediaPlatform, number>> = { x: 15 * 1024 * 1024, linkedin: 5 * 1024 * 1024, bluesky: 1024 * 1024 };
+
+export interface GifFit { platform: MediaPlatform; label: string; limit: number; ok: boolean }
+
+/** Whether a GIF of `bytes` fits each platform's limit. */
+export function gifFits(bytes: number): GifFit[] {
+  return (Object.keys(GIF_LIMIT_BYTES) as MediaPlatform[]).map((platform) => {
+    const limit = GIF_LIMIT_BYTES[platform]!;
+    return { platform, label: PLATFORM_LABEL[platform], limit, ok: bytes <= limit };
+  });
+}
+
+/** "1.8 MB", "640 KB", "900 B". */
+export function formatBytes(n: number): string {
+  if (n >= 1024 * 1024) return `${(n / (1024 * 1024)).toFixed(1)} MB`;
+  if (n >= 1024) return `${Math.round(n / 1024)} KB`;
+  return `${n} B`;
+}
+
+/** "9.5 s" (one decimal, trailing .0 dropped). */
+export function formatSeconds(s: number): string {
+  return `${Number(s.toFixed(1))} s`;
+}
+
+/** The slideshow's length: the sum of its frames. */
+export function totalSeconds(frames: MediaGifFrame[]): number {
+  return Math.round(frames.reduce((n, f) => n + (Number.isFinite(f.seconds) ? f.seconds : 0), 0) * 10) / 10;
+}
+
+/** When frame `i` starts, "0:02.5". */
+export function frameStart(frames: MediaGifFrame[], i: number): string {
+  const t = totalSeconds(frames.slice(0, i));
+  const m = Math.floor(t / 60);
+  const sec = t - m * 60;
+  return `${m}:${sec < 10 ? '0' : ''}${sec.toFixed(1)}`;
+}
+
+/** A copy of `frames` with the frame at `from` moved to `to` (indices clamped; same array order otherwise). */
+export function moveFrame<T>(frames: T[], from: number, to: number): T[] {
+  const out = [...frames];
+  if (from < 0 || from >= out.length) return out;
+  const [f] = out.splice(from, 1);
+  out.splice(Math.max(0, Math.min(to, out.length)), 0, f);
+  return out;
+}
+
+/** Frame seconds as the server allows them: 0.5–8, rounded to a tenth. */
+export function clampSeconds(v: number): number {
+  if (!Number.isFinite(v)) return 2.5;
+  return Math.round(Math.min(8, Math.max(0.5, v)) * 10) / 10;
+}
+
+/** The GIF file for the source in use (slideshow.gif or recording.gif), if it has been made. */
+export function gifFile(g: MediaGif): MediaGifFile | undefined {
+  return g.source === 'recording' ? g.recording?.file : g.slideshow;
+}
+
+/** Demo GIF pieces a social post can attach: waiting on review, approved or used, newest first. */
+export function attachableGifs(pieces: MediaPiece[]): MediaPiece[] {
+  return pieces.filter((p) => p.kind === 'gif' && (p.status === 'review' || p.status === 'approved' || p.status === 'used'))
+    .sort((a, b) => b.updatedAt.localeCompare(a.updatedAt));
+}
+
+/** One line for the recording's state under "Record a real demo". */
+export function recordingLine(g: MediaGif): string {
+  const r = g.recording;
+  if (!r) return 'This becomes a small task for the Captain. It uses sample data, never your real classes. The slideshow stays until the recording is ready.';
+  switch (r.status) {
+    case 'requested': return 'Asked the Captain. Waiting for a crew task to record it.';
+    case 'recording': return `${r.taskId ?? 'A crew task'} is recording it. The slideshow stays until the recording is ready.`;
+    case 'done': return `Recorded${r.taskId ? ` by ${r.taskId}` : ''}. Switch between the slideshow and the recording above.`;
+    case 'failed': return `The recording could not be made into a GIF${r.error ? `: ${r.error}` : ''}. The slideshow stays.`;
+  }
 }

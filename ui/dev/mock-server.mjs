@@ -1368,6 +1368,7 @@ const server = http.createServer(async (req, res) => {
     }
     if (url.pathname.startsWith('/api/media') && req.headers['x-muster-token'] === TOKEN) {
       const out = await media.route(req, req.method, url.pathname);
+      if (out?.file) { res.writeHead(200, { 'content-type': out.type }); res.end(out.file); return; }
       res.writeHead(200, { 'content-type': 'application/json' });
       res.end(JSON.stringify(out ?? null));
       return;

@@ -1,11 +1,11 @@
-// Media (docs/MEDIA.md, Vellum "Muster" page "Media"): herald writes social posts, articles, website text and video
-// scripts from what really shipped. #/media is the library (herald's suggestions, the pieces table, "What herald
+// Media (docs/MEDIA.md, Vellum "Muster" page "Media"): herald writes social posts, articles, website text, video
+// scripts and demo GIFs from what really shipped. #/media is the library (herald's suggestions, the pieces table, "What herald
 // writes from"); #/media/MP3 opens one piece in its editor. Everything is plain text; Muster never posts anything.
 // GET /api/media on show and after each `media` event (debounced). Your text edits save on their own (debounced
 // POST …/edit); while herald drafts, the editor is read-only.
 import '../media.css';
 import type {
-  MediaAbout, MediaClaim, MediaImage, MediaKind, MediaPiece, MediaPlatform, MediaShot, MediaStore, MediaSuggestion, MusterState,
+  MediaAbout, MediaClaim, MediaGif, MediaGifFrame, MediaImage, MediaKind, MediaPiece, MediaPlatform, MediaShot, MediaStore, MediaSuggestion, MusterState,
 } from '../../../src/types';
 import { closeFloating, confirmDialog, h, icon, setChildren, showMenu, showModal, showPopover, toast, type Child } from '../dom';
 import { events, type Snapshot } from '../events';
@@ -15,7 +15,8 @@ import { errToast, run } from '../actions';
 import { ago } from '../util';
 import * as mapi from '../mediaapi';
 import {
-  DEFAULT_PLATFORMS, EMPTY_MEDIA, KINDS, KIND_LABEL, KIND_TAB, PLATFORMS, PLATFORM_LABEL, STATUS, charCount, evidenceImages, filterPieces,
+  DEFAULT_PLATFORMS, EMPTY_MEDIA, KINDS, KIND_HINT, KIND_LABEL, KIND_TAB, attachableGifs, clampSeconds, formatBytes, formatSeconds, frameStart,
+  gifFile, gifFits, moveFrame, recordingLine, totalSeconds, PLATFORMS, PLATFORM_LABEL, STATUS, charCount, evidenceImages, filterPieces,
   isBusy, isUnsourced, kindCounts, openSuggestions, pieceFor, pieceMeta, postText, reviewCount, scriptText, sectionsText, shotCounts,
   shotListCsv, sortPieces, sourceCounts, sourceTone, suggestionTag, unsourcedCount, versionLetter, type KindFilter,
 } from '../mediamodel';
@@ -34,6 +35,7 @@ const KIND_ICON: Record<MediaKind, string> = {
   article: '<path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/><path d="M14 2v6h6M8 13h8M8 17h5"/>',
   website: '<circle cx="12" cy="12" r="9"/><path d="M3 12h18M12 3a14 14 0 0 1 0 18M12 3a14 14 0 0 0 0 18"/>',
   video: '<rect x="3" y="5" width="18" height="14" rx="2"/><path d="M10 9l5 3-5 3z"/>',
+  gif: '<rect x="2" y="4" width="20" height="16" rx="2"/><path d="M7 4v16M17 4v16M2 9h5M2 15h5M17 9h5M17 15h5"/>',
 };
 const LOCK = '<rect x="4" y="11" width="16" height="10" rx="2"/><path d="M8 11V7a4 4 0 0 1 8 0v4"/>';
 
@@ -67,6 +69,49 @@ function evidenceImg(taskId: string, evidenceId: string, name: string, cls = 'md
     box.replaceChildren(img);
   }, () => box.classList.add('missing'));
   return box;
+}
+
+// ---------------------------------------------------------------- demo GIF files (blob URLs, cached per render)
+
+const gifCache = new Map<string, Promise<string>>();
+function gifUrl(p: MediaPiece, source: MediaGif['source']): Promise<string> | null {
+  const g = p.gif;
+  const f = g && (source === 'recording' ? g.recording?.file : g.slideshow);
+  if (!f) return null;
+  const key = `${p.id}:${source}:${f.renderedAt}`;
+  let u = gifCache.get(key);
+  if (!u) {
+    u = mapi.gifBlob(p.id, source).then((b) => URL.createObjectURL(b));
+    u.catch(() => gifCache.delete(key));
+    gifCache.set(key, u);
+  }
+  return u;
+}
+/** A GIF piece's current file as an <img> (click opens it full size); an empty box until it is rendered. */
+function gifImg(p: MediaPiece, cls = 'md-thumb'): HTMLElement {
+  const box = h(`div.${cls}`, { title: `${p.id} · ${p.title}` });
+  const u = p.gif ? gifUrl(p, p.gif.source) : null;
+  if (!u) { box.classList.add('missing'); return box; }
+  const alt = p.gif?.altText || p.title;
+  void u.then((url) => {
+    const img = h('img', { src: url, alt }) as HTMLImageElement;
+    img.onclick = () => showModal({ title: `${p.id} · ${p.title}`, body: h('img.md-full', { src: url, alt }), cancelLabel: 'Close' });
+    box.replaceChildren(img);
+  }, () => box.classList.add('missing'));
+  return box;
+}
+/** Save GIF: download the current file as MP5-slideshow.gif. */
+async function saveGif(p: MediaPiece): Promise<void> {
+  const u = p.gif ? gifUrl(p, p.gif.source) : null;
+  if (!u) { toast('The GIF is not ready yet', 'error'); return; }
+  try {
+    const a = h('a', { href: await u, download: `${p.id}-${p.gif!.source}.gif` }) as HTMLAnchorElement;
+    document.body.append(a);
+    a.click();
+    a.remove();
+  } catch (e) {
+    errToast(e);
+  }
 }
 
 // ---------------------------------------------------------------- About picker (stages, goals, merged tasks, last 7 days)
@@ -124,7 +169,7 @@ export function openNewPiece(prefill?: MediaSuggestion): void {
     const kinds = h('div.md-kinds', null, KINDS.map((k) => h('button.md-kind', {
       class: d.kind === k && 'on',
       onclick: () => { d.kind = k; draw(); },
-    }, h('div.md-kind-t', null, KIND_LABEL[k]), h('div.md-kind-s', null, ({ social: 'X, LinkedIn, Bluesky', article: 'Devlog, blog, roundup', website: 'Feature page, changelog', video: 'Shorts, YouTube' })[k]))));
+    }, h('div.md-kind-t', null, KIND_LABEL[k]), h('div.md-kind-s', null, KIND_HINT[k]))));
     const addBtn = h('button.md-about-add', null, '+ stage, task or date range');
     addBtn.onclick = () => openAboutPicker(addBtn, state, (a) => {
       if (!d.about.some((x) => x.kind === a.kind && x.ref === a.ref)) d.about.push(a);
@@ -212,6 +257,7 @@ export function createMedia(): Page {
   let saveTimer: ReturnType<typeof setTimeout> | null = null;
   let platform: MediaPlatform | null = null;
   let showAllShots = false;
+  let frameSel: number | null = null; // the demo GIF frame you are editing
 
   refreshAll = async () => {
     try {
@@ -272,7 +318,7 @@ export function createMedia(): Page {
       list.length
         ? list.map(pieceRow)
         : h('div.md-empty', null,
-            store.pieces.length ? `No ${KIND_TAB[filter as MediaKind]?.toLowerCase() ?? 'pieces'} yet.` : 'Nothing written yet. Ask herald for a post, an article, website text or a video script.',
+            store.pieces.length ? `No ${KIND_TAB[filter as MediaKind]?.toLowerCase() ?? 'pieces'} yet.` : 'Nothing written yet. Ask herald for a post, an article, website text, a video script or a demo GIF.',
             store.pieces.length ? null : h('button.btn.primary.sm', { onclick: () => openNewPiece() }, icon('plus', 12, 2.4), 'New piece')));
 
     setChildren(el,
@@ -351,6 +397,7 @@ export function createMedia(): Page {
       draft.claims = server.claims;
       draft.progress = server.progress;
       draft.requests = server.requests;
+      if (draft.gif && server.gif) { draft.gif.slideshow = server.gif.slideshow; draft.gif.renderError = server.gif.renderError; draft.gif.recording = server.gif.recording; }
     }
     return draft;
   }
@@ -363,12 +410,16 @@ export function createMedia(): Page {
   async function save(p: MediaPiece): Promise<void> {
     saveTimer = null;
     try {
-      const body = p.kind === 'social' ? { title: p.title, posts: p.posts, images: p.images }
+      const body = p.kind === 'social' ? { title: p.title, posts: p.posts, images: p.images, gifIds: p.gifIds ?? [] }
+        : p.kind === 'gif' ? { title: p.title, gif: p.gif ? { source: p.gif.source, frames: p.gif.frames, steps: p.gif.steps, altText: p.gif.altText } : undefined }
         : p.kind === 'video' ? { title: p.title, hooks: p.hooks, hookChosen: p.hookChosen, shots: p.shots }
         : { title: p.title, sections: p.sections, target: p.kind === 'website' ? p.target : undefined };
       const saved = await mapi.editPiece(p.id, body);
       dirty = false;
-      if (draft && draft.id === saved.id) { draft.updatedAt = saved.updatedAt; draft.editedAt = saved.editedAt; draft.status = saved.status; }
+      if (draft && draft.id === saved.id) {
+        draft.updatedAt = saved.updatedAt; draft.editedAt = saved.editedAt; draft.status = saved.status;
+        if (draft.gif && saved.gif) { draft.gif.slideshow = saved.gif.slideshow; draft.gif.renderError = saved.gif.renderError; draft.gif.recording = saved.gif.recording; }
+      }
       const i = store.pieces.findIndex((x) => x.id === saved.id);
       if (i >= 0) store.pieces[i] = saved;
     } catch (e) {
@@ -388,7 +439,7 @@ export function createMedia(): Page {
     if (dirty && active && el.contains(active) && (active.tagName === 'TEXTAREA' || active.tagName === 'INPUT')) return;
     const p = working(server);
     const ro = isBusy(p);
-    const bodyEl = p.kind === 'social' ? socialBody(p, ro) : p.kind === 'video' ? videoBody(p, ro) : sectionsBody(p, ro);
+    const bodyEl = p.kind === 'social' ? socialBody(p, ro) : p.kind === 'video' ? videoBody(p, ro) : p.kind === 'gif' ? gifBody(p, ro) : sectionsBody(p, ro);
     setChildren(el, editorBar(p), h('div.md-scroll', null, bodyEl));
   }
 
@@ -401,7 +452,7 @@ export function createMedia(): Page {
     const ro = isBusy(p);
     const title = h('input.md-etitle', { value: p.title, disabled: ro, title: ro ? 'herald is writing' : 'Edit the title' }) as HTMLInputElement;
     title.oninput = () => { p.title = title.value; scheduleSave(p); };
-    const metaBits = [KIND_LABEL[p.kind].toLowerCase(), pieceFor(p) !== 'Website' ? pieceFor(p) : '', p.about.map((a) => a.label || a.ref).join(', '), `herald · ${ago(p.updatedAt)}`].filter(Boolean);
+    const metaBits = p.kind === 'gif' ? gifMeta(p) : [KIND_LABEL[p.kind].toLowerCase(), pieceFor(p) !== 'Website' ? pieceFor(p) : '', p.about.map((a) => a.label || a.ref).join(', '), `herald · ${ago(p.updatedAt)}`].filter(Boolean);
     const target = p.kind === 'website'
       ? (() => {
           const t = h('input.md-target', { value: p.target ?? '', placeholder: '/features/…', disabled: ro, title: 'Where it goes on your site' }) as HTMLInputElement;
@@ -411,15 +462,19 @@ export function createMedia(): Page {
       : null;
     const chipText = ro ? `${p.status === 'queued' ? 'Queued' : 'Drafting'}${p.progress ? ` · ${p.progress}` : ''}` : st.label;
     const unsourced = unsourcedCount(p);
-    const copyBtns: Child = p.kind === 'video'
+    const noFile = p.kind === 'gif' && !(p.gif && gifFile(p.gif));
+    const copyBtns: Child = p.kind === 'gif'
+      ? [h('button.btn', { disabled: noFile, onclick: () => void saveGif(p) }, 'Save GIF'),
+         h('button.btn', { disabled: !p.gif?.altText, onclick: () => void copy(p.gif?.altText ?? '', 'Alt text copied') }, 'Copy alt text')]
+      : p.kind === 'video'
       ? [h('button.btn', { onclick: () => void copy(scriptText(p), 'Script copied') }, 'Copy script'),
          h('button.btn', { onclick: () => void copy(shotListCsv(p.shots ?? []), 'Shot list copied as CSV') }, 'Copy shot list')]
       : h('button.btn', { disabled: ro, onclick: () => void copy(p.kind === 'social' ? postText(p, platform ?? p.posts?.[0]?.platform ?? 'x') : sectionsText(p), 'Text copied') }, 'Copy text');
     let main: Child = null;
     if (p.status === 'review' || ro) {
       main = h('button.btn.primary', {
-        disabled: ro || unsourced > 0,
-        title: ro ? 'herald is still writing' : unsourced ? `Confirm or cut ${unsourced} unsourced claim${unsourced === 1 ? '' : 's'} first` : 'Approve it',
+        disabled: ro || unsourced > 0 || noFile,
+        title: ro ? 'herald is still writing' : unsourced ? `Confirm or cut ${unsourced} unsourced claim${unsourced === 1 ? '' : 's'} first` : noFile ? 'Wait for the GIF to render' : 'Approve it',
         onclick: () => void flush().then(() => run(mapi.approvePiece(p.id), 'Approved. Copy it and mark it used once it is posted')).then(() => refresh()),
       }, 'Approve');
     } else if (p.status === 'approved') {
@@ -440,6 +495,14 @@ export function createMedia(): Page {
       h('div.md-etitle-wrap', null, title, h('div.md-meta', null, metaBits.join(' · '), target ? ' · ' : null, target)),
       h('div.md-chip', { class: `t-${st.tone}` }, h('span.md-dot', { class: ro && 'pulse' }), chipText),
       copyBtns, main, more);
+  }
+
+  /** "demo GIF · slideshow from 4 screenshots · 800×500 · 9.5 s · 1.8 MB · from T38, T43" */
+  function gifMeta(p: MediaPiece): string[] {
+    const g = p.gif;
+    const f = g && gifFile(g);
+    const src = !g ? '' : g.source === 'recording' ? 'real recording' : `slideshow from ${g.frames.length} screenshot${g.frames.length === 1 ? '' : 's'}`;
+    return ['demo GIF', src, f ? `${f.width}×${f.height}` : '', f ? formatSeconds(f.seconds) : '', f ? formatBytes(f.bytes) : '', p.about.length ? `from ${p.about.map((a) => a.ref).join(', ')}` : ''].filter(Boolean);
   }
 
   // ---- shared: Ask herald, claims rail ----
@@ -519,9 +582,16 @@ export function createMedia(): Page {
     const state = snap?.state;
     const imgs = p.images ?? [];
     const pickable = state ? evidenceImages(state, p).filter((e) => !imgs.some((i) => i.taskId === e.taskId && i.evidenceId === e.evidenceId && i.name === e.name)) : [];
-    const pickBtn = h('button.md-pick', { disabled: ro || imgs.length >= 6 || !pickable.length }, `+ Pick from ${pickable.length}`);
+    const gifIds = p.gifIds ?? [];
+    const gifs = gifIds.map((id) => store.pieces.find((x) => x.id === id)).filter((x): x is MediaPiece => !!x);
+    const pickGifs = attachableGifs(store.pieces).filter((g) => !gifIds.includes(g.id));
+    const pickBtn = h('button.md-pick', { disabled: ro || imgs.length + gifIds.length >= 6 || (!pickable.length && !pickGifs.length) }, '+ Screenshot or demo GIF');
     pickBtn.onclick = () => {
-      const grid = h('div.md-pickgrid', null, pickable.slice(0, 24).map((e) => h('button.md-pickitem', {
+      const gifItems = pickGifs.slice(0, 8).map((g) => h('button.md-pickitem', {
+        title: g.title,
+        onclick: () => { closeFloating(); p.gifIds = [...gifIds, g.id]; scheduleSave(p); renderEditor(); },
+      }, gifImg(g, 'md-pickthumb'), h('div.md-pickcap', null, `${g.id} · demo GIF`)));
+      const grid = h('div.md-pickgrid', null, gifItems, pickable.slice(0, 24).map((e) => h('button.md-pickitem', {
         title: `${e.taskId}/${e.evidenceId} · ${e.summary}`,
         onclick: () => {
           closeFloating();
@@ -534,8 +604,12 @@ export function createMedia(): Page {
       showPopover(pickBtn, grid, 'left');
     };
     const attachments = h('div.md-attach', null,
-      h('div.md-sec-head', null, h('div.md-label', null, 'ATTACHED'), h('div.md-sec-sub', null, 'from task evidence · click to open full size')),
+      h('div.md-sec-head', null, h('div.md-label', null, 'ATTACHED'), h('div.md-sec-sub', null, 'from task evidence and demo GIFs · click to open full size')),
       h('div.md-imgs', null,
+        gifs.map((g) => h('div.md-img', null,
+          gifImg(g),
+          h('div.md-img-cap', null, h('span.md-gif-tag', null, 'GIF'), h('a.flex1.md-img-link', { href: `#/media/${g.id}` }, g.title),
+            ro ? null : h('button.md-x', { title: 'Remove', onclick: () => { p.gifIds = gifIds.filter((x) => x !== g.id); scheduleSave(p); renderEditor(); } }, icon('x', 11, 2.5))))),
         imgs.map((im, i) => h('div.md-img', null,
           evidenceImg(im.taskId, im.evidenceId, im.name),
           h('div.md-img-cap', null, h('span.flex1', null, im.caption || `${im.taskId} · ${im.name}`),
@@ -544,7 +618,7 @@ export function createMedia(): Page {
 
     return h('div.md-ebody', null,
       h('div.md-col', null, tabs, card, attachments, ro ? null : askBox(p, ['Shorter', 'More personal', 'Make a thread', 'Another version'])),
-      claimsRail(p, 'Copy the chosen version for each platform and post it yourself. Save the screenshots from the full-size view. Mark it used once it is posted, and herald won\'t suggest it again.'));
+      claimsRail(p, 'Copy the chosen version for each platform and post it yourself. Save the screenshots and GIFs from the full-size view. Mark it used once it is posted, and herald won\'t suggest it again.'));
   }
 
   // ---- article / website ----
@@ -627,6 +701,160 @@ export function createMedia(): Page {
       rail);
   }
 
+  // ---- demo GIF ----
+
+  function gifBody(p: MediaPiece, ro: boolean): HTMLElement {
+    const g = p.gif;
+    if (!g) {
+      return h('div.md-ebody', null,
+        h('div.md-col', null, h('div.md-gif-preview.empty', null, h('div.md-wait', null, ro ? 'herald is picking the frames…' : 'No frames yet.'))),
+        claimsRail(p, 'Save the GIF and attach it to a post, or use it on your website.'));
+    }
+    const frames = g.frames;
+    if (frameSel !== null && frameSel >= frames.length) frameSel = null;
+    const hasRec = !!g.recording?.file;
+    const setSource = (src: MediaGif['source']) => { if (g.source !== src) { g.source = src; frameSel = null; scheduleSave(p); renderEditor(); } };
+    const switcher = h('div.md-gif-switch', null,
+      h('div.md-seg', null,
+        h('button.md-seg-b', { class: g.source === 'slideshow' && 'on', disabled: ro, onclick: () => setSource('slideshow') }, 'Slideshow from screenshots'),
+        h('button.md-seg-b', { class: g.source === 'recording' && 'on', disabled: ro || !hasRec, title: hasRec ? 'Use the real recording' : 'No recording yet', onclick: () => setSource('recording') }, 'Real recording')),
+      h('div.md-hint.flex1', null, g.source === 'recording' ? 'The real recording, with the frame captions spread over it.' : 'herald built this from task evidence. Swap to a real recording whenever you want one.'));
+
+    // Preview: the GIF itself; a selected frame shows that still with its caption, as the GIF will.
+    const file = gifFile(g);
+    let preview: HTMLElement;
+    if (frameSel !== null && g.source === 'slideshow') {
+      const f = frames[frameSel];
+      preview = h('div.md-gif-preview', null,
+        evidenceImg(f.taskId, f.evidenceId, f.name, 'md-gif-still'),
+        f.caption ? h('div.md-gif-cap', null, f.caption) : null,
+        h('div.md-gif-pos', null, `frame ${frameSel + 1} / ${frames.length} · ${frameStart(frames, frameSel)}`));
+    } else if (file) {
+      preview = h('div.md-gif-preview', null, gifImg(p, 'md-gif-still'),
+        h('div.md-gif-pos', null, `${g.source === 'slideshow' ? `${frames.length} frames · ` : ''}${formatSeconds(file.seconds)} · ${file.width}×${file.height}`));
+    } else {
+      preview = h('div.md-gif-preview.empty', null, h('div.md-wait', null,
+        g.renderError ? `Could not render the GIF: ${g.renderError}` : ro ? 'herald is picking the frames…' : 'Rendering the GIF…'));
+    }
+
+    // Frame strip: click to edit, drag to reorder, × to remove, + Frame to pick from evidence.
+    let dragFrom: number | null = null;
+    const strip = h('div.md-frames', null,
+      frames.map((f, i) => {
+        const cell = h('div.md-frame', {
+          class: frameSel === i && 'on',
+          draggable: ro ? undefined : 'true',
+          title: ro ? f.caption : 'Click to edit, drag to reorder',
+          onclick: () => { frameSel = frameSel === i ? null : i; renderEditor(); },
+        },
+          h('div.md-frame-img', null, evidenceImg(f.taskId, f.evidenceId, f.name, 'md-frame-thumb'),
+            ro ? null : h('button.md-x.md-frame-x', { title: 'Remove this frame', onclick: (e: Event) => {
+              e.stopPropagation();
+              g.frames = frames.filter((_, j) => j !== i);
+              frameSel = null;
+              scheduleSave(p); renderEditor();
+            } }, icon('x', 11, 2.5))),
+          h('div.md-frame-cap', null, f.caption || '(no caption)'),
+          h('div.md-frame-meta', null, `${formatSeconds(f.seconds)} · ${f.taskId}/${f.evidenceId}`));
+        cell.addEventListener('dragstart', (e) => { dragFrom = i; e.dataTransfer?.setData('text/plain', String(i)); cell.classList.add('dragging'); });
+        cell.addEventListener('dragend', () => cell.classList.remove('dragging'));
+        cell.addEventListener('dragover', (e) => { e.preventDefault(); cell.classList.add('drop'); });
+        cell.addEventListener('dragleave', () => cell.classList.remove('drop'));
+        cell.addEventListener('drop', (e) => {
+          e.preventDefault();
+          cell.classList.remove('drop');
+          if (dragFrom === null || dragFrom === i) return;
+          g.frames = moveFrame(frames, dragFrom, i);
+          frameSel = i;
+          dragFrom = null;
+          scheduleSave(p); renderEditor();
+        });
+        return cell;
+      }),
+      ro || frames.length >= 12 ? null : addFrameButton(p, g));
+
+    // The selected frame's caption and seconds.
+    let frameEdit: HTMLElement | null = null;
+    if (frameSel !== null && !ro && g.source === 'slideshow') {
+      const f = frames[frameSel];
+      const cap = h('input.field.md-frame-in', { value: f.caption, maxlength: 60, placeholder: 'Caption (60 characters)' }) as HTMLInputElement;
+      cap.oninput = () => { f.caption = cap.value; scheduleSave(p); };
+      const secs = h('input.field.md-frame-secs', { type: 'number', min: '0.5', max: '8', step: '0.5', value: String(f.seconds) }) as HTMLInputElement;
+      secs.onchange = () => { f.seconds = clampSeconds(Number(secs.value)); secs.value = String(f.seconds); scheduleSave(p); };
+      frameEdit = h('div.md-frame-edit', null,
+        h('div.md-label', null, `FRAME ${frameSel + 1}`), cap, secs, h('span.md-hint', null, 'seconds'),
+        h('div.flex1'), h('span.md-hint', null, `Total ${formatSeconds(totalSeconds(frames))}`));
+    }
+
+    const alt = h('textarea.field.md-alt', { rows: 2, maxlength: 400, disabled: ro, placeholder: "Alt text: what the GIF shows, for people who can't see it" }) as HTMLTextAreaElement;
+    alt.value = g.altText;
+    alt.oninput = () => { g.altText = alt.value; scheduleSave(p); };
+    autosize(alt);
+
+    return h('div.md-ebody', null,
+      h('div.md-col', null, switcher, preview, g.source === 'slideshow' ? strip : null, frameEdit,
+        h('div.md-field', null, h('div.md-label', null, 'ALT TEXT'), alt),
+        g.renderError && file ? h('div.md-err', null, `The last render failed: ${g.renderError}`) : null,
+        ro ? null : askBox(p, ['Fewer frames', 'Shorter captions', 'Slower', 'Different screenshots'])),
+      recordingRail(p, g, ro, file?.bytes));
+  }
+
+  function addFrameButton(p: MediaPiece, g: MediaGif): HTMLElement {
+    const state = snap?.state;
+    const pickable = state ? evidenceImages(state, p) : [];
+    const btn = h('button.md-frame-add', { disabled: !pickable.length, title: pickable.length ? 'Add a screenshot from task evidence' : 'No evidence screenshots to pick from' }, '+ Frame');
+    btn.onclick = () => {
+      const grid = h('div.md-pickgrid', null, pickable.slice(0, 24).map((e) => h('button.md-pickitem', {
+        title: `${e.taskId}/${e.evidenceId} · ${e.summary}`,
+        onclick: () => {
+          closeFloating();
+          const f: MediaGifFrame = { taskId: e.taskId, evidenceId: e.evidenceId, name: e.name, caption: e.summary.slice(0, 60), seconds: 2.5 };
+          g.frames = [...g.frames, f];
+          frameSel = g.frames.length - 1;
+          scheduleSave(p); renderEditor();
+        },
+      }, evidenceImg(e.taskId, e.evidenceId, e.name, 'md-pickthumb'), h('div.md-pickcap', null, `${e.taskId} · ${e.name}`))));
+      showPopover(btn, grid, 'left');
+    };
+    return btn;
+  }
+
+  function recordingRail(p: MediaPiece, g: MediaGif, ro: boolean, bytes?: number): HTMLElement {
+    const steps = g.steps;
+    const stepRow = (t: string, i: number) => {
+      const inp = h('textarea.md-step-in', { rows: 1, disabled: ro, maxlength: 200 }) as HTMLTextAreaElement;
+      inp.value = t;
+      inp.oninput = () => { g.steps[i] = inp.value; scheduleSave(p); };
+      autosize(inp);
+      return h('div.md-step', null, h('div.md-step-n', null, String(i + 1)), inp,
+        ro || steps.length <= 1 ? null : h('button.md-x', { title: 'Remove this step', onclick: () => { g.steps = steps.filter((_, j) => j !== i); scheduleSave(p); renderEditor(); } }, icon('x', 11, 2.5)));
+    };
+    const r = g.recording;
+    const busy = !!r && (r.status === 'requested' || r.status === 'recording');
+    const label = r?.status === 'done' ? 'Record it again' : r?.status === 'failed' ? 'Try recording again'
+      : r?.status === 'requested' ? 'Asked the Captain' : r?.status === 'recording' ? 'Recording…' : 'Record a real demo';
+    const recBtn = h('button.btn.md-rec-btn', {
+      disabled: ro || busy || p.status === 'used',
+      onclick: () => void flush().then(() => run(mapi.recordDemo(p.id), 'Sent to the Captain')).then(() => refresh()),
+    }, label);
+    const fits = bytes !== undefined ? gifFits(bytes) : [];
+    return h('div.md-rail', null,
+      h('div.md-rail-head', null,
+        h('div.md-rail-t', null, 'Real recording'),
+        h('div.md-rail-s', null, 'A crew member runs the app, follows these steps and records them. The recording becomes the GIF, with the same captions.')),
+      h('div.md-steps', null, steps.map(stepRow),
+        ro || steps.length >= 12 ? null : h('button.md-link.md-step-add', { onclick: () => { g.steps = [...steps, '']; scheduleSave(p); renderEditor(); } }, '+ Step')),
+      recBtn,
+      h('div.md-hint.md-rec-line', { class: r?.status === 'failed' && 't-stuck' }, recordingLine(g)),
+      h('div.md-style-box', null,
+        h('div.md-label', null, 'FITS'),
+        bytes === undefined
+          ? h('div.md-style-t', null, 'The size shows once the GIF is rendered.')
+          : [h('div.md-fits', null, fits.map((f) => h('div.md-fit', { class: f.ok ? 't-success' : 't-stuck' }, h('span.flex1', null, f.label), h('span.md-fit-v', null, f.ok ? `${formatBytes(bytes)} ok` : `over ${formatBytes(f.limit)}`)))),
+             h('div.md-style-t', null, 'Attach it to any social post, or save it for your website.')]),
+      p.claims.length ? h('div.md-claims', null, p.claims.map((c) => claimRow(p, c))) : null);
+  }
+
   function autosize(ta: HTMLTextAreaElement): void {
     const fit = () => { ta.style.height = 'auto'; ta.style.height = `${ta.scrollHeight + 2}px`; };
     ta.addEventListener('input', fit);
@@ -646,6 +874,7 @@ export function createMedia(): Page {
         dirty = false;
         platform = null;
         showAllShots = false;
+        frameSel = null;
       }
       render();
       // #/media?new=1 opens New piece (a link from elsewhere); the hash is cleaned so Back doesn't reopen it.
