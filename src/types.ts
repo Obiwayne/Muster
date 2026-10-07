@@ -1047,7 +1047,7 @@ export interface BrowseResult {
 export type MediaKind = 'social' | 'article' | 'website' | 'video' | 'gif'; // gif = a demo GIF (docs/MEDIA.md "Demo GIF")
 /** drafting = herald is (re)writing it (queued or working); review = waiting on you; failed = herald stopped without finishing. */
 export type MediaStatus = 'queued' | 'drafting' | 'review' | 'approved' | 'used' | 'failed';
-export type MediaPlatform = 'x' | 'linkedin' | 'bluesky' | 'threads';
+export type MediaPlatform = 'x' | 'linkedin' | 'bluesky' | 'threads' | 'facebook' | 'instagram';
 /** What a piece is for: a progress update, announcing a product that's coming, finding testers, or a launch. */
 export type MediaPurpose = 'progress' | 'announce' | 'testers' | 'launch';
 
@@ -1083,8 +1083,9 @@ export interface MediaImage {
 /** Social: one platform's versions (A, B, C…). */
 export interface MediaPost {
   platform: MediaPlatform;
-  versions: string[]; // plain text; 1–3
+  versions: string[]; // plain text; 1–3 (without the hashtags)
   chosen: number; // index into versions
+  hashtags?: string[]; // without "#", e.g. ["edtech", "teachers"]; appended on a new line when copied or posted
 }
 
 /** Article / website: one section. Plain text; heading is plain text too. */
@@ -1131,6 +1132,9 @@ export interface MediaPiece {
   shots?: MediaShot[]; // video
   gif?: MediaGif; // gif
   gifIds?: string[]; // social: demo GIF pieces attached to the post (their rendered file is the attachment)
+  designs?: MediaDesign[]; // social: post images herald designed in Vellum (docs/MEDIA.md "Post images in Vellum")
+  designRequest?: MediaDesignRequest; // "Make an image" asked and not done yet
+  research?: MediaResearch; // social: what herald found on the platforms before writing
   claims: MediaClaim[];
   requests: MediaRequest[]; // "Ask herald to change it"
   progress?: string; // herald's live line while drafting: "writing section 3 of 5"
@@ -1165,7 +1169,11 @@ export interface MediaStore {
   suggestions: MediaSuggestion[];
   houseStyle: string; // editable on the Media page; herald follows it
   lastWeekly?: string; // "2026-W40": the last ISO week a roundup was considered
-  nextIds: { piece: number; suggestion: number };
+  conversations?: MediaConversation[]; // reply drafts (Conversations tab)
+  publish?: MediaPublishJob[]; // posts and replies going out through your Chrome
+  replyPolicy?: MediaReplyPolicy; // absent = { perDay: 5, watchOwn: true }
+  lastWatch?: string; // ISO time herald last checked comments on your posts
+  nextIds: { piece: number; suggestion: number; conversation?: number; publish?: number };
 }
 
 /** Nav badge and header counts, carried by the 'media' event and GET /api/media/summary. */
@@ -1175,6 +1183,8 @@ export interface MediaSummary {
   drafting: number; // queued + drafting
   openSuggestions: number;
   working?: { id: string; title: string; progress?: string }; // the piece herald is on now
+  conversations?: number; // reply drafts waiting on you
+  publishReady?: number; // posts/replies filled in and waiting for your Post (also counted in the nav badge)
 }
 
 /** Demo GIF: one slideshow frame (an evidence screenshot shown for `seconds` with a caption burned in). */
@@ -1213,4 +1223,91 @@ export interface MediaGif {
   slideshow?: MediaGifFile; // slideshow.gif, rendered by the server after herald finishes or you edit frames
   renderError?: string; // the last slideshow render failed (ffmpeg missing, bad image…)
   recording?: MediaRecording;
+}
+
+// ---- Media: hashtags, Vellum post images, platform research, conversations, posting (docs/MEDIA.md, 2026-10-07) ----
+
+export type MediaDesignStyle = 'headline' | 'features' | 'quote'; // Headline + screenshot | Feature list | Big quote
+
+/** A post image herald designed in Vellum and exported as PNG to .muster/media/<piece>/images/<file>. */
+export interface MediaDesign {
+  id: string; // "D1" inside the piece
+  platform: MediaPlatform; // the size it was made for
+  file: string; // file name inside .muster/media/<piece>/images/
+  width: number;
+  height: number;
+  style: MediaDesignStyle;
+  caption: string; // alt text, ≤ 300
+  vellum?: { fileId: string; pageId?: string; nodeId: string }; // the artboard, for "Open in Vellum"
+  createdAt: string;
+}
+
+export interface MediaDesignRequest {
+  style: MediaDesignStyle;
+  note?: string; // ≤ 500
+  platforms: MediaPlatform[]; // sizes to make (default: the piece's platforms)
+  at: string;
+}
+
+export interface MediaResearchPost {
+  platform: MediaPlatform | 'article';
+  text: string; // quote or headline, ≤ 300
+  who: string; // "Primary teacher", "Teach Primary" (no handles needed)
+  engagement?: string; // "2.1k reactions, 340 comments"
+  url?: string;
+  at?: string; // YYYY-MM-DD
+}
+
+export interface MediaResearch {
+  at: string;
+  platforms: MediaPlatform[];
+  query: string[]; // what herald searched: ["class wall", "student posts"]
+  read: { posts: number; articles: number };
+  top: MediaResearchPost[]; // ≤ 8
+  themes: { text: string; count: number }[]; // what people keep saying, ≤ 8
+  hashtags: { tag: string; platforms: MediaPlatform[]; note?: string }[]; // ≤ 12, tag without "#"
+  used: string[]; // how herald used it in the post, ≤ 6
+}
+
+/** A place where a reply would help (someone's thread) or a comment on one of your posts. */
+export interface MediaConversation {
+  id: string; // "MC1"
+  pieceId?: string; // the piece it came from (research or a posted piece)
+  platform: MediaPlatform;
+  kind: 'thread' | 'own'; // own = a comment on your post
+  url: string;
+  who: string;
+  quote: string; // what they said, ≤ 500
+  engagement?: string;
+  why: string; // why a reply helps, ≤ 300
+  draft: string; // your reply, plain text
+  claims: MediaClaim[]; // same rules as pieces: unsourced claims block "Reply for me"
+  mentionsProduct: boolean; // the reply names your product (allowed only when someone asked for a tool)
+  status: 'draft' | 'queued' | 'posted' | 'skipped';
+  createdAt: string;
+  postedAt?: string;
+  postedUrl?: string;
+}
+
+/** One post or reply herald puts into your Chrome. Nothing is sent until you press Post/Reply (go). */
+export interface MediaPublishJob {
+  id: string; // "PJ1"
+  pieceId?: string;
+  conversationId?: string;
+  platform: MediaPlatform;
+  kind: 'post' | 'reply';
+  text: string; // exactly what goes in, hashtags included
+  images: string[]; // absolute paths of the files to attach
+  status: 'queued' | 'filling' | 'ready' | 'posting' | 'posted' | 'cancelled' | 'failed' | 'signin';
+  composer?: string; // the text herald read back from the filled-in composer (shown before you press Post)
+  attached?: number; // images it attached
+  url?: string; // the live post / reply after posting
+  error?: string;
+  createdAt: string;
+  updatedAt: string;
+}
+
+export interface MediaReplyPolicy {
+  perDay: number; // default 5, 0–20
+  watchOwn: boolean; // check comments on your posts once a day (default true)
 }
