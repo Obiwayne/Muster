@@ -1,6 +1,6 @@
 // Typed client for the Media routes (/api/media/*, docs/MEDIA.md). Every write is yours (actor "you").
 import type {
-  MediaAbout, MediaImage, MediaKind, MediaPiece, MediaPlatform, MediaPost, MediaSection, MediaShot, MediaStore, MediaSuggestion, MediaSummary,
+  MediaAbout, MediaGif, MediaImage, MediaKind, MediaPiece, MediaPlatform, MediaPost, MediaSection, MediaShot, MediaStore, MediaSuggestion, MediaSummary,
 } from '../../src/types';
 import { ApiError, getToken, refreshToken } from './api';
 
@@ -48,6 +48,8 @@ export interface EditPieceBody {
   shots?: MediaShot[];
   target?: string;
   images?: MediaImage[];
+  gifIds?: string[]; // social: demo GIF pieces attached
+  gif?: Partial<Pick<MediaGif, 'source' | 'frames' | 'steps' | 'altText'>>; // gif: changed frames make the server re-render
 }
 
 export const getMedia = () => req<MediaStore>('GET', '/api/media');
@@ -64,3 +66,21 @@ export const saveStyle = (text: string) => req<unknown>('PUT', '/api/media/style
 export const acceptSuggestion = (id: string) => req<{ pieces: MediaPiece[] }>('POST', `/api/media/suggestions/${enc(id)}/accept`, { actor: YOU });
 export const dismissSuggestion = (id: string) => req<MediaSuggestion>('POST', `/api/media/suggestions/${enc(id)}/dismiss`, { actor: YOU });
 export const dismissAllSuggestions = () => req<unknown>('POST', '/api/media/suggestions/dismiss-all', { actor: YOU });
+export const recordDemo = (id: string) => req<MediaPiece>('POST', `/api/media/pieces/${enc(id)}/record`, { actor: YOU });
+
+/** The rendered GIF of a demo piece (GET …/gif?source=), as a Blob for <img> and Save GIF. */
+export async function gifBlob(id: string, source: MediaGif['source'], retried = false): Promise<Blob> {
+  let res: Response;
+  try {
+    res = await fetch(`/api/media/pieces/${enc(id)}/gif?source=${source}`, { headers: { 'x-muster-token': getToken() } });
+  } catch {
+    throw new ApiError('Cannot reach the Muster orchestrator', 0);
+  }
+  if (res.status === 401 && !retried && (await refreshToken())) return gifBlob(id, source, true);
+  if (!res.ok) {
+    let msg = `${res.status} ${res.statusText}`;
+    try { msg = (await res.json()).error ?? msg; } catch { /* not JSON */ }
+    throw new ApiError(msg, res.status);
+  }
+  return res.blob();
+}
