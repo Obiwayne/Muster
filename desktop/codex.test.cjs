@@ -23,6 +23,8 @@ test('handshake precedes thread and turn; concurrent send is refused; streaming 
   const { session, sent } = fixture();
   await session.send('Hello', 'Project context');
   assert.deepEqual(sent.slice(0, 4).map(m => m.method), ['initialize', 'initialized', 'thread/start', 'turn/start']);
+  assert.equal(sent[2].params.sandbox, 'read-only');
+  assert.equal(sent[2].params.approvalPolicy, 'on-request');
   await assert.rejects(session.send('Again'), /Wait/);
   session.receive({ method: 'item/agentMessage/delta', params: { threadId: 'other', itemId: 'a', delta: 'Wrong' } });
   session.receive({ method: 'item/agentMessage/delta', params: { threadId: 'thread-1', itemId: 'a', delta: 'Hello' } });

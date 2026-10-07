@@ -38,7 +38,7 @@ export function createCodexPanel() {
   const footer = h('div.codex-composer', null, errors, approvals,
     h('div.codex-tools', null, attach, captain), attached,
     h('div.codex-input', null, input, h('div.codex-input-actions', null,
-      h('span.flex1', null, 'Codex · Project access'), stop, send)),
+      h('span.flex1', null, 'Codex · Writes require approval'), stop, send)),
     h('div.codex-hint', null, 'Enter to send · Shift + Enter for a new line'));
   pane.append(h('div.codex-head', null, title, fresh, close),
     h('div.codex-context', null, h('div.codex-hint', null, 'PROJECT CONTEXT'), projectLabel,

@@ -88,7 +88,7 @@ class CodexSession extends EventEmitter {
       this.lines.on('line', line => { try { this.receive(JSON.parse(line)); } catch { /* ignore non-protocol output */ } });
       await this.request('initialize', { clientInfo: { name: 'muster', title: 'Muster', version: '0.1.0' }, capabilities: { experimentalApi: true } });
       this.write({ method: 'initialized', params: {} });
-      const params = { cwd: this.root, approvalPolicy: 'on-request', sandbox: 'workspace-write' };
+      const params = { cwd: this.root, approvalPolicy: 'on-request', sandbox: 'read-only' };
       const result = await this.request(this.threadId ? 'thread/resume' : 'thread/start',
         this.threadId ? { ...params, threadId: this.threadId } : { ...params, dynamicTools: this.options.tools || [] });
       this.threadId = result.thread.id; this.changed();
