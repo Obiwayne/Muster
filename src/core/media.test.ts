@@ -322,6 +322,34 @@ describe('brief', () => {
     expect(resolveAbout(s, { kind: 'goal', ref: 'g2' })).toEqual({ kind: 'goal', ref: 'G2', label: 'G2 PDF' });
     expect(status(() => resolveAbout(s, { kind: 'idea', ref: 'R1' }))).toBe(400);
     expect(status(() => resolveAbout(s, 'M1'))).toBe(400);
+    expect(resolveAbout(s, { kind: 'product' })).toEqual({ kind: 'product', ref: 'product', label: 'The whole product' });
+  });
+
+  it('writes about the whole product for newcomers: README, every stage, all merged work, purpose and link', () => {
+    addTask('T50', { title: 'Script editor', description: 'Write and edit the script' });
+    addTask('T51', { title: 'In progress thing', status: 'in_progress' });
+    const p = createPiece(m, s, 'you', { kind: 'social', about: [{ kind: 'product' }], purpose: 'testers', link: 'https://syncprompt.app/beta' });
+    expect(p).toMatchObject({ about: [{ kind: 'product', label: 'The whole product' }], purpose: 'testers', link: 'https://syncprompt.app/beta' });
+    startNext(m);
+    const text = mediaBrief(m, s, { projectName: 'SyncPrompt', readme: '# SyncPrompt\nA teleprompter that follows your voice.' });
+    expect(text).toContain('Purpose: find early testers');
+    expect(text).toContain('Link: https://syncprompt.app/beta');
+    expect(text).toContain('A teleprompter that follows your voice.');
+    expect(text).toMatch(/Stage M1 Moderation \((works today|being built now|planned)\)/);
+    expect(text).toContain('Stage M2 Export (planned)');
+    expect(text).toContain('Task T50 Script editor');
+    expect(text).toContain('Task T38 Approval queue');
+    expect(text).not.toContain('In progress thing');
+    expect(text).toMatch(/never heard of SyncPrompt/);
+    expect(text).toMatch(/Never put internal ids or words in the text/);
+    expect(text).toMatch(/End with how to sign up/);
+  });
+
+  it('defaults the purpose to a progress update and checks the link', () => {
+    const p = createPiece(m, s, 'you', { kind: 'article', about: [{ kind: 'product' }] });
+    expect(p.purpose).toBeUndefined();
+    expect(status(() => createPiece(m, s, 'you', { kind: 'article', about: [{ kind: 'product' }], purpose: 'hype' }))).toBe(400);
+    expect(status(() => createPiece(m, s, 'you', { kind: 'article', about: [{ kind: 'product' }], link: 'syncprompt.app' }))).toBe(400);
   });
 });
 

@@ -17,6 +17,7 @@ import type {
   MediaKind,
   MediaPiece,
   MediaPlatform,
+  MediaPurpose,
   MediaPost,
   MediaSection,
   MediaShot,
@@ -77,8 +78,11 @@ const STAGE_SUGGEST_WINDOW_MS = 14 * 24 * 3600_000;
 export const WEEKLY_MIN_MERGED = 5;
 
 const KIND_LABEL: Record<MediaKind, string> = { social: 'Social post', article: 'Article', website: 'Website', video: 'Video script', gif: 'Demo GIF' };
-const CLAIM_KINDS: readonly MediaClaimSource['kind'][] = ['task', 'stage', 'goal', 'idea', 'intel', 'chat', 'evidence', 'opinion'];
-const ABOUT_KINDS: readonly MediaAbout['kind'][] = ['stage', 'goal', 'task', 'idea', 'range'];
+const CLAIM_KINDS: readonly MediaClaimSource['kind'][] = ['task', 'stage', 'goal', 'idea', 'intel', 'chat', 'evidence', 'readme', 'opinion'];
+const ABOUT_KINDS: readonly MediaAbout['kind'][] = ['stage', 'goal', 'task', 'idea', 'range', 'product'];
+export const PURPOSES: readonly MediaPurpose[] = ['progress', 'announce', 'testers', 'launch'];
+const MAX_LINK = 300;
+export const PRODUCT_LABEL = 'The whole product';
 const OPINION: MediaClaimSource = { kind: 'opinion', ref: '', label: 'opinion · your voice' };
 
 // ------------------------------------------------------------------ store
@@ -245,6 +249,7 @@ const DAY_RE = /^\d{4}-\d{2}-\d{2}$/;
 export function resolveAbout(state: MusterState, v: unknown): MediaAbout {
   if (!isObj(v)) throw badRequest('about items must be objects like {kind: "stage", ref: "M3"}');
   const kind = oneOf(v.kind, ABOUT_KINDS, 'about.kind');
+  if (kind === 'product') return { kind, ref: 'product', label: PRODUCT_LABEL };
   const raw = text(v.ref, 'about.ref', 40);
   if (kind === 'range') {
     const [from, to] = raw.split('..');
@@ -436,6 +441,15 @@ export interface PieceInput {
   note?: unknown;
   platforms?: unknown;
   suggestionId?: unknown;
+  purpose?: unknown; // MediaPurpose; absent = progress
+  link?: unknown;
+}
+
+/** An optional http(s) link, as typed (400 when it isn't one). */
+function link(v: unknown): string {
+  const t = text(v, 'link', MAX_LINK, false);
+  if (t && !/^https?:\/\/[^\s]+$/i.test(t)) throw badRequest('link must start with http:// or https:// and have no spaces');
+  return t;
 }
 
 function newPiece(store: MediaStore, kind: MediaKind, about: MediaAbout[], extra: Partial<MediaPiece> = {}): MediaPiece {
@@ -464,10 +478,14 @@ export function createPiece(store: MediaStore, state: MusterState, actor: string
   const kind = oneOf(input.kind, MEDIA_KINDS, 'kind');
   const about = list(input.about, 'about', MAX_ABOUT, 1).map((a) => resolveAbout(state, a));
   const note = text(input.note, 'note', MAX_NOTE, false);
+  const purpose = input.purpose === undefined || input.purpose === null || input.purpose === '' ? 'progress' : oneOf(input.purpose, PURPOSES, 'purpose');
+  const url = link(input.link);
   const suggestion = input.suggestionId === undefined || input.suggestionId === null || input.suggestionId === '' ? undefined : requireSuggestion(store, String(input.suggestionId));
   if (suggestion && suggestion.status === 'dismissed') throw conflict(`${suggestion.id} was dismissed`);
   const piece = newPiece(store, kind, about, {
     ...(note ? { note } : {}),
+    ...(purpose !== 'progress' ? { purpose } : {}),
+    ...(url ? { link: url } : {}),
     ...(kind === 'social' ? { platforms: platforms(input.platforms) } : {}),
     ...(suggestion ? { suggestionId: suggestion.id } : {}),
   });
@@ -821,12 +839,28 @@ export function dismissAllSuggestions(store: MediaStore, actor: string): number 
 
 // ------------------------------------------------------------------ brief
 
+const PURPOSE_TEXT: Record<MediaPurpose, string> = {
+  progress: 'a progress update for people following along',
+  announce: 'announce that a new product is coming',
+  testers: 'find early testers',
+  launch: 'it is out now: launch it',
+};
+
+const PURPOSE_RULE: Record<MediaPurpose, string> = {
+  progress: 'Progress update: what is new and why it matters to the people who use it.',
+  announce: 'Announcement: a new product is coming. Lead with the problem it solves and what people will be able to do, then how to follow along (the link if there is one). Nothing is available yet unless the brief says it works today.',
+  testers: 'Finding testers: invite people to try it early. Say who it is for, what testers get to do, and what you ask of them (try it, tell you what breaks). End with how to sign up: the link if there is one, else ask them to reply or message.',
+  launch: 'Launch: it is available now. Say what it does, who it is for, and where to get it (the link if there is one).',
+};
+
 /** The tasks a piece is about: named tasks, the tasks of named goals/stages, and tasks merged in a range. */
 export function aboutTasks(state: MusterState, about: MediaAbout[]): Task[] {
   const out = new Map<string, Task>();
   const goals = state.roadmap?.goals ?? [];
   for (const a of about) {
-    if (a.kind === 'task') {
+    if (a.kind === 'product') {
+      for (const t of state.tasks) if (t.status === 'merged') out.set(t.id, t);
+    } else if (a.kind === 'task') {
       const t = state.tasks.find((x) => x.id === a.ref);
       if (t) out.set(t.id, t);
     } else if (a.kind === 'goal' || a.kind === 'stage') {
@@ -848,7 +882,7 @@ export function aboutTasks(state: MusterState, about: MediaAbout[]): Task[] {
 const clip = (s: string, n: number) => (s.length > n ? `${s.slice(0, n - 1)}…` : s);
 
 /** GET /api/media/brief: what herald works from for the piece it is drafting. `evidenceFile` gives absolute paths. */
-export function mediaBrief(store: MediaStore, state: MusterState, opts: { intel?: IntelStore; evidenceFile?: (task: Task, entryId: string, name: string) => string; userName?: string; projectName?: string } = {}): string {
+export function mediaBrief(store: MediaStore, state: MusterState, opts: { intel?: IntelStore; evidenceFile?: (task: Task, entryId: string, name: string) => string; userName?: string; projectName?: string; readme?: string } = {}): string {
   const piece = draftingPiece(store);
   if (!piece) return 'No piece is being drafted. You are done; stop here.';
   const L: string[] = [];
@@ -858,6 +892,10 @@ export function mediaBrief(store: MediaStore, state: MusterState, opts: { intel?
   if (piece.kind === 'social') L.push(`Platforms: ${(piece.platforms ?? DEFAULT_PLATFORMS).map((p) => `${p} (≤ ${PLATFORM_LIMITS[p]} chars)`).join(', ')}`);
   if (piece.kind === 'website') L.push(`Target page: ${piece.target ?? '(suggest one, e.g. /features/moderation or /changelog)'}`);
   L.push(`About: ${piece.about.map((a) => a.label).join('; ')}`);
+  const purpose = piece.purpose ?? 'progress';
+  L.push(`Purpose: ${PURPOSE_TEXT[purpose]}`);
+  if (piece.link) L.push(`Link: ${piece.link} (put it in the text exactly like this)`);
+  const product = piece.about.some((a) => a.kind === 'product');
   if (piece.note) L.push(`Note from ${who}: ${piece.note}`);
   const open = piece.requests.filter((r) => !r.doneAt);
   if (open.length) {
@@ -875,6 +913,15 @@ export function mediaBrief(store: MediaStore, state: MusterState, opts: { intel?
   const goals = state.roadmap?.goals ?? [];
   const stages = state.roadmap?.stages ?? [];
   L.push('', '## What happened (only write about this)');
+  if (product) {
+    const name = opts.projectName || 'the product';
+    L.push(`The whole product: ${name}. What it is and does, from the README, the roadmap and everything merged so far.`);
+    if (opts.readme?.trim()) L.push('', 'README (cite it as {kind: "readme", ref: "README.md", label: "README"}):', clip(opts.readme.trim(), 4000), '');
+    for (const st of stages) {
+      L.push(`Stage ${st.id} ${st.title} (${st.status === 'done' ? 'works today' : st.status === 'active' ? 'being built now' : 'planned'}): ${clip(st.description, 300)}`);
+      for (const g of goals.filter((x) => x.stageId === st.id)) L.push(`  Goal ${g.id} ${g.title} (${g.status === 'done' ? 'works today' : 'not ready yet'})`);
+    }
+  }
   for (const a of piece.about) {
     if (a.kind === 'stage') {
       const s = stages.find((x) => x.id === a.ref);
@@ -890,9 +937,15 @@ export function mediaBrief(store: MediaStore, state: MusterState, opts: { intel?
   }
   const tasks = aboutTasks(state, piece.about);
   if (!tasks.length) L.push('No merged tasks match yet. Write only what the roadmap says, and say it is planned or in progress.');
-  for (const t of tasks) {
-    L.push(`Task ${t.id} ${t.title} (${t.status}${mergedAt(t) ? `, merged ${mergedAt(t)!.slice(0, 10)}` : ''}): ${clip(t.description.replace(/\s+/g, ' '), 500)}`);
+  // The whole product can be hundreds of tasks: newest 60, shorter, and only the first 30 evidence files.
+  const shown = product ? [...tasks].sort((a, b) => (mergedAt(b) ?? '').localeCompare(mergedAt(a) ?? '')).slice(0, 60) : tasks;
+  if (shown.length < tasks.length) L.push(`(${tasks.length} merged tasks; the newest ${shown.length} are listed.)`);
+  let files = 0;
+  for (const t of shown) {
+    L.push(`Task ${t.id} ${t.title} (${t.status}${mergedAt(t) ? `, merged ${mergedAt(t)!.slice(0, 10)}` : ''}): ${clip(t.description.replace(/\s+/g, ' '), product ? 200 : 500)}`);
+    if (product && files >= 30) continue;
     for (const e of t.evidence ?? []) {
+      files += e.files.length;
       L.push(`  Evidence ${t.id}/${e.id}: ${clip(e.summary, 200)}`);
       for (const f of e.files) L.push(`    ${t.id}/${e.id} · ${f.name} (${f.kind})${opts.evidenceFile ? ` · ${safePath(opts.evidenceFile, t, e.id, f.name)}` : ''}`);
     }
@@ -915,7 +968,13 @@ export function mediaBrief(store: MediaStore, state: MusterState, opts: { intel?
 
   L.push('', '## Rules');
   L.push('- Plain text only: no Markdown, no HTML, no emoji headings. Headings are plain text.');
-  L.push('- Every factual sentence needs a claim: {quote: the words as they appear, sources: [{kind: task|stage|goal|idea|intel|chat|evidence, ref: "T38" / "M3" / "F120" / "T38/E2", label: "T38 merged"}]}.');
+  L.push('- Never put internal ids or words in the text: no stage, goal, task, idea or chat ids (M3, G4, T38, R12, F120), no "roadmap", "stage", "milestone", "crew", "Muster", "merged" or branch names. Readers only care what they can do. Ids belong in claim sources only.');
+  if (product)
+    L.push(
+      `- Whole product: write for people who have never heard of ${opts.projectName || 'it'}. Say what it is, who it is for and what they can do with it, in plain words, grouped by what people do (not by how it was built). Say clearly what works today and what is coming; never present planned work as ready.`,
+    );
+  L.push(`- ${PURPOSE_RULE[purpose]}`);
+  L.push('- Every factual sentence needs a claim: {quote: the words as they appear, sources: [{kind: task|stage|goal|idea|intel|chat|evidence|readme, ref: "T38" / "M3" / "F120" / "T38/E2", label: "T38 merged"}]}.');
   L.push(`- Anything you can't source: leave it out, or record it as a claim with sources: [] so ${who} can confirm it. Never invent numbers, quotes or users.`);
   L.push('- Save often with media_draft. Write a title first, then the body piece by piece, with progress ("writing section 3 of 5").');
   if (piece.kind === 'social') L.push('- Social: 3 versions per platform, each within its limit. Attach 1–3 evidence images that show the feature (images: taskId, evidenceId, name, caption). Open screenshots with Read to choose.');

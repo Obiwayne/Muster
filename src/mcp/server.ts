@@ -87,7 +87,7 @@ export const MEDIA_TOOLS = ['media_brief', 'media_draft', 'media_finish', 'read_
 
 // ---- media shapes (the server validates everything again and names the field on a 400) ----
 const claimSourceShape = z.object({
-  kind: z.enum(['task', 'stage', 'goal', 'idea', 'intel', 'chat', 'evidence']),
+  kind: z.enum(['task', 'stage', 'goal', 'idea', 'intel', 'chat', 'evidence', 'readme']),
   ref: z.string().describe('"T38", "M3", "G4", "R12", "IN3", "F120" (crew chat), "T38/E2" (evidence)'),
   label: z.string().min(1).max(120).describe('What the chip says, e.g. "T38 merged", "intel · #1 complaint", "screenshot 2"'),
 });

@@ -266,3 +266,20 @@ These are the details the Demo GIF contract left open, decided while building:
 - **`gifIds`** accepts gif pieces in review, approved **or used**.
 - **`record.mjs`** also takes `--hold <ms>` (default 1200), which keeps recording after the last step. On a failed
   step it still saves the video so far and exits 1.
+
+## The whole product, purpose and link (2026-10-07)
+
+The user wanted to write about the whole product, for example "a new teleprompter is coming, here's what it does,
+become a tester", with no stages or task numbers in the text.
+
+- **About** gains `{kind: 'product'}`, labelled "The whole product". It's the first item in the picker. herald's
+  brief then includes the README (first 4,000 chars, cited as source kind `readme`), every stage and goal marked
+  "works today", "being built now" or "planned", and the newest 60 merged tasks (with no more than 30 evidence
+  files).
+- **`purpose`** is one of `progress` (the default, stored as absent), `announce`, `testers` or `launch`. It's chosen
+  in New piece as "What it's for", and picking the whole product switches it to Announce. Each purpose has its own
+  writing rule in the brief.
+- **`link`** is an optional http(s) link for the call to action, shown when the purpose isn't a progress update.
+  herald puts it in the text exactly as typed.
+- **No jargon:** every brief now forbids internal ids and words in the text (M3, T38, roadmap, stage, crew, Muster,
+  merged, branches). Ids belong in claim sources only.

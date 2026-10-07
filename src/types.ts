@@ -1048,17 +1048,19 @@ export type MediaKind = 'social' | 'article' | 'website' | 'video' | 'gif'; // g
 /** drafting = herald is (re)writing it (queued or working); review = waiting on you; failed = herald stopped without finishing. */
 export type MediaStatus = 'queued' | 'drafting' | 'review' | 'approved' | 'used' | 'failed';
 export type MediaPlatform = 'x' | 'linkedin' | 'bluesky' | 'threads';
+/** What a piece is for: a progress update, announcing a product that's coming, finding testers, or a launch. */
+export type MediaPurpose = 'progress' | 'announce' | 'testers' | 'launch';
 
 /** What a piece is about, picked in New piece or set by a suggestion. */
 export interface MediaAbout {
-  kind: 'stage' | 'goal' | 'task' | 'idea' | 'range'; // range = merged work between two dates
-  ref: string; // "M3", "G4", "T41", "R12", "2026-10-01..2026-10-07"
+  kind: 'stage' | 'goal' | 'task' | 'idea' | 'range' | 'product'; // range = merged work between two dates; product = the whole product (README, every stage, everything merged)
+  ref: string; // "M3", "G4", "T41", "R12", "2026-10-01..2026-10-07", "product"
   label: string; // "Stage M3 · Moderation" (server fills it from the roadmap/tasks when it can)
 }
 
 /** Where one claim in a draft comes from. kind 'opinion' = you confirmed it as your own voice. */
 export interface MediaClaimSource {
-  kind: 'task' | 'stage' | 'goal' | 'idea' | 'intel' | 'chat' | 'evidence' | 'opinion';
+  kind: 'task' | 'stage' | 'goal' | 'idea' | 'intel' | 'chat' | 'evidence' | 'readme' | 'opinion'; // readme = the project's README.md (whole-product pieces)
   ref: string; // "T38", "M3", "R12", "IC4", feed id, "T38/E2" (task/evidence), "" for opinion
   label: string; // "T38 merged", "intel · #1 complaint", "screenshot 2", "opinion · your voice"
 }
@@ -1117,6 +1119,8 @@ export interface MediaPiece {
   status: MediaStatus;
   about: MediaAbout[];
   note?: string; // "Anything herald should know" (≤ 2000)
+  purpose?: MediaPurpose; // what the piece is for (absent = 'progress')
+  link?: string; // call-to-action link herald puts in the text as given (sign-up page, website), ≤ 300
   platforms?: MediaPlatform[]; // social only
   target?: string; // website only: where it goes, "/features/moderation" (herald suggests, you can edit)
   posts?: MediaPost[]; // social

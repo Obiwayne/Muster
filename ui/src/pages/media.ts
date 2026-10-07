@@ -5,7 +5,7 @@
 // POST …/edit); while herald drafts, the editor is read-only.
 import '../media.css';
 import type {
-  MediaAbout, MediaClaim, MediaGif, MediaGifFrame, MediaImage, MediaKind, MediaPiece, MediaPlatform, MediaShot, MediaStore, MediaSuggestion, MusterState,
+  MediaAbout, MediaClaim, MediaGif, MediaGifFrame, MediaImage, MediaKind, MediaPiece, MediaPlatform, MediaPurpose, MediaShot, MediaStore, MediaSuggestion, MusterState,
 } from '../../../src/types';
 import { closeFloating, confirmDialog, h, icon, setChildren, showMenu, showModal, showPopover, toast, type Child } from '../dom';
 import { events, type Snapshot } from '../events';
@@ -122,6 +122,7 @@ function aboutLabel(state: MusterState | undefined, a: Pick<MediaAbout, 'kind' |
   if (a.kind === 'goal') { const g = rm?.goals.find((x) => x.id === a.ref); return g ? `${g.id} ${g.title}` : a.ref; }
   if (a.kind === 'task') { const t = state?.tasks.find((x) => x.id === a.ref); return t ? `${t.id} ${t.title}` : a.ref; }
   if (a.kind === 'range') { const [from, to] = a.ref.split('..'); return `${from} to ${to}`; }
+  if (a.kind === 'product') return 'The whole product';
   return a.ref;
 }
 
@@ -135,6 +136,7 @@ function lastDays(n: number): string {
 function openAboutPicker(anchor: HTMLElement, state: MusterState | undefined, onPick: (a: Pick<MediaAbout, 'kind' | 'ref'>) => void): void {
   const rm = state?.roadmap;
   const items: ({ label: string; onClick: () => void; tone?: 'muted' } | 'sep')[] = [];
+  items.push({ label: 'The whole product', onClick: () => onPick({ kind: 'product', ref: 'product' }) });
   items.push({ label: 'Last 7 days of merged work', onClick: () => onPick({ kind: 'range', ref: lastDays(7) }) });
   const stages = (rm?.stages ?? []).filter((s) => s.status !== 'planned');
   if (stages.length) items.push('sep');
@@ -151,7 +153,14 @@ function openAboutPicker(anchor: HTMLElement, state: MusterState | undefined, on
 
 // ---------------------------------------------------------------- New piece dialog
 
-interface NewDraft { kind: MediaKind; about: Pick<MediaAbout, 'kind' | 'ref'>[]; note: string; platforms: MediaPlatform[]; suggestionId?: string }
+interface NewDraft { kind: MediaKind; about: Pick<MediaAbout, 'kind' | 'ref'>[]; note: string; platforms: MediaPlatform[]; purpose: MediaPurpose; link: string; suggestionId?: string }
+
+const PURPOSES: { id: MediaPurpose; label: string }[] = [
+  { id: 'progress', label: 'Progress update' },
+  { id: 'announce', label: "Announce it's coming" },
+  { id: 'testers', label: 'Find testers' },
+  { id: 'launch', label: "It's out now" },
+];
 
 export function openNewPiece(prefill?: MediaSuggestion): void {
   const state = events.snapshot?.state;
@@ -160,6 +169,8 @@ export function openNewPiece(prefill?: MediaSuggestion): void {
     about: prefill ? prefill.about.map((a) => ({ kind: a.kind, ref: a.ref })) : [],
     note: '',
     platforms: prefill?.plan.find((p) => p.platforms)?.platforms ?? [...DEFAULT_PLATFORMS],
+    purpose: 'progress',
+    link: '',
     suggestionId: prefill?.id,
   };
   const body = h('div.md-new');
@@ -170,9 +181,10 @@ export function openNewPiece(prefill?: MediaSuggestion): void {
       class: d.kind === k && 'on',
       onclick: () => { d.kind = k; draw(); },
     }, h('div.md-kind-t', null, KIND_LABEL[k]), h('div.md-kind-s', null, KIND_HINT[k]))));
-    const addBtn = h('button.md-about-add', null, '+ stage, task or date range');
+    const addBtn = h('button.md-about-add', null, '+ the whole product, a stage, task or date range');
     addBtn.onclick = () => openAboutPicker(addBtn, state, (a) => {
       if (!d.about.some((x) => x.kind === a.kind && x.ref === a.ref)) d.about.push(a);
+      if (a.kind === 'product' && d.purpose === 'progress') d.purpose = 'announce'; // a whole-product piece is rarely a progress update
       draw();
     });
     const about = h('div.md-about', null,
@@ -189,9 +201,20 @@ export function openNewPiece(prefill?: MediaSuggestion): void {
           }, PLATFORM_LABEL[p]))),
           h('div.md-hint', null, '3 versions for each platform, in your house style.'))
       : null;
+    const purpose = h('div.md-field', null, h('div.md-label', null, "WHAT IT'S FOR"),
+      h('div.md-plats', null, PURPOSES.map((x) => h('button.chip', { class: d.purpose === x.id && 'active', onclick: () => { d.purpose = x.id; draw(); } }, x.label))));
+    let linkField: HTMLElement | null = null;
+    if (d.purpose !== 'progress') {
+      const input = h('input.field.md-link', { type: 'url', placeholder: d.purpose === 'testers' ? 'Sign-up link, e.g. https://syncprompt.app/beta (optional)' : 'Link, e.g. https://syncprompt.app (optional)' }) as HTMLInputElement;
+      input.value = d.link;
+      input.oninput = () => { d.link = input.value; };
+      linkField = h('div.md-field', null, h('div.md-label', null, 'LINK (OPTIONAL)'), input, h('div.md-hint', null, 'herald puts it in the text exactly as you type it.'));
+    }
     setChildren(body,
       h('div.md-field', null, h('div.md-label', null, 'WHAT'), kinds),
       h('div.md-field', null, h('div.md-label', null, 'ABOUT'), about),
+      purpose,
+      linkField,
       h('div.md-field', null, h('div.md-label', null, 'ANYTHING HERALD SHOULD KNOW (OPTIONAL)'), note),
       plats,
       err);
@@ -206,11 +229,12 @@ export function openNewPiece(prefill?: MediaSuggestion): void {
       kind: 'primary',
       onClick: async (close) => {
         err.hidden = true;
-        if (!d.about.length) { err.textContent = 'Pick what it is about: a stage, a task or a date range.'; err.hidden = false; return; }
+        if (!d.about.length) { err.textContent = 'Pick what it is about: the whole product, a stage, a task or a date range.'; err.hidden = false; return; }
         if (d.kind === 'social' && !d.platforms.length) { err.textContent = 'Pick at least one platform.'; err.hidden = false; return; }
         try {
           const p = await mapi.createPiece({
             kind: d.kind, about: d.about, note: d.note.trim() || undefined,
+            purpose: d.purpose === 'progress' ? undefined : d.purpose, link: d.purpose === 'progress' ? undefined : d.link.trim() || undefined,
             platforms: d.kind === 'social' ? d.platforms : undefined, suggestionId: d.suggestionId,
           });
           close();
@@ -452,7 +476,7 @@ export function createMedia(): Page {
     const ro = isBusy(p);
     const title = h('input.md-etitle', { value: p.title, disabled: ro, title: ro ? 'herald is writing' : 'Edit the title' }) as HTMLInputElement;
     title.oninput = () => { p.title = title.value; scheduleSave(p); };
-    const metaBits = p.kind === 'gif' ? gifMeta(p) : [KIND_LABEL[p.kind].toLowerCase(), pieceFor(p) !== 'Website' ? pieceFor(p) : '', p.about.map((a) => a.label || a.ref).join(', '), `herald · ${ago(p.updatedAt)}`].filter(Boolean);
+    const metaBits = p.kind === 'gif' ? gifMeta(p) : [KIND_LABEL[p.kind].toLowerCase(), pieceFor(p) !== 'Website' ? pieceFor(p) : '', p.about.map((a) => a.label || a.ref).join(', '), p.purpose ? PURPOSES.find((x) => x.id === p.purpose)!.label.toLowerCase() : '', `herald · ${ago(p.updatedAt)}`].filter(Boolean);
     const target = p.kind === 'website'
       ? (() => {
           const t = h('input.md-target', { value: p.target ?? '', placeholder: '/features/…', disabled: ro, title: 'Where it goes on your site' }) as HTMLInputElement;
