@@ -1,8 +1,9 @@
 import { describe, expect, it } from 'vitest';
-import type { MediaPiece, MediaShot, MediaStore, MediaSuggestion, MusterState } from '../../src/types';
+import type { MediaGif, MediaGifFrame, MediaPiece, MediaShot, MediaStore, MediaSuggestion, MusterState } from '../../src/types';
 import {
   EMPTY_MEDIA, charCount, evidenceImages, filterPieces, kindCounts, openSuggestions, pieceFor, pieceMeta, postText, reviewCount, scriptText,
   sectionsText, shotCounts, shotListCsv, sortPieces, sourceCounts, sourceTone, suggestionTag, unsourcedCount,
+  attachableGifs, clampSeconds, formatBytes, frameStart, gifFile, gifFits, moveFrame, recordingLine, totalSeconds,
 } from './mediamodel';
 
 const piece = (id: string, over: Partial<MediaPiece> = {}): MediaPiece => ({
@@ -30,7 +31,7 @@ describe('library', () => {
 
   it('counts kinds and review, and filters', () => {
     const list = [piece('MP1'), piece('MP2', { kind: 'article', status: 'approved' }), piece('MP3', { kind: 'video' })];
-    expect(kindCounts(list)).toEqual({ all: 3, social: 1, article: 1, website: 0, video: 1 });
+    expect(kindCounts(list)).toEqual({ all: 3, social: 1, article: 1, website: 0, video: 1, gif: 0 });
     expect(reviewCount(list)).toBe(2);
     expect(filterPieces(list, 'article').map((p) => p.id)).toEqual(['MP2']);
     expect(filterPieces(list, 'all')).toHaveLength(3);
@@ -133,5 +134,74 @@ describe('sources', () => {
     const imgs = evidenceImages(state, piece('MP1', { about: [{ kind: 'stage', ref: 'M2', label: '' }] }));
     expect(imgs.map((i) => `${i.taskId}/${i.name}`)).toEqual(['T2/b.png']);
     expect(evidenceImages(state, piece('MP2')).map((i) => i.name)).toEqual(['a.png', 'b.png']);
+  });
+});
+
+describe('demo GIF', () => {
+  const MB = 1024 * 1024;
+  const frame = (caption: string, seconds: number): MediaGifFrame => ({ taskId: 'T38', evidenceId: 'E2', name: 'a.png', caption, seconds });
+  const file = (name: string, bytes: number) => ({ name, bytes, width: 800, height: 500, seconds: 9.5, renderedAt: '2026-10-07T10:00:00Z' });
+
+  it('checks the size against each platform: X 15 MB, LinkedIn 5 MB, Bluesky 1 MB', () => {
+    expect(gifFits(1.8 * MB).map((f) => [f.label, f.ok])).toEqual([['X', true], ['LinkedIn', true], ['Bluesky', false]]);
+    expect(gifFits(MB).find((f) => f.platform === 'bluesky')!.ok).toBe(true); // exactly at the limit fits
+    expect(gifFits(6 * MB).filter((f) => f.ok).map((f) => f.platform)).toEqual(['x']);
+    expect(gifFits(16 * MB).some((f) => f.ok)).toBe(false);
+  });
+
+  it('formats bytes', () => {
+    expect(formatBytes(1.8 * MB)).toBe('1.8 MB');
+    expect(formatBytes(640 * 1024)).toBe('640 KB');
+    expect(formatBytes(900)).toBe('900 B');
+  });
+
+  it('adds up frame durations and times each frame', () => {
+    const frames = [frame('a', 2), frame('b', 2.5), frame('c', 2.5), frame('d', 2.5)];
+    expect(totalSeconds(frames)).toBe(9.5);
+    expect(totalSeconds([])).toBe(0);
+    expect(frameStart(frames, 0)).toBe('0:00.0');
+    expect(frameStart(frames, 1)).toBe('0:02.0');
+    expect(frameStart(frames, 3)).toBe('0:07.0');
+  });
+
+  it('moves a frame and keeps the others in order', () => {
+    expect(moveFrame(['a', 'b', 'c', 'd'], 0, 2)).toEqual(['b', 'c', 'a', 'd']);
+    expect(moveFrame(['a', 'b', 'c', 'd'], 3, 0)).toEqual(['d', 'a', 'b', 'c']);
+    expect(moveFrame(['a', 'b', 'c'], 1, 99)).toEqual(['a', 'c', 'b']);
+    expect(moveFrame(['a', 'b'], 5, 0)).toEqual(['a', 'b']);
+    const src = ['a', 'b'];
+    moveFrame(src, 0, 1);
+    expect(src).toEqual(['a', 'b']); // pure
+  });
+
+  it('clamps frame seconds to 0.5–8', () => {
+    expect(clampSeconds(0.1)).toBe(0.5);
+    expect(clampSeconds(12)).toBe(8);
+    expect(clampSeconds(2.46)).toBe(2.5);
+    expect(clampSeconds(NaN)).toBe(2.5);
+  });
+
+  it('picks the file for the source in use', () => {
+    const g: MediaGif = { source: 'slideshow', frames: [], steps: [], altText: '', slideshow: file('slideshow.gif', 10) };
+    expect(gifFile(g)?.name).toBe('slideshow.gif');
+    expect(gifFile({ ...g, source: 'recording' })).toBeUndefined();
+    expect(gifFile({ ...g, source: 'recording', recording: { status: 'done', requestedAt: '', file: file('recording.gif', 20) } })?.name).toBe('recording.gif');
+  });
+
+  it('describes the recording state', () => {
+    const g: MediaGif = { source: 'slideshow', frames: [], steps: [], altText: '' };
+    expect(recordingLine(g)).toMatch(/small task for the Captain/);
+    expect(recordingLine({ ...g, recording: { status: 'recording', requestedAt: '', taskId: 'T52' } })).toMatch(/^T52 is recording/);
+    expect(recordingLine({ ...g, recording: { status: 'failed', requestedAt: '', error: 'no video' } })).toMatch(/no video/);
+  });
+
+  it('lists GIFs a post can attach (review, approved, used) and shows them in the library', () => {
+    const g = (id: string, status: MediaPiece['status'], updatedAt = '2026-10-07T10:00:00Z') => piece(id, { kind: 'gif', status, updatedAt });
+    const list = [g('MP1', 'drafting'), g('MP2', 'approved', '2026-10-07T09:00:00Z'), g('MP3', 'review', '2026-10-07T11:00:00Z'), piece('MP4'), g('MP5', 'failed')];
+    expect(attachableGifs(list).map((p) => p.id)).toEqual(['MP3', 'MP2']);
+    const gp = piece('MP9', { kind: 'gif', gif: { source: 'slideshow', frames: [frame('a', 2), frame('b', 2)], steps: [], altText: '', slideshow: { ...file('slideshow.gif', 1.8 * MB), seconds: 4 } } });
+    expect(pieceMeta(gp)).toBe('Demo GIF · 2 frames · 4 s · 1.8 MB');
+    expect(pieceFor(gp)).toBe('Social · website');
+    expect(kindCounts([gp]).gif).toBe(1);
   });
 });
