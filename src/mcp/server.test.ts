@@ -3,7 +3,7 @@ import { InMemoryTransport } from '@modelcontextprotocol/sdk/inMemory.js';
 import { describe, expect, it } from 'vitest';
 import type { Role } from '../types.js';
 import { PROGRESS, ROADMAP } from './roadmap.fixture.js';
-import { CAPTAIN_TOOLS, CREW_TOOLS, createMusterServer, QA_TOOLS, RESEARCH_TOOLS, type Api } from './server.js';
+import { CAPTAIN_TOOLS, CREW_TOOLS, createMusterServer, MEDIA_TOOLS, QA_TOOLS, RESEARCH_TOOLS, type Api } from './server.js';
 
 type Call = { path: string; method?: string; body?: unknown };
 
@@ -14,7 +14,7 @@ async function connect(role: Role, handler: (c: Call) => unknown, extra: { pollM
     calls.push(c);
     return (await handler(c)) as T;
   };
-  const server = createMusterServer({ role, agentId: role === 'captain' ? 'captain' : role === 'research' ? 'scout' : 'crew-2', api, ...extra });
+  const server = createMusterServer({ role, agentId: role === 'captain' ? 'captain' : role === 'research' ? 'scout' : role === 'media' ? 'herald' : 'crew-2', api, ...extra });
   const [a, b] = InMemoryTransport.createLinkedPair();
   await server.connect(a);
   const client = new Client({ name: 't', version: '1' });
@@ -541,5 +541,34 @@ describe('muster-mcp intel tools', () => {
     expect(calls.at(-1)!.body).toEqual({ actor: 'captain', kind: 'sweep', competitorIds: ['padlet'] });
     await call('advise_idea', { idea: 'R12', text: 'About a week.', plan: ['Re-check weekly; alert if Padlet ships approval'], effort: 3 });
     expect(calls.at(-1)).toEqual({ path: '/api/research/ideas/R12/advice', method: 'POST', body: { actor: 'captain', text: 'About a week.', plan: ['Re-check weekly; alert if Padlet ships approval'], effort: 3 } });
+  });
+});
+
+describe('muster-mcp media tools', () => {
+  const piece = (patch: Record<string, unknown> = {}) => ({ id: 'MP3', kind: 'social', title: 'Approve before publish', status: 'drafting', about: [], claims: [], requests: [], createdAt: '', updatedAt: '', ...patch });
+
+  it('herald gets only its tools; nobody else sees them', async () => {
+    const h = await connect('media', () => null);
+    expect((await h.client.listTools()).tools.map((t) => t.name).sort()).toEqual([...MEDIA_TOOLS].sort());
+    for (const role of ['crew', 'design', 'captain', 'research'] as Role[]) {
+      const names = (await (await connect(role, () => null)).client.listTools()).tools.map((t) => t.name);
+      for (const n of MEDIA_TOOLS.filter((t) => t !== 'read_inbox')) expect(names).not.toContain(n);
+    }
+  });
+
+  it('media_brief, media_draft (current piece by default) and media_finish', async () => {
+    const { call, calls } = await connect('media', (c) => (c.path === '/api/media/brief' ? { text: '# MP3 · Social post\n' } : piece({ claims: [{ id: 'C1', quote: 'q', sources: [] }] })));
+    expect((await call('media_brief')).text).toBe('# MP3 · Social post');
+    const r = await call('media_draft', { title: 'Approve before publish', progress: 'writing X', posts: [{ platform: 'x', versions: ['Hi'] }] });
+    expect(calls[1]).toEqual({ path: '/api/media/pieces/current/draft', method: 'POST', body: { actor: 'herald', title: 'Approve before publish', progress: 'writing X', posts: [{ platform: 'x', versions: ['Hi'] }] } });
+    expect(r.text).toBe('Saved MP3 (social, drafting) "Approve before publish": title, posts, progress. 1 claim(s) have no source.');
+    await call('media_finish', { piece: 'mp3', summary: 'Done.' });
+    expect(calls[2]).toEqual({ path: '/api/media/pieces/MP3/finish', method: 'POST', body: { actor: 'herald', summary: 'Done.' } });
+  });
+
+  it('the Captain suggests media for a merged task', async () => {
+    const { call, calls } = await connect('captain', () => ({ id: 'MS2', ref: 'T41' }));
+    expect((await call('suggest_media', { task: 't41', title: 'PDF export', why: 'Teachers asked.' })).text).toBe('Suggested MS2 for T41 on the Media page.');
+    expect(calls[0]).toEqual({ path: '/api/media/suggestions', method: 'POST', body: { actor: 'captain', task: 'T41', title: 'PDF export', why: 'Teachers asked.' } });
   });
 });

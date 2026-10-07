@@ -138,9 +138,6 @@ const str = (v: unknown, name: string): string => {
   return v;
 };
 
-/** How long herald gets to read media_finish's answer before it is stopped (like scout after finish_research). */
-export const HERALD_STOP_DELAY_MS = 3000;
-
 /** Every /api/media/* route. */
 export function registerMediaRoutes(route: (method: string, path: string, handler: Handler) => void, ctx: MediaRouteContext): void {
   const { runtime, agents } = ctx;
@@ -189,7 +186,7 @@ export function registerMediaRoutes(route: (method: string, path: string, handle
     ctx.toast('info', text);
     ctx.notify('Muster: media ready', text);
     // Another queued piece is typed into herald by the dispatcher; with none left, herald stops after reading this.
-    if (!st().pieces.some((p) => p.status === 'queued' || p.status === 'drafting')) void agents.stopHerald('media queue empty', HERALD_STOP_DELAY_MS);
+    if (!st().pieces.some((p) => p.status === 'queued' || p.status === 'drafting')) void agents.stopHerald('media queue empty', agents.scoutStopDelayMs); // after herald has read the result
     return piece;
   });
 }
