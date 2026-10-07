@@ -12,6 +12,7 @@ try {
   await page.getByRole('textbox', { name: 'Message Codex' }).fill('Reply exactly: Muster desktop connection works. Do not use any tools.');
   await page.getByRole('button', { name: 'Send message', exact: true }).click();
   await page.locator('.codex-message.assistant').filter({hasText:'Muster desktop connection works.'}).last().waitFor({timeout:60000});
+  await page.waitForFunction(async () => !(await window.musterApp.codexState()).busy, {timeout:30000});
   await page.screenshot({path:'../../outputs/Muster-Codex-live.png'});
   console.log('Real Electron IPC, local Codex response and live UI passed.');
 } finally { await app.evaluate(({app}) => app.exit(0)).catch(()=>{}); }
