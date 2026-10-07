@@ -1,7 +1,7 @@
 // Shared types for Muster. This file is the contract between the orchestrator,
 // the CLI, muster-mcp, the hooks and the dashboard. Change it deliberately.
 
-export type Role = 'captain' | 'crew' | 'design' | 'human' | 'research' | 'qa'; // qa = the standing QA agent (id "qa", outside maxCrew): scores a task's diff at the locked qa station before review, never edits code // research = the scout: reads public pages, posts ideas, never edits code or takes tasks // human = an approval station: nobody claims it, you Approve or Send back from the board
+export type Role = 'captain' | 'crew' | 'design' | 'human' | 'research' | 'qa' | 'media'; // qa = the standing QA agent (id "qa", outside maxCrew): scores a task's diff at the locked qa station before review, never edits code // media = herald: writes posts, articles, website text and video scripts from what shipped (docs/MEDIA.md), never edits code // research = the scout: reads public pages, posts ideas, never edits code or takes tasks // human = an approval station: nobody claims it, you Approve or Send back from the board
 
 export type AgentStatus =
   | 'starting' // PTY spawned, claude booting
@@ -160,7 +160,7 @@ export interface Note {
   text: string;
   createdAt: string;
   open: boolean; // stuck/question/waiting/review/escalation start open; others start closed
-  topic?: 'weekly_usage' | 'five_hour' | 'roadmap' | 'research' | 'intel' | 'checkout' | 'stale_build' | 'remote'; // what a system/approval note is about, so the UI can offer the right controls
+  topic?: 'weekly_usage' | 'five_hour' | 'roadmap' | 'research' | 'intel' | 'checkout' | 'stale_build' | 'remote' | 'media'; // what a system/approval note is about, so the UI can offer the right controls
   dismissed?: boolean; // you removed it from the board (POST /api/notes/:id/dismiss); kept in state for history, hidden by default
   closedAt?: string;
   replies: NoteReply[];
@@ -405,7 +405,8 @@ export interface RoadmapProgress {
 export type MusterEvent =
   | { type: 'state'; state: MusterState; config: MusterConfig } // full snapshot, sent on connect and after every change
   | { type: 'toast'; level: 'info' | 'warn'; text: string }
-  | { type: 'intel'; rev: number; summary: IntelSummary }; // .muster/intel.json changed: refetch GET /api/intel if you show it
+  | { type: 'intel'; rev: number; summary: IntelSummary } // .muster/intel.json changed: refetch GET /api/intel if you show it
+  | { type: 'media'; rev: number; summary: MediaSummary }; // .muster/media.json changed: refetch GET /api/media if you show it
 
 // Messages on ws://127.0.0.1:<port>/ws/term/<agentId>
 // server -> client: raw terminal output as text frames (a backlog replay first)
@@ -1034,4 +1035,138 @@ export interface BrowseResult {
   blocked?: string; // the site answered with a bot check / block instead of the page: "bot check (Cloudflare)", "rate limited (429)"
   readVia?: 'public_reader'; // set when `text` came from the public reader (r.jina.ai, else a plain cookie-less request) because the site blocked the browser
   note?: string; // for scout: "read via public reader (site blocked the research browser)"; put it on the source title
+}
+
+// ---- Media (src/core/media.ts, docs/MEDIA.md) ----
+// The Media page: herald (role 'media') writes social posts, articles, website text and video scripts from what
+// really shipped (roadmap, merged tasks, task evidence, intel, crew chat). Everything is plain text. You review,
+// edit, approve, copy it out and mark it used. Muster never posts anything anywhere.
+// Stored in .muster/media.json (like intel.json) so the state snapshot stays small; a `{ type: 'media' }` event
+// tells the dashboard to refetch.
+
+export type MediaKind = 'social' | 'article' | 'website' | 'video';
+/** drafting = herald is (re)writing it (queued or working); review = waiting on you; failed = herald stopped without finishing. */
+export type MediaStatus = 'queued' | 'drafting' | 'review' | 'approved' | 'used' | 'failed';
+export type MediaPlatform = 'x' | 'linkedin' | 'bluesky' | 'threads';
+
+/** What a piece is about, picked in New piece or set by a suggestion. */
+export interface MediaAbout {
+  kind: 'stage' | 'goal' | 'task' | 'idea' | 'range'; // range = merged work between two dates
+  ref: string; // "M3", "G4", "T41", "R12", "2026-10-01..2026-10-07"
+  label: string; // "Stage M3 · Moderation" (server fills it from the roadmap/tasks when it can)
+}
+
+/** Where one claim in a draft comes from. kind 'opinion' = you confirmed it as your own voice. */
+export interface MediaClaimSource {
+  kind: 'task' | 'stage' | 'goal' | 'idea' | 'intel' | 'chat' | 'evidence' | 'opinion';
+  ref: string; // "T38", "M3", "R12", "IC4", feed id, "T38/E2" (task/evidence), "" for opinion
+  label: string; // "T38 merged", "intel · #1 complaint", "screenshot 2", "opinion · your voice"
+}
+
+/** A sentence or phrase in the draft and what backs it. No sources = unsourced: approve is blocked until you confirm or herald cuts it. */
+export interface MediaClaim {
+  id: string; // "C1" inside the piece
+  quote: string; // the words as they appear in the text (≤ 300 chars)
+  sources: MediaClaimSource[];
+}
+
+/** An image from task evidence attached to a social post (served by the existing evidence file route). */
+export interface MediaImage {
+  taskId: string; // "T38"
+  evidenceId: string; // "E2"
+  name: string; // file name inside the evidence folder
+  caption: string; // "After · approval queue"
+}
+
+/** Social: one platform's versions (A, B, C…). */
+export interface MediaPost {
+  platform: MediaPlatform;
+  versions: string[]; // plain text; 1–3
+  chosen: number; // index into versions
+}
+
+/** Article / website: one section. Plain text; heading is plain text too. */
+export interface MediaSection {
+  id: string; // "S1" inside the piece
+  heading: string;
+  text: string;
+  status: 'todo' | 'writing' | 'done';
+}
+
+/** Video: one row of the shot table. */
+export interface MediaShot {
+  at: string; // "0:00"
+  shot: string; // what we see
+  voiceover: string;
+  onScreen?: string;
+  evidence?: { taskId: string; evidenceId: string; name: string }; // a screenshot from task evidence
+  record?: boolean; // you need to film it
+}
+
+export interface MediaRequest {
+  at: string;
+  from: string; // "human" (you) or "system"
+  text: string; // "Shorter", "end with a question for teachers"
+  doneAt?: string; // herald finished a draft after this request
+}
+
+export interface MediaPiece {
+  id: string; // "MP1"
+  kind: MediaKind;
+  title: string;
+  status: MediaStatus;
+  about: MediaAbout[];
+  note?: string; // "Anything herald should know" (≤ 2000)
+  platforms?: MediaPlatform[]; // social only
+  target?: string; // website only: where it goes, "/features/moderation" (herald suggests, you can edit)
+  posts?: MediaPost[]; // social
+  images?: MediaImage[]; // social
+  sections?: MediaSection[]; // article, website
+  hooks?: string[]; // video: up to 3 opening hooks
+  hookChosen?: number;
+  shots?: MediaShot[]; // video
+  claims: MediaClaim[];
+  requests: MediaRequest[]; // "Ask herald to change it"
+  progress?: string; // herald's live line while drafting: "writing section 3 of 5"
+  suggestionId?: string; // the suggestion it came from
+  editedAt?: string; // you last edited the text
+  createdAt: string;
+  updatedAt: string;
+  approvedAt?: string;
+  usedAt?: string;
+  error?: string; // status 'failed'
+}
+
+export interface MediaSuggestion {
+  id: string; // "MS1"
+  trigger: 'stage' | 'feature' | 'weekly';
+  ref: string; // "M3", "T41", "2026-W40"
+  title: string; // "Moderation is live: teachers approve posts before the class sees them"
+  summary: string; // "Article + 3 social posts + a changelog entry. Built from 9 merged tasks and 6 screenshots."
+  plan: { kind: MediaKind; platforms?: MediaPlatform[] }[]; // what Write it creates
+  about: MediaAbout[];
+  status: 'open' | 'accepted' | 'dismissed';
+  createdAt: string;
+  decidedAt?: string;
+  pieceIds?: string[]; // created on accept
+}
+
+/** .muster/media.json */
+export interface MediaStore {
+  version: 1;
+  rev: number; // +1 on every save; carried by the 'media' event
+  pieces: MediaPiece[];
+  suggestions: MediaSuggestion[];
+  houseStyle: string; // editable on the Media page; herald follows it
+  lastWeekly?: string; // "2026-W40": the last ISO week a roundup was considered
+  nextIds: { piece: number; suggestion: number };
+}
+
+/** Nav badge and header counts, carried by the 'media' event and GET /api/media/summary. */
+export interface MediaSummary {
+  rev: number;
+  review: number; // pieces waiting on you: the nav badge
+  drafting: number; // queued + drafting
+  openSuggestions: number;
+  working?: { id: string; title: string; progress?: string }; // the piece herald is on now
 }
