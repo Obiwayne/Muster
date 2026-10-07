@@ -32,6 +32,7 @@ export interface Timings {
   watchdogIdleMs: number; // an agent holding work at an idle prompt this long gets a re-nudge
   watchdogStartingMs: number; // ... as does one still 'starting' this long after spawn
   watchdogEscalateMs: number; // still not active this long after the re-nudge: stuck note, Captain inbox item, toast
+  heraldIdleMs: number; // herald idle at its prompt with Media work waiting this long gets its work prompt again (it missed it, e.g. typed while it restarted)
   scoutStopDelayMs: number; // after finish_research, let scout read the tool result before it is stopped
 }
 
@@ -49,6 +50,7 @@ export const DEFAULT_TIMINGS: Timings = {
   watchdogIdleMs: 5 * 60_000,
   watchdogStartingMs: 3 * 60_000,
   watchdogEscalateMs: 5 * 60_000,
+  heraldIdleMs: 60_000,
   scoutStopDelayMs: 3000,
 };
 
@@ -1346,9 +1348,12 @@ export class AgentManager {
       if (!rt || rt.stopping) continue;
       const unread = inboxFor(this.state, agent.id, true);
       const task = agent.taskId ? this.state.tasks.find((t) => t.id === agent.taskId) : undefined;
-      const key = task ? task.id : unread.length ? `inbox:${unread[0].id}` : '';
+      // herald holds Media work (a draft, an image, research, a post), not tasks: its first prompt is the nudge.
+      const mediaWork = agent.role === 'media' && (this.o.media?.hasWork ? this.o.media.hasWork() : !!this.o.media?.draftingPiece()) ? this.firstPromptFor(agent) : undefined;
+      const key = task ? task.id : unread.length ? `inbox:${unread[0].id}` : mediaWork ? `media:${mediaWork}` : '';
       const starting = agent.status === 'starting';
-      const idle = agent.status === 'idle' && !rt.permissionNoteId && now - (rt.lastOutputAt ?? rt.spawnedAt) >= this.timings.watchdogIdleMs;
+      const idleMs = mediaWork ? Math.min(this.timings.watchdogIdleMs, this.timings.heraldIdleMs) : this.timings.watchdogIdleMs;
+      const idle = agent.status === 'idle' && !rt.permissionNoteId && now - (rt.lastOutputAt ?? rt.spawnedAt) >= idleMs;
       const late = starting && now - rt.spawnedAt >= this.timings.watchdogStartingMs;
       if (!key || agent.status === 'working' || (!starting && agent.status !== 'idle')) {
         rt.wd = undefined;
@@ -1366,7 +1371,14 @@ export class AgentManager {
         if (this.humanHoldLeft(agent.id) > 0) continue;
         wd.nudgedAt = now;
         this.log(`${agent.id}: idle holding ${key}; re-nudging`);
-        void this.type(agent.id, `[muster] You have work waiting: call read_inbox${task ? `, then continue ${task.id}` : ''}.`).catch(() => {});
+        void this.type(agent.id, mediaWork && !task && !unread.length ? mediaWork : `[muster] You have work waiting: call read_inbox${task ? `, then continue ${task.id}` : ''}.`).catch(() => {});
+      } else if (mediaWork && !task && !unread.length) {
+        // herald has no Captain to escalate to: keep re-sending its work prompt every escalate interval.
+        if (now - wd.nudgedAt >= this.timings.watchdogEscalateMs) {
+          wd.nudgedAt = now;
+          this.log(`${agent.id}: still idle holding ${key}; re-nudging`);
+          void this.type(agent.id, mediaWork).catch(() => {});
+        }
       } else if (now - wd.nudgedAt >= this.timings.watchdogEscalateMs) {
         wd.escalated = true;
         const mins = Math.max(1, Math.round((now - wd.since) / 60_000));
