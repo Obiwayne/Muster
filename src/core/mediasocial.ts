@@ -52,8 +52,8 @@ export const DEFAULT_REPLY_POLICY: MediaReplyPolicy = { perDay: 5, watchOwn: tru
 /** Comments on your posts are checked at most this often, for posts at most this old. */
 export const WATCH_EVERY_MS = 24 * 3600_000;
 export const WATCH_POSTS_FOR_MS = 14 * 24 * 3600_000;
-/** How long media_publish_wait holds before answering "waiting". */
-export const PUBLISH_WAIT_MS = 5 * 60_000;
+/** How long media_publish_wait holds before answering "waiting" (under Node's 5-minute request timeout). */
+export const PUBLISH_WAIT_MS = 4 * 60_000;
 
 const ACTIVE: readonly MediaPublishJob['status'][] = ['queued', 'filling', 'ready', 'posting'];
 const MAX_DESIGNS = 12;

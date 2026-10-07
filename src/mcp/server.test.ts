@@ -572,6 +572,41 @@ describe('muster-mcp media tools', () => {
     expect(calls[0]).toEqual({ path: '/api/media/suggestions', method: 'POST', body: { actor: 'captain', task: 'T41', title: 'PDF export', why: 'Teachers asked.' } });
   });
 
+  it('herald posts through Chrome: next, ready, wait (go / cancel / waiting), done, failed with signin', async () => {
+    const job = { id: 'PJ2', kind: 'post', platform: 'x', status: 'filling', text: 'Hi\n\n#edtech', images: ['C:/m/x.png'] };
+    let decision = 'waiting';
+    const { call, calls } = await connect('media', (c) => {
+      if (c.path === '/api/media/publish/next') return { job };
+      if (c.path.endsWith('/wait')) return { decision, job: { ...job, status: decision === 'go' ? 'posting' : 'ready' } };
+      if (c.path.endsWith('/failed')) return { ...job, status: 'signin', error: 'not signed in' };
+      return { ...job, status: c.path.endsWith('/done') ? 'posted' : 'ready' };
+    });
+    expect((await call('media_publish_next')).text).toBe('PJ2 post on x: filling\nText (exactly):\n<<<\nHi\n\n#edtech\n>>>\nImages:\n- C:/m/x.png');
+    expect((await call('media_publish_ready', { job: 'pj2', composer: 'Hi #edtech', attached: 1 })).text).toMatch(/Now call media_publish_wait\(PJ2\)/);
+    expect(calls[1]).toEqual({ path: '/api/media/publish/PJ2/ready', method: 'POST', body: { actor: 'herald', composer: 'Hi #edtech', attached: 1 } });
+    expect((await call('media_publish_wait', { job: 'PJ2' })).text).toMatch(/^waiting: .*again/);
+    decision = 'go';
+    expect((await call('media_publish_wait', { job: 'PJ2' })).text).toMatch(/^go: press Post once now/);
+    decision = 'cancel';
+    expect((await call('media_publish_wait', { job: 'PJ2' })).text).toMatch(/^cancel: discard the draft/);
+    await call('media_publish_done', { job: 'PJ2', url: 'https://x.com/me/1' });
+    expect(calls.at(-1)).toEqual({ path: '/api/media/publish/PJ2/done', method: 'POST', body: { actor: 'herald', url: 'https://x.com/me/1' } });
+    expect((await call('media_publish_failed', { job: 'PJ2', error: 'not signed in', signin: true })).text).toMatch(/PJ2 post on x: signin \(not signed in\)/);
+  });
+
+  it('herald saves research, post images and conversations, and finishes the comment check', async () => {
+    const { call, calls } = await connect('media', (c) => {
+      if (c.path === '/api/media/conversations') return { added: [{ id: 'MC1', platform: 'x', kind: 'thread' }] };
+      if (c.path === '/api/media/watch/done') return { ok: true };
+      return piece({ research: { top: [], themes: [{ text: 't', count: 2 }], hashtags: [] }, designs: [{ platform: 'x', width: 1600, height: 900 }] });
+    });
+    expect((await call('media_research', { piece: 'mp3', themes: [{ text: 't', count: 2 }] })).text).toBe('Saved research for MP3 (social, drafting) "Approve before publish": 0 posts/articles, 1 themes, 0 hashtags.');
+    expect(calls[0]).toEqual({ path: '/api/media/pieces/MP3/research', method: 'POST', body: { actor: 'herald', themes: [{ text: 't', count: 2 }] } });
+    expect((await call('media_designs', { piece: 'MP3', designs: [{ platform: 'x', file: 'a.png', caption: 'c' }] })).text).toMatch(/x 1600×900/);
+    expect((await call('media_conversations', { conversations: [{ platform: 'x', url: 'https://x.com/a/1', who: 'a', quote: 'q', why: 'w', draft: 'd' }] })).text).toMatch(/^Added MC1 \(x thread\)/);
+    expect((await call('media_watch_done')).text).toMatch(/^Comment check done/);
+  });
+
   it('herald saves demo GIF frames; the Captain links a recording task', async () => {
     const h = await connect('media', () => piece({ kind: 'gif' }));
     const gif = { frames: [{ taskId: 'T38', evidenceId: 'E2', name: 'queue.png', caption: 'New posts wait for you first' }], steps: ['Open a wall'], altText: 'A teacher approves a post.' };

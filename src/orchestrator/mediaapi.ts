@@ -25,7 +25,7 @@ export interface MediaRuntimeOptions {
   log?: (msg: string) => void;
   /** Test seam: the ffmpeg path / runner / font behind demo GIF rendering (core/mediagif.ts). */
   gif?: RenderOptions;
-  /** Test seams: how long media_publish_wait holds (default 5 min) and how often it looks (default 1 s). */
+  /** Test seams: how long media_publish_wait holds (default 4 min) and how often it looks (default 1 s). */
   publishWaitMs?: number;
   publishPollMs?: number;
 }

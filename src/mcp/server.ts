@@ -873,7 +873,7 @@ ${r.output}`;
 
     tool(
       'media_publish_wait',
-      'Wait for the user (up to 5 minutes per call): go = press Post/Reply once now, then media_publish_done; cancel = discard the draft and close the tab; waiting = call it again.',
+      'Wait for the user (up to 4 minutes per call): go = press Post/Reply once now, then media_publish_done; cancel = discard the draft and close the tab; waiting = call it again.',
       { job: z.string() },
       async ({ job }) => {
         const r = await api<{ decision: string; job: MediaPublishJob }>(`/api/media/publish/${enc(upId(job))}/wait`, { method: 'POST', body: { actor: me } });
