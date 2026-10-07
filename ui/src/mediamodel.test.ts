@@ -124,8 +124,9 @@ describe('sources', () => {
   } as unknown as MusterState;
 
   it('counts what herald writes from', () => {
-    const c = sourceCounts(state, [piece('MP1', { createdAt: '2026-10-07T00:00:00Z' })]);
-    expect(c).toMatchObject({ stages: ['M1'], merged: 1, screenshots: 2, chat: 2 });
+    const c = sourceCounts(state, [piece('MP1', { usedAt: '2026-10-07T00:00:00Z' }), piece('MP2', { createdAt: '2026-10-09T00:00:00Z' })]);
+    expect(c).toMatchObject({ stages: ['M1'], merged: 1, since: '2026-10-07T00:00:00Z', screenshots: 2, chat: 2 });
+    expect(sourceCounts(state, []).merged).toBe(2);
   });
 
   it('picks evidence images of the stage the piece is about', () => {

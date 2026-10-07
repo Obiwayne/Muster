@@ -179,10 +179,10 @@ export function pieceFor(p: MediaPiece): string {
 
 export interface SourceCounts { stages: string[]; merged: number; since?: string; screenshots: number; chat: number }
 
-/** "What herald writes from": stages done, merged tasks since the last piece, evidence screenshots, chat lines. */
+/** "What herald writes from": stages done, merged tasks since your last post (the newest piece marked used), evidence screenshots, chat lines. */
 export function sourceCounts(state: MusterState, pieces: MediaPiece[]): SourceCounts {
   const stages = (state.roadmap?.stages ?? []).filter((s) => s.status === 'done').map((s) => s.id);
-  const last = pieces.reduce<string | undefined>((m, p) => (!m || p.createdAt > m ? p.createdAt : m), undefined);
+  const last = pieces.reduce<string | undefined>((m, p) => (p.usedAt && (!m || p.usedAt > m) ? p.usedAt : m), undefined);
   const merged = state.tasks.filter((t) => t.status === 'merged' && (!last || t.updatedAt > last)).length;
   const screenshots = state.tasks.reduce((n, t) => n + (t.evidence ?? []).reduce((k, e) => k + e.files.filter((f) => f.kind === 'image').length, 0), 0);
   return { stages, merged, since: last, screenshots, chat: state.feed.length };
