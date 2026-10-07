@@ -141,6 +141,19 @@ describe('research (scout) rules', () => {
   });
 });
 
+describe('media (herald) rules', () => {
+  const herald: GuardEnv = { role: 'media', agentId: 'herald', repo: 'F:\\Proj', baseBranch: 'main', platform: 'win32' };
+  it('only reads: no edits, no git writes, reads and git history allowed', () => {
+    const d = decide(edit('F:\\Proj\\post.txt', 'F:\\Proj', 'Write'), herald);
+    expect(!d.allow && d.reason).toMatch(/^herald \(the media agent\) only reads: no file edits/);
+    const push = decide(bash('git push', 'F:\\Proj'), herald);
+    expect(!push.allow && push.reason).toMatch(/^herald \(the media agent\) only reads: git push is not allowed/);
+    expect(decide(bash('git log --oneline -5', 'F:\\Proj'), herald).allow).toBe(true);
+    expect(decide({ tool_name: 'Read', tool_input: { file_path: 'F:\\Proj\\.muster\\evidence\\T3\\E1\\a.png' }, cwd: 'F:\\Proj' }, herald).allow).toBe(true);
+    expect(decide({ tool_name: 'Read', tool_input: { file_path: 'F:\\Proj\\.muster\\agents\\captain\\mcp.json' }, cwd: 'F:\\Proj' }, herald).allow).toBe(false);
+  });
+});
+
 describe('browser and cookie tooling (every role)', () => {
   const SECRETS = 'C:\\Users\\me\\AppData\\Local\\muster';
   const envs: GuardEnv[] = [

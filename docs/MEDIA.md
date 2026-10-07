@@ -152,3 +152,24 @@ shows herald with the rose dot and status text "drafting" or "idle". herald is n
 - **Video:** the shot table (time, shot thumbnail from evidence or a dashed "record" box, voiceover, on screen),
   "Show all", the hook picker rail, shot counts and Copy script / Copy shot list (CSV).
 - **Live updates:** listen to the `media` event (events.ts `onMedia`, like `onIntel`) and refetch.
+
+## Implementation notes (backend, obi/media-api)
+
+These are details the contract left open, decided while building:
+- Herald routes accept `current` as the piece id (`/api/media/pieces/current/draft|finish`); the MCP tools default to
+  it. You can also read `GET /api/media/brief` (agents other than herald get 403).
+- The queue order is oldest `updatedAt` first, so a piece you asked to change goes behind pieces already waiting.
+- `edit` refuses `claims`, `progress` and `status` (400). Fields that don't fit the kind (for example `posts` on an
+  article) get a 400.
+- `finish` refuses an incomplete draft with a 409 that names what's missing: a platform with no post, no section
+  with text, or no shots. It sets every section to `done`.
+- herald's claim sources can't be `opinion`; only your Confirm adds that.
+- Stage suggestions are made only for stages completed in the last 14 days, so an old roadmap doesn't flood the page
+  on first run. The title is "<stage title> is done".
+- `suggest_media` (POST /api/media/suggestions) needs a **merged** task (409 otherwise) and allows one suggestion per
+  task (409 on a repeat).
+- Creating a piece with the `suggestionId` of a dismissed suggestion gives a 409.
+- herald stops `timings.scoutStopDelayMs` after the last finish (the same delay scout gets).
+- The `ApiContext.media` route group is optional in `createApi`, so older tests still compile. The server always
+  passes it.
+- `Orchestrator.media` (the `MediaRuntime`) is exposed like `intel`.
