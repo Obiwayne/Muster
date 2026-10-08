@@ -89,3 +89,98 @@ test('a refused claim sends nothing to Codex', async () => {
   await new CodexBridge({ api, getSession: () => session, file: tmp() }).tick();
   assert.equal(sent.length, 0);
 });
+
+const finishTurn = (emit, turnId, text) => {
+  emit('item/completed', { turnId, item: { type: 'agentMessage', id: `m-${turnId}`, text } });
+  emit('turn/completed', { turn: { id: turnId } });
+};
+
+test('a follow-up message goes to the same Codex thread', async () => {
+  const { session, sent, emit } = codex(); const file = tmp();
+  const api = orchestrator([msg(1)]);
+  const bridge = new CodexBridge({ api, getSession: () => session, file });
+  const first = bridge.tick(); await wait(); finishTurn(emit, 'tu1', 'one'); await first;
+  const api2 = orchestrator([msg(2)]);
+  const bridge2 = new CodexBridge({ api: api2, getSession: () => session, file });
+  const second = bridge2.tick(); await wait(); finishTurn(emit, 'tu1', 'two'); await second;
+  const turns = sent.filter(m => m.method === 'turn/start');
+  assert.equal(turns.length, 2);
+  assert.equal(turns[0].params.threadId, 'th'); assert.equal(turns[1].params.threadId, 'th');
+  assert.equal(sent.filter(m => m.method === 'thread/start').length, 1);
+  assert.equal(api2.calls.at(-1)[2].reply, 'two'); session.close();
+});
+
+test('Codex missing or signed out reports failed with a useful error', async () => {
+  for (const [message, expected] of [
+    ['Codex CLI was not found. Install Codex and sign in with codex login first.', /Codex CLI not found/],
+    ['401 Unauthorized', /codex login/],
+    ['Codex connection closed. Send a message to reconnect.', /connection closed/]]) {
+    const { session } = codex(); session.send = async () => { throw new Error(message); };
+    const api = orchestrator([msg(1)]);
+    await new CodexBridge({ api, getSession: () => session, file: tmp() }).tick();
+    assert.equal(api.calls[1][2].status, 'failed'); assert.match(api.calls[1][2].error, expected);
+  }
+});
+
+test('a crash after delivery is recovered from the journal without resending', async () => {
+  const { session, sent } = codex(); const file = tmp();
+  const api = orchestrator([msg(1)]);
+  const bridge = new CodexBridge({ api, getSession: () => session, file });
+  const p = bridge.tick(); await wait();
+  assert.deepEqual(JSON.parse(fs.readFileSync(file, 'utf8')).k1, { turnId: 'tu1', messageId: 'CX1' });
+  bridge.stop(); session.close(); void p; // the app dies here, before turn/completed
+  const again = codex(); const api2 = orchestrator([msg(1)]);
+  await new CodexBridge({ api: api2, getSession: () => again.session, file }).tick();
+  assert.equal(again.sent.some(m => m.method === 'turn/start'), false);
+  assert.equal(sent.filter(m => m.method === 'turn/start').length, 1);
+  assert.equal(api2.calls.at(-1)[2].status, 'failed'); assert.match(api2.calls.at(-1)[2].error, /not re-sent/);
+});
+
+test('a retry after a failed send delivers exactly once', async () => {
+  const { session, sent, emit } = codex(); const file = tmp(); const real = session.send.bind(session);
+  let fail = true; session.send = async (...args) => { if (fail) { fail = false; throw new Error('Codex timed out: turn/start'); } return real(...args); };
+  const api = orchestrator([msg(1)]);
+  const bridge = new CodexBridge({ api, getSession: () => session, file });
+  await bridge.tick();
+  assert.equal(api.calls[1][2].status, 'failed');
+  const p = bridge.tick(); await wait(); finishTurn(emit, 'tu1', 'ok'); await p;
+  assert.equal(sent.filter(m => m.method === 'turn/start').length, 1);
+  assert.equal(api.calls.at(-1)[2].status, 'completed');
+  await bridge.tick(); // the journal now holds the key: a stale queue entry is not sent again
+  assert.equal(sent.filter(m => m.method === 'turn/start').length, 1); session.close();
+});
+
+test('two projects deliver to their own sessions and journals', async () => {
+  const a = codex(); const b = codex();
+  const apiA = orchestrator([msg(1, { text: 'for A' })]); const apiB = orchestrator([msg(2, { text: 'for B' })]);
+  const pa = new CodexBridge({ api: apiA, getSession: () => a.session, file: tmp() }).tick();
+  const pb = new CodexBridge({ api: apiB, getSession: () => b.session, file: tmp() }).tick(); await wait();
+  finishTurn(a.emit, 'tu1', 'reply A'); await pa;
+  finishTurn(b.emit, 'tu1', 'reply B'); await pb;
+  assert.match(a.sent.find(m => m.method === 'turn/start').params.input[0].text, /for A/);
+  assert.match(b.sent.find(m => m.method === 'turn/start').params.input[0].text, /for B/);
+  assert.equal(apiA.calls.at(-1)[2].reply, 'reply A'); assert.equal(apiB.calls.at(-1)[2].reply, 'reply B');
+  assert.equal(apiA.calls.some(c => c[1] === 'CX2'), false); assert.equal(apiB.calls.some(c => c[1] === 'CX1'), false);
+  a.session.close(); b.session.close();
+});
+
+test('delivers one turn at a time and picks up the next once the panel is idle', async () => {
+  const { session, sent, emit } = codex(); const api = orchestrator([msg(1), msg(2)]);
+  const bridge = new CodexBridge({ api, getSession: () => session, file: tmp() });
+  session.busy = true; await bridge.tick(); assert.equal(api.calls.length, 0);
+  session.busy = false;
+  const p = bridge.tick(); await wait();
+  await bridge.tick(); // overlapping tick while a delivery is in flight does nothing
+  assert.equal(sent.filter(m => m.method === 'turn/start').length, 1);
+  finishTurn(emit, 'tu1', 'x'); await p; session.close();
+});
+
+test('nothing sensitive is logged', async () => {
+  const seen = []; const orig = { log: console.log, error: console.error, warn: console.warn };
+  for (const k of Object.keys(orig)) console[k] = (...a) => seen.push(a.join(' '));
+  try {
+    const { session, emit } = codex(); const api = orchestrator([msg(1, { text: 'SECRET-TEXT' })]); api.status = async () => { throw new Error('x'); };
+    const p = new CodexBridge({ api, getSession: () => session, file: tmp() }).tick(); await wait(); finishTurn(emit, 'tu1', 'SECRET-REPLY'); await p; session.close();
+  } finally { Object.assign(console, orig); }
+  assert.deepEqual(seen, []);
+});
