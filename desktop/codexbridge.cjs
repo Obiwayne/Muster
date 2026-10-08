@@ -148,7 +148,7 @@ class CodexBridge {
       await finished;
       if (t.error) { delete this.deliveries[msg.deliveryKey]; this.save(); await post({ status: 'failed', error: failureText(t.error), codexThreadId: session.threadId }); return; }
       sendResponding();
-      await post({ status: 'completed', codexThreadId: session.threadId, reply: t.replies.length ? t.replies.join('\n\n') : t.deltas });
+      await post({ status: 'completed', codexThreadId: session.threadId, reply: (t.replies.length ? t.replies.join('\n\n') : t.deltas) || '(Codex sent no text reply)' });
     } finally { session.off('notify', onNotify); session.off('state', onState); }
   }
 }
