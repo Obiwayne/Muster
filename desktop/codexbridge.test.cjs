@@ -48,9 +48,9 @@ test('delivers the oldest message, streams responding, then completed with every
   emit('item/completed', { turnId: 'tu1', item: { type: 'agentMessage', id: 'b', text: 'Done' } });
   emit('turn/completed', { turn: { id: 'tu1' } });
   await done;
-  assert.deepEqual(api.calls.slice(1).map(c => c[2].status), ['responding', 'completed']);
+  assert.deepEqual(api.calls.slice(1).map(c => c[2].status), ['delivered', 'responding', 'completed']);
   assert.equal(api.calls[1][2].codexThreadId, 'th');
-  assert.equal(api.calls[2][2].reply, 'Hi there\n\nDone'); session.close();
+  assert.equal(api.calls[3][2].reply, 'Hi there\n\nDone'); session.close();
 });
 
 test('waits while the panel is busy and claims nothing', async () => {
@@ -69,11 +69,12 @@ test('a turn error and a dead connection both report failed', async () => {
   const a = codex(); const apiA = orchestrator([msg(1)]);
   const p = new CodexBridge({ api: apiA, getSession: () => a.session, file: tmp() }).tick(); await wait();
   a.emit('turn/completed', { turn: { id: 'tu1', error: { message: 'boom' } } }); await p;
-  assert.deepEqual(apiA.calls[1][2], { status: 'failed', error: 'boom', codexThreadId: 'th' }); a.session.close();
+  assert.deepEqual(apiA.calls.map(c => c[2]?.status), [undefined, 'delivered', 'failed']);
+  assert.deepEqual(apiA.calls[2][2], { status: 'failed', error: 'boom', codexThreadId: 'th' }); a.session.close();
   const b = codex(); const apiB = orchestrator([msg(1)]);
   const q = new CodexBridge({ api: apiB, getSession: () => b.session, file: tmp() }).tick(); await wait();
   b.child.emit('exit'); await q;
-  assert.equal(apiB.calls[1][2].status, 'failed'); assert.match(apiB.calls[1][2].error, /connection closed/);
+  assert.equal(apiB.calls.at(-1)[2].status, 'failed'); assert.match(apiB.calls.at(-1)[2].error, /connection closed/);
 });
 
 test('a delivery that already has a turn id is never re-sent after a restart', async () => {
@@ -183,4 +184,56 @@ test('nothing sensitive is logged', async () => {
     const p = new CodexBridge({ api, getSession: () => session, file: tmp() }).tick(); await wait(); finishTurn(emit, 'tu1', 'SECRET-REPLY'); await p; session.close();
   } finally { Object.assign(console, orig); }
   assert.deepEqual(seen, []);
+});
+
+test('delivered is reported when Codex accepts the turn, before any reply text', async () => {
+  const { session, emit } = codex(); const api = orchestrator([msg(1)]);
+  const p = new CodexBridge({ api, getSession: () => session, file: tmp() }).tick(); await wait();
+  assert.deepEqual(api.calls.map(c => c[2]?.status), [undefined, 'delivered']);
+  assert.equal(api.calls[1][2].codexThreadId, 'th');
+  finishTurn(emit, 'tu1', 'x'); await p; session.close();
+});
+
+test('restart replays the recorded outcome of a finished turn instead of reporting interrupted', async () => {
+  const file = tmp();
+  const { session, emit } = codex(); const api = orchestrator([msg(1)]);
+  api.status = async (id, body) => { api.calls.push(['status', id, body]); if (body.status === 'completed') throw Object.assign(new Error('x'), { status: 503 }); };
+  const p = new CodexBridge({ api, getSession: () => session, file }).tick(); await wait(); finishTurn(emit, 'tu1', 'final answer'); await p; session.close();
+  const saved = JSON.parse(fs.readFileSync(file, 'utf8')).k1;
+  assert.equal(saved.outcome.status, 'completed'); assert.equal(saved.reported, undefined);
+  const again = codex(); const api2 = orchestrator([msg(1)]);
+  await new CodexBridge({ api: api2, getSession: () => again.session, file }).tick();
+  assert.equal(again.sent.some(m => m.method === 'turn/start'), false);
+  assert.deepEqual(api2.calls.at(-1)[2], { status: 'completed', codexThreadId: 'th', reply: 'final answer' });
+  assert.equal(JSON.parse(fs.readFileSync(file, 'utf8')).k1.reported, true);
+  const api3 = orchestrator([msg(1)]);
+  await new CodexBridge({ api: api3, getSession: () => again.session, file }).tick();
+  assert.equal(api3.calls.length, 0); // reported once; a stale queue entry is left alone
+});
+
+test('a refused status post is kept and retried on the next poll, then given up after the cap', async () => {
+  const file = tmp(); fs.writeFileSync(file, JSON.stringify({ k1: { turnId: 'old', messageId: 'CX1', outcome: { status: 'completed', reply: 'r' } } }));
+  const { session } = codex(); const api = orchestrator([msg(1)]);
+  api.status = async (id, body) => { api.calls.push(['status', id, body]); throw Object.assign(new Error('x'), { status: 409 }); };
+  const bridge = new CodexBridge({ api, getSession: () => session, file });
+  for (let i = 0; i < 8; i++) await bridge.tick();
+  assert.equal(api.calls.filter(c => c[0] === 'status').length, 5);
+  assert.equal(JSON.parse(fs.readFileSync(file, 'utf8')).k1.outcome.status, 'completed');
+});
+
+test('a /ws/events state change triggers a poll, and the socket is reconnected and closed on stop', async () => {
+  const { session, sent, emit } = codex(); const api = orchestrator([msg(1)]);
+  const sockets = []; api.events = (onEvent, onClose) => { const s = { onEvent, onClose, closed: false }; sockets.push(s); return () => { s.closed = true; }; };
+  const bridge = new CodexBridge({ api, getSession: () => session, file: tmp(), pollMs: 1e6, heartbeatMs: 1e6, reconnectMs: 5 });
+  bridge.stop = bridge.stop.bind(bridge);
+  const origTick = bridge.tick.bind(bridge); let ticks = 0; bridge.tick = () => { ticks++; return origTick(); };
+  bridge.start(); await wait();
+  const before = ticks; sockets[0].onEvent(); await wait();
+  assert.ok(ticks > before); assert.equal(sent.some(m => m.method === 'turn/start'), true); // the first tick already delivered; the event ticked again
+  sockets[0].onClose(); await new Promise(r => setTimeout(r, 40));
+  assert.equal(sockets.length, 2);
+  bridge.stop(); assert.equal(sockets[1].closed, true);
+  sockets[1].onClose(); await new Promise(r => setTimeout(r, 40));
+  assert.equal(sockets.length, 2); // no reconnect after stop
+  emit('turn/completed', { turn: { id: 'tu1' } }); session.close();
 });

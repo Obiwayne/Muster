@@ -8,6 +8,8 @@ const { createHash } = require('node:crypto');
 const POLL_MS = 2000;
 const HEARTBEAT_MS = 10000;
 const KEEP_DELIVERIES = 200;
+const RECONNECT_MS = 3000;
+const MAX_REPORT_TRIES = 5; // per recorded outcome, across polls
 
 // Mirrors src/core/tokens.ts: the human token lives outside the repo, under a hash of the repo root.
 function humanToken(root, env = process.env) {
@@ -40,6 +42,21 @@ function orchestratorApi(root) {
     claim: (messageId, deliveryKey) => call('POST', `/api/codex/${id(messageId)}/claim`, { deliveryKey }),
     status: (messageId, body) => call('POST', `/api/codex/${id(messageId)}/status`, body),
     heartbeat: () => call('POST', '/api/codex/worker', { alive: true }),
+    // State-change pushes from /ws/events; returns a closer. Events carry no message text we use: they only wake the poller.
+    events(onEvent, onClose) {
+      let ws;
+      try {
+        const port = JSON.parse(fs.readFileSync(path.join(root, '.muster', 'server.json'), 'utf8')).port;
+        const token = humanToken(root);
+        if (!token) throw new Error('no token');
+        const WebSocket = require('ws');
+        ws = new WebSocket(`ws://127.0.0.1:${port}/ws/events?token=${encodeURIComponent(token)}`);
+        ws.on('message', () => onEvent());
+        ws.on('error', () => {});
+        ws.on('close', () => onClose());
+      } catch { setTimeout(onClose, 0); }
+      return () => { try { ws?.removeAllListeners('close'); ws?.close(); } catch { /* already closed */ } };
+    },
   };
 }
 
@@ -63,8 +80,20 @@ class CodexBridge {
     beat();
     this.timers.push(setInterval(beat, this.o.heartbeatMs || HEARTBEAT_MS), setInterval(() => void this.tick(), this.o.pollMs || POLL_MS));
     void this.tick();
+    this.watch();
   }
-  stop() { this.stopped = true; for (const t of this.timers) clearInterval(t); this.timers = []; }
+  // A state change wakes the poller early; the 2 s interval stays as the fallback. Reconnects until stopped.
+  watch() {
+    if (this.stopped || !this.o.api.events) return;
+    this.closeEvents = this.o.api.events(() => void this.tick(), () => {
+      if (this.stopped) return;
+      this.reconnect = setTimeout(() => this.watch(), this.o.reconnectMs || RECONNECT_MS);
+    });
+  }
+  stop() {
+    this.stopped = true; for (const t of this.timers) clearInterval(t); this.timers = [];
+    clearTimeout(this.reconnect); this.closeEvents?.(); this.closeEvents = null;
+  }
   save() {
     const keys = Object.keys(this.deliveries);
     for (const k of keys.slice(0, Math.max(0, keys.length - KEEP_DELIVERIES))) delete this.deliveries[k];
@@ -77,6 +106,15 @@ class CodexBridge {
       catch (e) { if (e?.status && e.status < 500) return false; await new Promise(r => setTimeout(r, 300 * (attempt + 1))); }
     }
     return false;
+  }
+  // Report a terminal status; keep it in the journal until the server accepts it so a later poll can retry.
+  async finalize(key, entry, body) {
+    entry.outcome = body; this.save();
+    const ok = await this.report(entry.messageId, body);
+    if (!ok) return false;
+    if (body.status === 'failed') delete this.deliveries[key]; // a retry of a failed message may be sent again
+    else entry.reported = true;
+    this.save(); return true;
   }
   // One message at a time, strictly in createdAt order; never overlaps itself.
   async tick() {
@@ -92,9 +130,13 @@ class CodexBridge {
   }
   async deliver(session, msg) {
     const known = this.deliveries[msg.deliveryKey];
-    if (known?.turnId) { // Codex already accepted this delivery before a crash: never send it twice
+    if (known?.turnId) { // Codex already accepted this delivery before a restart: never send it twice
+      if (known.reported) return; // already told the server; a stale queue entry is not acted on
+      if ((known.tries || 0) >= MAX_REPORT_TRIES) return; // the server keeps refusing this outcome; stop hammering it
       await this.o.api.claim(msg.id, msg.deliveryKey).catch(() => {});
-      await this.report(msg.id, { status: 'failed', error: 'Delivery was interrupted after Codex accepted it; not re-sent' });
+      known.tries = (known.tries || 0) + 1;
+      const outcome = known.outcome || { status: 'failed', error: 'Delivery was interrupted after Codex accepted it; not re-sent' };
+      await this.finalize(msg.deliveryKey, known, outcome); // replays the recorded result when Codex had finished
       return;
     }
     try { await this.o.api.claim(msg.id, msg.deliveryKey); }
@@ -141,14 +183,17 @@ class CodexBridge {
         await post({ status: 'failed', error: failureText(e) }); return;
       }
       ourTurn = turnId;
-      this.deliveries[msg.deliveryKey] = { turnId, messageId: msg.id }; this.save();
+      const entry = this.deliveries[msg.deliveryKey] = { turnId, messageId: msg.id }; this.save();
+      void post({ status: 'delivered', codexThreadId: session.threadId });
       const t = turn(turnId);
       if (t.deltas || t.replies.length) sendResponding();
       if (t.done) finish(); else if (!session.busy) onState({ busy: false, error: session.error });
       await finished;
-      if (t.error) { delete this.deliveries[msg.deliveryKey]; this.save(); await post({ status: 'failed', error: failureText(t.error), codexThreadId: session.threadId }); return; }
-      sendResponding();
-      await post({ status: 'completed', codexThreadId: session.threadId, reply: (t.replies.length ? t.replies.join('\n\n') : t.deltas) || '(Codex sent no text reply)' });
+      await chain; // delivered / responding are out before the outcome
+      if (t.error) { await this.finalize(msg.deliveryKey, entry, { status: 'failed', error: failureText(t.error), codexThreadId: session.threadId }); return; }
+      sendResponding(); await chain;
+      await this.finalize(msg.deliveryKey, entry, { status: 'completed', codexThreadId: session.threadId,
+        reply: (t.replies.length ? t.replies.join('\n\n') : t.deltas) || '(Codex sent no text reply)' });
     } finally { session.off('notify', onNotify); session.off('state', onState); }
   }
 }
