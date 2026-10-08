@@ -62,7 +62,7 @@ test('waits while the panel is busy and claims nothing', async () => {
 test('reports failed when turn/start returns no turn id', async () => {
   const { session } = codex({ noTurn: true }); const api = orchestrator([msg(1)]);
   await new CodexBridge({ api, getSession: () => session, file: tmp() }).tick();
-  assert.equal(api.calls[1][2].status, 'failed'); session.close();
+  assert.equal(api.calls.at(-1)[2].status, 'failed'); assert.equal(api.calls.at(-1)[2].error, 'Codex did not start a turn.'); session.close();
 });
 
 test('a turn error and a dead connection both report failed', async () => {
