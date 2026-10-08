@@ -131,8 +131,10 @@ class CodexSession extends EventEmitter {
       this.messages.push({ id: `user-${Date.now()}`, role: 'user', text }); this.changed();
       const result = await this.request('turn/start', { threadId: this.threadId,
         input: [{ type: 'text', text: context ? `${context}\n\nUser request:\n${text}` : text }] });
-      if (this.busy) this.turnId = result.turn.id;
-      return result.turn.id;
+      const turnId = result?.turn?.id;
+      if (!turnId) throw new Error('Codex did not start a turn.');
+      if (this.busy) this.turnId = turnId;
+      return turnId;
     } catch (e) { this.busy = false; this.error = e.message; this.changed(); throw e; }
   }
   async interrupt() { if (this.threadId && this.turnId) await this.request('turn/interrupt', { threadId: this.threadId, turnId: this.turnId }); }
