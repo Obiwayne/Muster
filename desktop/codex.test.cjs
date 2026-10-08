@@ -70,3 +70,20 @@ test('a tool finishing after disconnect does not write to a dead connection', as
   child.emit('exit'); const count = sent.length;
   finish('Old result'); await pending; assert.equal(sent.length, count); session.close();
 });
+
+test('finds the newest codex.exe in the Codex app folder when it is not on PATH', () => {
+  const fs = require('node:fs'); const os = require('node:os'); const path = require('node:path');
+  const { installedCodex } = require('./codex.cjs');
+  const root = fs.mkdtempSync(path.join(os.tmpdir(), 'codex-find-'));
+  try {
+    assert.equal(installedCodex(root), null);
+    const bin = path.join(root, 'OpenAI', 'Codex', 'bin');
+    for (const [dir, age] of [['old', 2000], ['new', 0]]) {
+      fs.mkdirSync(path.join(bin, dir), { recursive: true });
+      const exe = path.join(bin, dir, 'codex.exe'); fs.writeFileSync(exe, '');
+      const t = new Date(Date.now() - age * 1000); fs.utimesSync(exe, t, t);
+    }
+    fs.mkdirSync(path.join(bin, 'empty'));
+    assert.equal(installedCodex(root), path.join(bin, 'new', 'codex.exe'));
+  } finally { fs.rmSync(root, { recursive: true, force: true }); }
+});

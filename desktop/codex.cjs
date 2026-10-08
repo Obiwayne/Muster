@@ -2,12 +2,29 @@
 const { spawn, execFileSync } = require('node:child_process');
 const { createInterface } = require('node:readline');
 const { EventEmitter } = require('node:events');
+const fs = require('node:fs');
+const path = require('node:path');
+
+// The Codex desktop app keeps codex.exe in %LOCALAPPDATA%\OpenAI\Codex\bin\<hash>\ without adding it to PATH,
+// and the hash changes when Codex updates, so fall back to the newest copy there.
+function installedCodex(localAppData = process.env.LOCALAPPDATA) {
+  if (!localAppData) return null;
+  const bin = path.join(localAppData, 'OpenAI', 'Codex', 'bin');
+  let dirs; try { dirs = fs.readdirSync(bin); } catch { return null; }
+  return dirs.map(d => path.join(bin, d, 'codex.exe')).filter(f => fs.existsSync(f))
+    .sort((a, b) => fs.statSync(b).mtimeMs - fs.statSync(a).mtimeMs)[0] || null;
+}
 
 function executable() {
-  const lines = execFileSync(process.platform === 'win32' ? 'where.exe' : 'which',
-    [process.platform === 'win32' ? 'codex.exe' : 'codex'], { encoding: 'utf8', windowsHide: true }).trim().split(/\r?\n/);
-  if (!lines[0]) throw new Error('Codex CLI was not found. Install Codex and sign in with codex login first.');
-  return lines[0];
+  let lines = [];
+  try {
+    lines = execFileSync(process.platform === 'win32' ? 'where.exe' : 'which',
+      [process.platform === 'win32' ? 'codex.exe' : 'codex'], { encoding: 'utf8', windowsHide: true, stdio: ['ignore', 'pipe', 'ignore'] })
+      .trim().split(/\r?\n/);
+  } catch { /* not on PATH */ }
+  const found = lines[0] || (process.platform === 'win32' ? installedCodex() : null);
+  if (!found) throw new Error('Codex CLI was not found. Install Codex and sign in with codex login first.');
+  return found;
 }
 
 class CodexSession extends EventEmitter {
@@ -138,4 +155,4 @@ class CodexSession extends EventEmitter {
   }
   close() { this.closed = true; const child = this.process; this.process = null; child?.kill(); this.lines?.close(); this.fail(new Error('Codex stopped')); }
 }
-module.exports = { CodexSession };
+module.exports = { CodexSession, installedCodex };
