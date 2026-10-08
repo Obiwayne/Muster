@@ -12,7 +12,9 @@ const SETTINGS = () => path.join(app.getPath('userData'), 'settings.json');
 const { updateStatus } = require('./update.cjs');
 const APP_STARTED_AT = Date.now();
 const { CodexSession } = require('./codex.cjs');
+const { CodexBridge, orchestratorApi } = require('./codexbridge.cjs');
 const { createHash } = require('node:crypto');
+let codexBridge = null;
 const codexSessions = new Map();
 
 function codexAllowed(event) {
@@ -22,6 +24,14 @@ function codexAllowed(event) {
 function codexFile(root) {
   return path.join(app.getPath('userData'), 'codex', createHash('sha256').update(path.resolve(root).toLowerCase()).digest('hex') + '.json');
 }
+// Delivers queued Captain messages through the same Codex thread as the panel, for the open project only.
+function startCodexBridge(root) {
+  stopCodexBridge();
+  codexBridge = new CodexBridge({ root, api: orchestratorApi(root), file: codexFile(root).replace(/\.json$/, '.bridge.json'),
+    getSession: () => codexSession() });
+  codexBridge.start();
+}
+function stopCodexBridge() { codexBridge?.stop(); codexBridge = null; }
 function codexSession() {
   const root = current.root;
   if (codexSessions.has(root)) return codexSessions.get(root);
@@ -80,7 +90,7 @@ codexHandle('app:codexNew', session => {
   try { fs.unlinkSync(codexFile(current.root)); } catch { /* no saved conversation */ }
   return codexSession().snapshot();
 });
-app.on('will-quit', () => { for (const session of codexSessions.values()) { session.flush(); session.removeAllListeners('state'); session.close(); } });
+app.on('will-quit', () => { stopCodexBridge(); for (const session of codexSessions.values()) { session.flush(); session.removeAllListeners('state'); session.close(); } });
 
 app.setAppUserModelId('com.obiwayne.muster');
 if (!app.requestSingleInstanceLock()) app.quit();
@@ -203,6 +213,7 @@ function createWindow() {
 }
 
 function showPicker() {
+  stopCodexBridge();
   current = null;
   setNeedsYou(0, null);
   win.setTitle('Muster');
@@ -248,6 +259,7 @@ async function openProject(dir) {
   setNeedsYou(0, null); // the next dashboard reports its own count
   current = { root, name: path.basename(root), url: `http://127.0.0.1:${port}/` };
   win.setTitle(`Muster · ${current.name}`);
+  startCodexBridge(root);
   await win.loadURL(current.url);
   buildMenu();
   return { ok: true };

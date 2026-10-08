@@ -17,7 +17,7 @@
     "build:ui": "vite build ui",
     "dev:ui": "vite ui",
     "test": "vitest run",
-    "test:desktop": "node --test desktop/codex.test.cjs",
+    "test:desktop": "node --test desktop/codex.test.cjs desktop/codexbridge.test.cjs",
     "typecheck": "tsc -p tsconfig.json --noEmit",
     "app": "electron .",
     "shortcuts": "powershell -NoProfile -ExecutionPolicy Bypass -File scripts/make-shortcuts.ps1",
