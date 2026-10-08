@@ -71,6 +71,7 @@ class CodexSession extends EventEmitter {
     }
     const p = message.params || {};
     if (p.threadId && this.threadId && p.threadId !== this.threadId) return;
+    this.emit('notify', message);
     if (message.method === 'item/agentMessage/delta') {
       let item = this.messages.find(m => m.id === p.itemId);
       if (!item) { item = { id: p.itemId, role: 'assistant', text: '' }; this.messages.push(item); }
@@ -131,6 +132,7 @@ class CodexSession extends EventEmitter {
       const result = await this.request('turn/start', { threadId: this.threadId,
         input: [{ type: 'text', text: context ? `${context}\n\nUser request:\n${text}` : text }] });
       if (this.busy) this.turnId = result.turn.id;
+      return result.turn.id;
     } catch (e) { this.busy = false; this.error = e.message; this.changed(); throw e; }
   }
   async interrupt() { if (this.threadId && this.turnId) await this.request('turn/interrupt', { threadId: this.threadId, turnId: this.turnId }); }
