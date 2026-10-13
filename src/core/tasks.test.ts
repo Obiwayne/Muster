@@ -2,7 +2,7 @@ import { beforeEach, describe, expect, it } from 'vitest';
 import { DEFAULT_CONFIG, type MusterState } from '../types.js';
 import { inboxFor, listNotes, postNote } from './board.js';
 import { emptyState } from './store.js';
-import { approveTask, rejectTask, assignTask, cancelTask, claimTask, createTask, doneTask, handoffTask, hasReportedDone, markMerged, MERGE_CONFLICT, recomputeReadiness, requestReview, sendBack, untake } from './tasks.js';
+import { approveTask, rejectTask, assignTask, cancelTask, claimTask, createTask, doneTask, handoffTask, hasReportedDone, markMerged, MERGE_CONFLICT, recomputeReadiness, requestReview, sendBack, setSize, untake } from './tasks.js';
 import { makeAgent } from './testutil.js';
 
 let s: MusterState;
@@ -332,5 +332,19 @@ describe('human approval stations', () => {
     expect(listNotes(s, { open: true, type: 'approval' })).toHaveLength(0);
     expect(t.assignee).toBe('crew-2');
     expect(t.stations[t.stationIndex]).toBe('build');
+  });
+});
+
+describe('task size', () => {
+  it('is stored on create, checked, and changed only by the Captain or you', () => {
+    const state = emptyState();
+    state.agents.push(makeAgent('captain', 'captain'), makeAgent('ada', 'crew'));
+    const t = createTask(state, DEFAULT_CONFIG, { title: 'Fix a typo', size: ' Small ', actor: 'captain' });
+    expect(t.size).toBe('small');
+    expect(createTask(state, DEFAULT_CONFIG, { title: 'No size', actor: 'captain' }).size).toBeUndefined();
+    expect(() => createTask(state, DEFAULT_CONFIG, { title: 'Bad', size: 'huge', actor: 'captain' })).toThrow(/small, medium or large/);
+    expect(() => setSize(state, t.id, 'large', 'ada')).toThrow(/Only the Captain or you/);
+    expect(setSize(state, t.id, 'large', 'captain').size).toBe('large');
+    expect(t.history.at(-1)).toMatchObject({ agentId: 'captain', kind: 'note', text: 'sized large' });
   });
 });

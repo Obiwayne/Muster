@@ -19,9 +19,12 @@ function pct(w: StatusWindow | undefined): string | undefined {
   return typeof v === 'number' && Number.isFinite(v) ? `${Math.round(v)}%` : undefined;
 }
 
-export function formatStatusLine(input: StatusInput, agent?: string): string {
+/** `muster · ada · Haiku 5.5 (auto) · 5h 40% · wk 61%`; `auto` marks a model Muster picks per task. */
+export function formatStatusLine(input: StatusInput, agent?: string, auto = false): string {
   const parts = ['muster'];
   if (agent) parts.push(agent);
+  const model = input.model?.display_name?.trim() || input.model?.id?.trim();
+  if (model) parts.push(auto ? `${model} (auto)` : model);
   const five = pct(input.rate_limits?.five_hour);
   const week = pct(input.rate_limits?.seven_day);
   if (five) parts.push(`5h ${five}`);
@@ -55,12 +58,12 @@ async function main(): Promise<void> {
     /* print what we can */
   }
   const agent = process.env.MUSTER_AGENT;
-  const line = formatStatusLine(input ?? {}, agent);
+  const line = formatStatusLine(input ?? {}, agent, process.env.MUSTER_AUTO_MODEL === '1');
   if (agent) {
     try {
       await musterFetch('/api/usage', {
         method: 'POST',
-        body: { agentId: agent, rate_limits: input.rate_limits, cost: input.cost },
+        body: { agentId: agent, rate_limits: input.rate_limits, cost: input.cost, model: input.model },
         timeoutMs: 1500,
       });
     } catch {

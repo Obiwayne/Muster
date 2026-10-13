@@ -15,4 +15,11 @@ describe('formatStatusLine', () => {
     expect(formatStatusLine({})).toBe('muster');
     expect(formatStatusLine({ rate_limits: { five_hour: {} } }, 'x')).toBe('muster · x');
   });
+
+  it('shows the model, marked when Muster picks it per task', () => {
+    const input = { model: { id: 'claude-haiku-5-5', display_name: 'Haiku 5.5' }, rate_limits: { five_hour: { used_percentage: 40 } } };
+    expect(formatStatusLine(input, 'ada')).toBe('muster · ada · Haiku 5.5 · 5h 40%');
+    expect(formatStatusLine(input, 'ada', true)).toBe('muster · ada · Haiku 5.5 (auto) · 5h 40%');
+    expect(formatStatusLine({ model: { id: 'claude-opus-5-5' } }, 'captain')).toBe('muster · captain · claude-opus-5-5');
+  });
 });

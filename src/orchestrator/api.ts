@@ -244,6 +244,7 @@ ${block}`;
     await agents.syncTaskBranch(agent, task);
     store.commit();
     if (!agents.isRunning(agent.id) && agent.role !== 'captain') await agents.start(agent.id);
+    else agents.refreshModel(agent.id);
   };
 
   // ------------------------------------------------------------------ state
@@ -618,6 +619,7 @@ ${pushed ? `Pushed ${base} to origin.` : `Push to origin failed: ${(r.stderr || 
         ...taskLine(body),
         assignee: body.assignee || undefined,
         goalId: body.goalId || undefined,
+        size: body.size,
         actor: str(body.actor, 'actor'),
       }, stations.stationRoles(ctx.paths)),
     );
@@ -631,6 +633,11 @@ ${pushed ? `Pushed ${base} to origin.` : `Push to origin failed: ${(r.stderr || 
     if (claimer) await agents.assertCanTakeBranch(claimer.id, tasks.nextClaimable(state(), claimer, stations.stationRoles(ctx.paths)));
     const task = mutate(() => tasks.claimTask(state(), str(body.actor, 'actor'), stations.stationRoles(ctx.paths)));
     if (task) await afterTake(board.findAgent(state(), body.actor), task);
+    return task;
+  });
+  route('POST', '/api/tasks/:id/size', ({ params, body }) => {
+    const task = mutate(() => tasks.setSize(state(), params.id, body.size, str(body.actor, 'actor')));
+    if (task.assignee) agents.refreshModel(task.assignee);
     return task;
   });
   route('POST', '/api/tasks/:id/assign', async ({ params, body }) => {

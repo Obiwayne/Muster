@@ -5,7 +5,7 @@ import { delimiter, dirname, join } from 'node:path';
 import { defaultLineName, listLines } from './lines.js';
 import { listStations } from './stations.js';
 import { captainPrompt, crewPrompt, designPrompt, qaPrompt, mediaPrompt, researchPrompt, type PromptContext } from '../prompts/index.js';
-import type { Agent, MusterConfig, Role } from '../types.js';
+import type { Agent, MusterConfig, Role, Task, TaskSize } from '../types.js';
 import { MUSTER_HOME, musterPaths, PLUGIN_DIR, posix, type MusterPaths } from './paths.js';
 import { deriveAgentToken } from './tokens.js';
 
@@ -85,9 +85,24 @@ export function ptyArgs(file: string, args: string[]): string[] | string {
   return args;
 }
 
-/** The Captain and the design crew have their own model settings; crew and the research agent use crewModel. */
-export function modelFor(role: Role, config: MusterConfig): string {
+/** A model setting that picks per task from the task's size instead of naming a model. */
+export const AUTO_MODEL = 'auto';
+
+/** Auto's choices. Fable is deliberately never one of them: Auto only moves between haiku, sonnet and opus. */
+export const SIZE_MODELS: Record<TaskSize, string> = { small: 'haiku', medium: 'sonnet', large: 'opus' };
+
+/** The role's model setting as configured: a model name, or "auto". */
+export function modelSetting(role: Role, config: MusterConfig): string {
   return role === 'captain' ? config.captainModel : role === 'design' ? config.designModel : config.crewModel;
+}
+
+/**
+ * The Captain and the design crew have their own model settings; crew and the research agent use crewModel.
+ * "auto" resolves from the held task's size (no task or no size = medium = sonnet).
+ */
+export function modelFor(role: Role, config: MusterConfig, task?: Pick<Task, 'size'>): string {
+  const setting = modelSetting(role, config);
+  return setting === AUTO_MODEL ? SIZE_MODELS[task?.size ?? 'medium'] : setting;
 }
 
 export interface LaunchContext {
@@ -107,6 +122,7 @@ export function agentEnv(agent: Agent, ctx: LaunchContext): Record<string, strin
     MUSTER_WORKTREE: agent.worktree,
     MUSTER_REPO: ctx.repoRoot,
     MUSTER_BASE_BRANCH: ctx.config.baseBranch,
+    ...(modelSetting(agent.role, ctx.config) === AUTO_MODEL ? { MUSTER_AUTO_MODEL: '1' } : {}),
   };
 }
 

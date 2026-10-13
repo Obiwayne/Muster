@@ -38,6 +38,12 @@ function flag(el: HTMLElement, cls: string, on: boolean): void {
   if (el.classList.contains(cls) !== on) el.classList.toggle(cls, on);
 }
 
+/** What the agent runs on: the status line's own name ("Haiku 5.5") once reported, else the launch setting ("Sonnet"). */
+export function modelLabel(a: Pick<Agent, 'model' | 'liveModel'>): string {
+  if (a.liveModel) return a.liveModel;
+  return a.model ? a.model.charAt(0).toUpperCase() + a.model.slice(1) : '';
+}
+
 class Tile {
   el: HTMLElement;
   private badge = h('span.badge');
@@ -52,13 +58,14 @@ class Tile {
   private overlay = h('div.term-overlay', { hidden: true });
   private caret = h('span.caret', null, '›');
   private input = h('input', { spellcheck: false, autocomplete: 'off' }) as HTMLInputElement;
+  private model = h('span.tile-model');
   private term: TermView | null = null;
   agent: Agent;
 
   constructor(agent: Agent, private getState: () => MusterState | null) {
     this.agent = agent;
     const head = h('div.tile-head', null, this.badge, this.name, this.branch, this.openBadge, this.status, this.more);
-    const prompt = h('div.prompt', null, this.caret, this.input, h('span.hint', null, 'Enter'));
+    const prompt = h('div.prompt', null, this.caret, this.input, this.model, h('span.hint', null, 'Enter'));
     this.el = h('section.tile', null, head, h('div', { style: 'flex:1;min-height:0;display:flex;position:relative' }, this.host, this.overlay), prompt);
     this.more.onclick = (e: MouseEvent) => {
       const r = this.more.getBoundingClientRect();
@@ -109,6 +116,10 @@ class Tile {
     put(this.status, 'className', `tile-status${st.stuck ? ' is-stuck' : ''}`);
     put(this.statusTxt, 'textContent', st.text);
     put(this.status, 'title', st.text);
+    const size = state.tasks.find((t) => t.id === a.taskId)?.size;
+    const model = modelLabel(a);
+    put(this.model, 'textContent', size ? `${model} · ${size}` : model);
+    put(this.model, 'title', `Model: ${a.liveModel ?? a.model}${size ? ` (task size ${size})` : ''}`);
     put(this.input, 'placeholder', a.role === 'captain' ? 'Tell the Captain what to build…' : `Message ${a.id}…`);
     put(this.input, 'disabled', a.status === 'stopped');
     put(this.overlay, 'hidden', a.status !== 'stopped');

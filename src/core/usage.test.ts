@@ -147,3 +147,12 @@ describe('weekly alerts', () => {
     expect(listNotes(s)).toHaveLength(0);
   });
 });
+
+describe('applyUsage model', () => {
+  it("records the model each agent's status line reports", () => {
+    const state = emptyState();
+    state.agents.push(makeAgent('ada', 'crew'));
+    applyUsage(state, DEFAULT_CONFIG, { agentId: 'ada', model: { id: 'claude-haiku-5-5', display_name: 'Haiku 5.5' } });
+    expect(state.agents[0].liveModel).toBe('Haiku 5.5');
+  });
+});
