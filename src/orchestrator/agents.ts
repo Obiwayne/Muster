@@ -4,7 +4,7 @@ import { createWriteStream, existsSync, writeFileSync, type WriteStream } from '
 import { join } from 'node:path';
 import type { Agent, AgentStatus, IntelJob, MusterConfig, Role, Task } from '../types.js';
 import { captainOf, closeNoteIfOpen, feedEvent, findAgent, HUMAN, inboxFor, isCaptain, noteFeedId, nowIso, nudgeText, postNote, requireAgent, SYSTEM, addInbox } from '../core/board.js';
-import { launchArgs, modelFor, ptyEnv, rolePrompt, spawnCommand, trustPromptKeys, writeAgentFiles, type LaunchOptions } from '../core/claude.js';
+import { AUTO_MODEL, launchArgs, modelFor, modelSetting, ptyEnv, rolePrompt, spawnCommand, trustPromptKeys, writeAgentFiles, type LaunchOptions } from '../core/claude.js';
 import { EVIDENCE_DIR } from '../core/evidence.js';
 import { badRequest, conflict, forbidden } from '../core/errors.js';
 import * as gitOps from '../core/git.js';
@@ -118,6 +118,8 @@ interface Runtime {
   idleSince?: number;
   /** Inbox items typed in the last nudge; marked delivered only when a prompt hook follows. */
   pendingNudge?: { ids: string[]; at: number; attempt: number };
+  /** Auto model: the model to switch to with `/model` the next time the agent rests (it took a task of another size). */
+  pendingModel?: string;
   lastOutputAt?: number;
   typing: Promise<void>;
   size: string; // 'COLSxROWS' last applied to the pty; identical resizes still make Claude repaint the whole screen
@@ -379,8 +381,46 @@ export class AgentManager {
     for (const a of this.state.agents) writeAgentFiles(this.o.paths, a, ctx);
   }
 
+  /** The model an agent should be on now: its role's setting, or with "auto" the size of the task it holds. */
+  private wantedModel(agent: Agent, config = this.o.config()): string | undefined {
+    if (modelSetting(agent.role, config) !== AUTO_MODEL) return undefined;
+    return modelFor(agent.role, config, this.state.tasks.find((t) => t.id === agent.taskId));
+  }
+
+  /**
+   * Auto model: a running agent took a task of another size (or its task was re-sized). It switches the next
+   * time it rests, before any nudge, so a turn is never cut short (see switchModel).
+   */
+  refreshModel(id: string): void {
+    const agent = findAgent(this.state, id);
+    const rt = this.runtimes.get(id);
+    if (!agent || !rt) return;
+    const want = this.wantedModel(agent);
+    rt.pendingModel = want && want !== agent.model ? want : undefined;
+    if (rt.pendingModel) this.scheduleNudges();
+  }
+
+  /**
+   * Restarts a resting agent on its own session with the new model (`--resume --model`). Not `/model`: that also
+   * saves the model as the user's own default in ~/.claude/settings.json, for every Claude Code session on the PC.
+   */
+  private async switchModel(agent: Agent, model: string): Promise<void> {
+    const size = this.state.tasks.find((t) => t.id === agent.taskId)?.size ?? 'medium';
+    this.log(`${agent.id}: auto model ${agent.model} -> ${model}`);
+    feedEvent(this.state, SYSTEM, `switched ${agent.id} to ${model} (auto, ${size} task)`);
+    agent.liveModel = undefined; // the status line reports the new one after the restart
+    try {
+      await this.stop(agent.id);
+      await this.start(agent.id);
+    } catch (e) {
+      this.log(`${agent.id}: auto model switch failed: ${errText(e)}`);
+    }
+  }
+
   private spawn(agent: Agent, launch: LaunchOptions, firstPrompt?: string): void {
     const config = this.o.config();
+    const want = this.wantedModel(agent, config);
+    if (want) agent.model = want;
     const ctx = { ...this.o.server(), repoRoot: this.o.paths.root, config };
     const files = writeAgentFiles(this.o.paths, agent, ctx);
     if (launch.inlinePrompt !== undefined) launch = { ...launch, inlinePrompt: rolePrompt(agent, ctx) };
@@ -1230,6 +1270,17 @@ export class AgentManager {
     for (const agent of this.state.agents) {
       const rt = this.runtimes.get(agent.id);
       if (!rt || !RESTING.includes(agent.status) || rt.firstPrompt || rt.permissionNoteId) continue;
+      if (rt.pendingModel) {
+        const hold = this.humanHoldLeft(agent.id);
+        if (hold > 0) {
+          retryIn = Math.min(retryIn, hold);
+          continue;
+        }
+        const model = rt.pendingModel;
+        rt.pendingModel = undefined;
+        void this.switchModel(agent, model);
+        continue; // its nudges go out after the restart
+      }
       const items = inboxFor(this.state, agent.id, true).filter((i) => !i.delivered);
       if (!items.length) {
         rt.pendingNudge = undefined;

@@ -5,7 +5,7 @@ import { DEFAULT_CONFIG, type MusterConfig } from '../types.js';
 import { ensureDirs, musterPaths } from '../core/paths.js';
 import { Store } from '../core/store.js';
 import { addInbox } from '../core/board.js';
-import { createTask } from '../core/tasks.js';
+import { createTask, setSize } from '../core/tasks.js';
 import { commitFile, gitSync, tempRepo } from '../core/testutil.js';
 import { AgentManager, type AgentManagerOptions, type Timings } from './agents.js';
 import { nodePtyLauncher, type PtyLauncher, type PtyProcess } from './terminal.js';
@@ -605,5 +605,62 @@ describe('finished crew: close, tidy away, reuse', () => {
     agents.handleEvent(b.id, 'stop');
     await until(() => !store.state.agents.some((x) => x.id === a.id), 5000);
     expect(store.state.agents.find((x) => x.id === b.id)?.status).toBe('stopped');
+  });
+});
+
+describe('AgentManager auto model', () => {
+  function rig(configPatch: Partial<MusterConfig>) {
+    const runs = new Map<string, { args: string[]; written: string[] }>();
+    const launcher: PtyLauncher = (_f, args, opts) => {
+      const run = { args: args as string[], written: [] as string[] };
+      runs.set(opts.env.MUSTER_AGENT, run);
+      return { pid: 1, onData() {}, onExit() {}, write: (d) => run.written.push(d), resize() {}, kill() {} };
+    };
+    const r = setup(launcher, { firstPromptDelayMs: 1, enterDelayMs: 1, humanHoldMs: 0, nudgeDebounceMs: 1, submitCheckMs: 60_000 }, {}, configPatch);
+    const model = (id: string) => runs.get(id)!.args[runs.get(id)!.args.indexOf('--model') + 1];
+    return { ...r, runs, model };
+  }
+
+  it('launches crew on the model for its task size, and the Captain on its own setting', async () => {
+    const { store, agents, model, runs } = rig({ crewModel: 'auto' });
+    const captain = await agents.create({ role: 'captain', actor: 'muster' });
+    const big = createTask(store.state, DEFAULT_CONFIG, { title: 'Rework sync', size: 'large', actor: 'you' });
+    const small = createTask(store.state, DEFAULT_CONFIG, { title: 'Fix a typo', size: 'small', actor: 'you' });
+    const plain = createTask(store.state, DEFAULT_CONFIG, { title: 'Add a page', actor: 'you' });
+    const a = await agents.create({ role: 'crew', taskId: big.id, actor: 'muster' });
+    const b = await agents.create({ role: 'crew', taskId: small.id, actor: 'muster' });
+    const c = await agents.create({ role: 'crew', taskId: plain.id, actor: 'muster' });
+    expect([model(captain.id), model(a.id), model(b.id), model(c.id)]).toEqual(['opus', 'opus', 'haiku', 'sonnet']);
+    expect(a.model).toBe('opus');
+    expect(runs.get(a.id)!.args.join(' ')).not.toMatch(/fable/i);
+  });
+
+  it('restarts a resting agent on its session with the new model when its task is re-sized', async () => {
+    const { store, agents, runs, model } = rig({ crewModel: 'auto' });
+    const t = createTask(store.state, DEFAULT_CONFIG, { title: 'Fix a typo', size: 'small', actor: 'you' });
+    const crew = await agents.create({ role: 'crew', taskId: t.id, actor: 'muster' });
+    agents.handleEvent(crew.id, 'session-start');
+    await until(() => runs.get(crew.id)!.written.join('').includes('Your task'), 2000); // the first prompt
+    agents.handleEvent(crew.id, 'prompt');
+    agents.handleEvent(crew.id, 'stop');
+    setSize(store.state, t.id, 'large', 'you');
+    agents.refreshModel(crew.id);
+    await until(() => model(crew.id) === 'opus', 3000);
+    expect(runs.get(crew.id)!.args.slice(0, 2)).toEqual(['--resume', crew.sessionId]);
+    expect(crew.model).toBe('opus');
+    expect(store.state.feed.some((f) => f.text === `switched ${crew.id} to opus (auto, large task)`)).toBe(true);
+  });
+
+  it('leaves a fixed model alone', async () => {
+    const { store, agents, runs, model } = rig({ crewModel: 'sonnet' });
+    const t = createTask(store.state, DEFAULT_CONFIG, { title: 'Rework sync', size: 'large', actor: 'you' });
+    const crew = await agents.create({ role: 'crew', taskId: t.id, actor: 'muster' });
+    expect(model(crew.id)).toBe('sonnet');
+    agents.handleEvent(crew.id, 'stop');
+    setSize(store.state, t.id, 'small', 'you');
+    agents.refreshModel(crew.id);
+    const run = runs.get(crew.id);
+    await sleep(50);
+    expect(runs.get(crew.id)).toBe(run); // not restarted
   });
 });

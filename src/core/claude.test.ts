@@ -4,7 +4,7 @@ import { join } from 'node:path';
 import { describe, expect, it } from 'vitest';
 import { DEFAULT_CONFIG } from '../types.js';
 import { stripAnsi } from '../orchestrator/terminal.js';
-import { launchArgs, ptyArgs, ptyEnv, researchEnv, resolveClaudePath, rolePrompt, settingsConfig, spawnCommand, trustPromptKeys, VELLUM_EDIT_TOOLS, writeAgentFiles } from './claude.js';
+import { agentEnv, launchArgs, modelFor, ptyArgs, SIZE_MODELS, ptyEnv, researchEnv, resolveClaudePath, rolePrompt, settingsConfig, spawnCommand, trustPromptKeys, VELLUM_EDIT_TOOLS, writeAgentFiles } from './claude.js';
 import { musterPaths, PLUGIN_DIR } from './paths.js';
 import { deriveAgentToken } from './tokens.js';
 import { makeAgent } from './testutil.js';
@@ -162,4 +162,22 @@ describe('research tools', () => {
   });
 });
 
+});
+
+describe('modelFor', () => {
+  it('uses the role setting, or with auto the task size (medium when unsized), never fable', () => {
+    const auto = { ...DEFAULT_CONFIG, crewModel: 'auto', designModel: 'auto' };
+    expect(modelFor('captain', auto, { size: 'small' })).toBe('opus');
+    expect(modelFor('crew', auto, { size: 'small' })).toBe('haiku');
+    expect(modelFor('design', auto, { size: 'large' })).toBe('opus');
+    expect(modelFor('crew', auto)).toBe('sonnet');
+    expect(modelFor('crew', DEFAULT_CONFIG, { size: 'large' })).toBe('sonnet');
+    expect(Object.values(SIZE_MODELS)).toEqual(['haiku', 'sonnet', 'opus']);
+  });
+
+  it('tells the status line when the model is auto', () => {
+    const ctx = { url: 'u', token: 't', repoRoot: '/r', config: { ...DEFAULT_CONFIG, crewModel: 'auto' } };
+    expect(agentEnv(makeAgent('ada', 'crew'), ctx).MUSTER_AUTO_MODEL).toBe('1');
+    expect(agentEnv(makeAgent('captain', 'captain'), ctx).MUSTER_AUTO_MODEL).toBeUndefined();
+  });
 });
