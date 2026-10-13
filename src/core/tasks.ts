@@ -1,6 +1,6 @@
 // Task board: creation, dependencies, claiming, stations, review and send-back.
 // Pure state mutations; git side effects (branch merges/renames) live in the API layer.
-import { STATION_ROLE, type Agent, type MusterConfig, type MusterState, type Note, type Role, type Task, type TaskBranchInput, type TaskEvent } from '../types.js';
+import { STATION_ROLE, type Agent, type MusterConfig, type MusterState, type Note, type Role, type Task, type TaskBranchInput, type TaskEvent, type TaskSize } from '../types.js';
 import { addFeed, addInbox, captainOf, closeNoteIfOpen, findAgent, HUMAN, idNum, isCaptain, nowIso, postNote, replyNote, requireActor, requireAgent, SYSTEM } from './board.js';
 import { badRequest, conflict, forbidden, notFound } from './errors.js';
 import { activateGoal, advanceRoadmap, remindMerged, goalForTask } from './roadmap.js';
@@ -78,7 +78,18 @@ export interface TaskInput {
   line?: string; // the line the stations came from, recorded on the task
   assignee?: string;
   goalId?: string; // roadmap goal the task delivers (404 unknown; a planned goal becomes active)
+  size?: string; // small | medium | large (400 otherwise)
   actor: string;
+}
+
+const SIZES: readonly TaskSize[] = ['small', 'medium', 'large'];
+
+/** A task size from user or Captain input: trimmed, lower-cased, undefined when empty; 400 when unknown. */
+export function parseSize(v: unknown): TaskSize | undefined {
+  if (v === undefined || v === null || v === '') return undefined;
+  const s = String(v).trim().toLowerCase();
+  if (!(SIZES as readonly string[]).includes(s)) throw badRequest(`Task size must be small, medium or large, not "${String(v)}"`);
+  return s as TaskSize;
 }
 
 export function createTask(state: MusterState, config: MusterConfig, input: TaskInput, roles?: Record<string, Role>): Task {
@@ -86,6 +97,7 @@ export function createTask(state: MusterState, config: MusterConfig, input: Task
   if (!input.title?.trim()) throw badRequest('Task title is empty');
   const dependsOn = (input.dependsOn ?? []).map((d) => requireTask(state, d).id);
   const goal = input.goalId ? goalForTask(state, input.goalId) : undefined;
+  const size = parseSize(input.size);
   // Everything that can refuse happens before the task exists, so a 409 leaves nothing half-created.
   if (input.assignee) {
     requireCaptainOrYou(state, actor, 'assign tasks');
@@ -101,6 +113,7 @@ export function createTask(state: MusterState, config: MusterConfig, input: Task
     dependsOn,
     ...(input.line ? { line: input.line } : {}),
     ...(goal ? { goalId: goal.id } : {}),
+    ...(size ? { size } : {}),
     stations: [...stations, QA_STATION, 'review'],
     stationIndex: 0,
     status: 'ready',
@@ -116,6 +129,18 @@ export function createTask(state: MusterState, config: MusterConfig, input: Task
   if (stationRole(currentStation(task), roles) === 'human') awaitApproval(state, task, actor, 'the task starts at an approval station');
   else if (input.assignee) assignTask(state, task.id, input.assignee, actor);
   recomputeReadiness(state);
+  return task;
+}
+
+/** The Captain (or you) re-sizes a task; with the model on Auto its holder switches before the next message. */
+export function setSize(state: MusterState, id: string, size: unknown, actor: string): Task {
+  requireCaptainOrYou(state, requireActor(state, actor), 'size tasks');
+  const task = requireTask(state, id);
+  const next = parseSize(size);
+  if (!next) throw badRequest('size is required: small, medium or large');
+  if (task.size === next) return task;
+  task.size = next;
+  event(task, actor, 'note', `sized ${next}`);
   return task;
 }
 

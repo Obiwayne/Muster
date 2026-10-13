@@ -103,6 +103,7 @@ export function stationLabel(t: Task): string {
 export function formatTaskLine(t: Task): string {
   const parts = [`${t.id} [${t.status}] ${clip(t.title, 80)}`, `station ${stationLabel(t)}`];
   if (t.goalId) parts.push(`goal ${t.goalId}`);
+  if (t.size) parts.push(t.size);
   if (t.assignee) parts.push(`@${t.assignee}`);
   if (t.dependsOn?.length) parts.push(`needs ${t.dependsOn.join(',')}`);
   if (t.branch) parts.push(t.branch);

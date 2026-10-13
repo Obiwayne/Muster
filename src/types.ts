@@ -26,6 +26,7 @@ export interface Agent {
   lastActivityAt: string; // ISO time of last PTY output or hook event
   lastPromptAt?: string; // ISO time of the last UserPromptSubmit hook
   costUsd: number; // latest cost.total_cost_usd reported by this agent's status line
+  liveModel?: string; // model.display_name from this agent's status line ("Haiku 5.5"): what the session is really on
 }
 
 export type TaskStatus =
@@ -45,6 +46,9 @@ export interface TaskEvent {
   text?: string;
 }
 
+/** How big the Captain judged a task. With a model set to "auto" it picks the model: small = haiku, medium = sonnet, large = opus. */
+export type TaskSize = 'small' | 'medium' | 'large';
+
 export interface Task {
   id: string; // "T1", "T2", ...
   title: string;
@@ -58,6 +62,7 @@ export interface Task {
   branch?: string; // branch that currently carries the work
   reviewedSha?: string; // head commit of `branch` when the Captain requested review; merge merges exactly this commit
   mergeApproval?: { at: string; sha?: string }; // you approved the reviewed commit; the Captain may merge it (merge_task)
+  size?: TaskSize; // set by the Captain on post_task; unsized counts as medium
   goalId?: string; // roadmap goal this task delivers ("G3"); progress on the roadmap is counted from these
   inputs?: TaskBranchInput[]; // commits the task branch must contain (earlier stations, dependencies); checked before done/review
   qa?: TaskQa; // the QA gate's state: rounds run and the latest verdict
@@ -281,8 +286,8 @@ export type VellumEdit = 'ask' | 'always' | 'never';
 export interface MusterConfig {
   port: number; // default 47800
   captainModel: string; // default "opus"
-  crewModel: string; // default "sonnet"
-  designModel: string; // default "sonnet"
+  crewModel: string; // default "sonnet"; "auto" = picked per task from its size (never fable)
+  designModel: string; // default "sonnet"; "auto" as crewModel
   maxCrew: number; // default 3 (crew running at once, not counting the captain or design crew)
   pauseAtFiveHourPct: number; // default 80
   warnAtWeeklyPct: number; // default 75

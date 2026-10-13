@@ -36,6 +36,10 @@ const MODELS = [
   { value: 'sonnet', label: 'Sonnet' },
   { value: 'haiku', label: 'Haiku' },
 ];
+
+/** Crew only: the Captain's task size picks Haiku, Sonnet or Opus (never Fable). */
+const AUTO_OPTION = { value: 'auto', label: 'Auto (by task size)' };
+
 const VELLUM_EDIT = [
   { value: 'ask', label: 'Only when asked' },
   { value: 'always', label: 'Always' },
@@ -508,8 +512,8 @@ export function createSettings(): Page {
           panel('Team and models',
             row('Captain model', 'Planning and review need the best judgement',
               ctl(select(withCurrent(MODELS, c.captainModel), c.captainModel, (v) => save({ captainModel: v })))),
-            row('Crew and design crew model', 'Much cheaper per task',
-              ctl(select(withCurrent(MODELS, c.crewModel), c.crewModel, (v) => save({ crewModel: v, designModel: v })))),
+            row('Crew and design crew model', c.crewModel === 'auto' ? 'Auto: the Captain sizes each task; small runs on Haiku, medium on Sonnet, large on Opus' : 'Much cheaper per task',
+              ctl(select(withCurrent([...MODELS, AUTO_OPTION], c.crewModel), c.crewModel, (v) => save({ crewModel: v, designModel: v })))),
             row('Crew names', c.crewNames === 'numbers' ? 'New crew are called crew-18, crew-19…' : 'New crew get names: ada, bea, cleo…',
               ctl(select(CREW_NAMES, c.crewNames ?? 'names', (v) => save({ crewNames: v as MusterConfig['crewNames'] })))),
             row('Crew running at once', 'Not counting the Captain and the design crew. Stopped crew that still hold a task count too',

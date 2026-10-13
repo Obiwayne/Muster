@@ -57,6 +57,7 @@ const sleep = (ms: number) => new Promise((r) => setTimeout(r, ms));
 type RoadmapView = { roadmap: Roadmap | null; progress: RoadmapProgress | null };
 const day = z.string().regex(/^\d{4}-\d{2}-\d{2}$/, 'Use YYYY-MM-DD');
 const upId = (s: string) => s.trim().toUpperCase();
+const SIZE = z.enum(['small', 'medium', 'large']);
 
 /** Trailer for roadmap writes: says when the change sent the plan back to the user for approval. */
 function draftNote(r: Roadmap | null | undefined): string {
@@ -64,7 +65,7 @@ function draftNote(r: Roadmap | null | undefined): string {
 }
 
 export const CAPTAIN_TOOLS = [
-  'spawn_crew', 'post_task', 'assign', 'list_agents', 'list_tasks', 'read_board', 'reply', 'message',
+  'spawn_crew', 'post_task', 'size_task', 'assign', 'list_agents', 'list_tasks', 'read_board', 'reply', 'message',
   'read_inbox', 'read_output', 'get_diff', 'run_tests', 'request_review', 'merge_task', 'send_back', 'cancel_task', 'close_crew', 'escalate',
   'add_evidence', 'get_evidence',
   'roadmap', 'set_roadmap', 'update_stage', 'check_criterion', 'complete_stage', 'add_goal', 'update_goal', 'link_tasks', 'roadmap_status',
@@ -292,14 +293,14 @@ export function createMusterServer(opts: MusterServerOptions): McpServer {
   function registerCaptain() {
     tool(
       'spawn_crew',
-      'Start a new crew agent in its own worktree. task = an existing task id (T3) or a title for a new task. role = crew (default) or design (the Vellum design crew; only one).',
-      { task: z.string().optional(), role: z.enum(['crew', 'design']).optional() },
-      async ({ task, role: r }) => {
+      'Start a new crew agent in its own worktree. task = an existing task id (T3) or a title for a new task. role = crew (default) or design (the Vellum design crew; only one). size = small/medium/large for a new task (see post_task).',
+      { task: z.string().optional(), role: z.enum(['crew', 'design']).optional(), size: SIZE.optional() },
+      async ({ task, role: r, size }) => {
         let taskId: string | undefined;
         if (task && task.trim()) {
           if (isTaskId(task)) taskId = task.trim().toUpperCase();
           else {
-            const t = await api<Task>('/api/tasks', { method: 'POST', body: { title: task.trim(), description: task.trim(), actor: me } });
+            const t = await api<Task>('/api/tasks', { method: 'POST', body: { title: task.trim(), description: task.trim(), size, actor: me } });
             taskId = t.id;
           }
         }
@@ -319,11 +320,22 @@ export function createMusterServer(opts: MusterServerOptions): McpServer {
         line: z.string().optional().describe('Name of a line preset; used instead of stations'),
         assignee: z.string().optional(),
         goal: z.string().optional().describe('Roadmap goal this task delivers, e.g. G3. Set it on every task once there is a roadmap'),
+        size: SIZE.optional().describe('How much thinking the task needs; set it on every task. small = a quick mechanical change (a rename, copy, config, one obvious fix); medium = normal feature or bug work; large = design decisions, tricky bugs, cross-cutting changes. When the crew model is Auto this picks Haiku, Sonnet or Opus'),
       },
-      async ({ title, description, dependsOn, stations, line, assignee, goal }) => {
+      async ({ title, description, dependsOn, stations, line, assignee, goal, size }) => {
         const goalId = goal?.trim() ? upId(goal) : undefined;
-        const t = await api<Task>('/api/tasks', { method: 'POST', body: { title, description, dependsOn, stations, line, assignee, goalId, actor: me } });
+        const t = await api<Task>('/api/tasks', { method: 'POST', body: { title, description, dependsOn, stations, line, assignee, goalId, size, actor: me } });
         return `Posted ${formatTaskLine(t)}`;
+      },
+    );
+
+    tool(
+      'size_task',
+      "Change a task's size (small/medium/large), e.g. bump it to large when the crew is struggling. With the crew model on Auto, whoever holds it switches model before their next message.",
+      { task: z.string(), size: SIZE },
+      async ({ task, size }) => {
+        const t = await api<Task>(`/api/tasks/${enc(task.trim().toUpperCase())}/size`, { method: 'POST', body: { size, actor: me } });
+        return `Sized ${formatTaskLine(t)}`;
       },
     );
 

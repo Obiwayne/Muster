@@ -12,6 +12,7 @@ export interface RawUsage {
   agentId?: string;
   rate_limits?: { five_hour?: RawWindow; seven_day?: RawWindow };
   cost?: { total_cost_usd?: number };
+  model?: { id?: string; display_name?: string };
 }
 
 /** resets_at arrives as unix seconds, unix milliseconds, a numeric string or an ISO string. */
@@ -56,6 +57,11 @@ export function applyUsage(state: MusterState, config: MusterConfig, raw: RawUsa
     u.perAgentCostUsd[raw.agentId] = cost;
     const agent = findAgent(state, raw.agentId);
     if (agent) agent.costUsd = cost;
+  }
+  const live = raw.model?.display_name?.trim() || raw.model?.id?.trim();
+  if (raw.agentId && live) {
+    const agent = findAgent(state, raw.agentId);
+    if (agent) agent.liveModel = live;
   }
   return refreshGuard(state, config, now);
 }
