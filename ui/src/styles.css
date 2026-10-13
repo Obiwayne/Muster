@@ -140,6 +140,8 @@ a { color: inherit; text-decoration: none; }
 
 .main { flex: 1; height: 100%; display: flex; flex-direction: column; min-width: 0; position: relative; }
 .topbar { height: 60px; flex-shrink: 0; display: flex; align-items: center; gap: 28px; padding: 0 20px; border-bottom: 1px solid var(--color-line); }
+/* With the Codex panel open the top bar wraps; the toggle stays at its right edge, next to the panel it opened. */
+.codex-open .topbar .codex-toggle { margin-left: auto; }
 .goal { display: flex; flex-direction: column; gap: 2px; flex: 1; min-width: 0; }
 .goal-title { font-size: 15px; font-weight: 600; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
 .goal-title.none { color: var(--color-muted); font-weight: 500; }
