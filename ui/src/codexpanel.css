@@ -11,8 +11,8 @@
 .codex-panel { position: relative; width: 400px; min-width: 320px; max-width: 48vw; flex-shrink: 0; height: 100%; display: flex; flex-direction: column; background: var(--color-surface); border-left: 1px solid var(--color-line); }
 .codex-resize { position: absolute; left: -4px; top: 0; bottom: 0; width: 8px; cursor: col-resize; touch-action: none; z-index: 1; }
 .codex-resize:focus-visible { outline: 2px solid var(--color-crew); }
-.codex-head { height: 60px; flex-shrink: 0; display: flex; align-items: center; gap: 12px; padding: 16px 20px; border-bottom: 1px solid var(--color-line); }
-.codex-title { display: flex; align-items: center; gap: 12px; flex: 1; font-size: 16px; font-weight: 600; }
+.codex-head { min-height: 60px; height: auto; flex-shrink: 0; display: flex; align-items: center; gap: 12px; padding: 16px 20px; border-bottom: 1px solid var(--color-line); }
+.codex-title { display: flex; align-items: center; gap: 8px; flex: 0 0 auto; font-size: 16px; font-weight: 600; }
 .codex-title svg { color: var(--color-crew); }
 .codex-context { padding: 16px 20px; display: flex; flex-direction: column; gap: 8px; border-bottom: 1px solid var(--color-line); }
 .codex-project { font-weight: 500; overflow-wrap: anywhere; }
@@ -37,3 +37,8 @@
 .codex-approval { padding: 12px; border: 1px solid var(--color-captain); border-radius: var(--radius-sm); }
 .codex-approval pre { white-space: pre-wrap; overflow-wrap: anywhere; max-height: 120px; overflow: auto; }
 @media (max-width: 1250px) { .codex-panel { position: absolute; right: 0; top: 0; bottom: 0; z-index: 25; width: 400px; max-width: 90vw; box-shadow: -12px 0 30px #0006; } }
+
+.codex-head { gap: 8px; padding: 12px; flex-wrap: wrap; }
+.codex-usage { display: flex; flex: 1; flex-direction: column; gap: 3px; min-width: 125px; color: var(--color-muted); font-size: 10px; line-height: 15px; }
+.codex-usage-window { white-space: nowrap; }
+.codex-usage-window:focus-visible { outline: 2px solid var(--color-crew); border-radius: 2px; }

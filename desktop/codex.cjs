@@ -31,16 +31,16 @@ class CodexSession extends EventEmitter {
   constructor(root, options = {}) {
     super(); this.root = root; this.options = options; this.pending = new Map();
     this.approvals = new Map(); this.sequence = 0; this.threadId = options.threadId || null; this.turnId = null;
-    this.messages = options.messages || []; this.busy = false; this.closed = false;
+    this.messages = options.messages || []; this.busy = false; this.closed = false; this.allowSessionActions = false;
   }
   snapshot() { return { messages: this.messages, busy: this.busy, threadId: this.threadId,
-    approvals: [...this.approvals.values()], error: this.error || null }; }
+    approvals: [...this.approvals.values()], error: this.error || null, rateLimits: this.rateLimits || null, allowSessionActions: this.allowSessionActions }; }
   changed() { this.emit('state', this.snapshot()); }
   write(message) { this.process.stdin.write(JSON.stringify(message) + '\n'); }
-  request(method, params) {
+  request(method, params, timeoutMs = 60000) {
     return new Promise((resolve, reject) => {
       const id = ++this.sequence;
-      const timer = setTimeout(() => { this.pending.delete(id); reject(new Error(`Codex timed out: ${method}`)); }, 60000);
+      const timer = setTimeout(() => { this.pending.delete(id); reject(new Error(`Codex timed out: ${method}`)); }, timeoutMs);
       this.pending.set(id, { resolve, reject, timer });
       try { this.write({ id, method, params }); }
       catch (e) { clearTimeout(timer); this.pending.delete(id); reject(e); }
@@ -49,12 +49,13 @@ class CodexSession extends EventEmitter {
   receive(message) {
     if (message.method && message.id !== undefined) {
       if (message.method === 'item/tool/call' && this.options.toolCall) {
-        if (message.params?.tool === 'muster_message_captain') {
+        if (['muster_message_captain', 'muster_message_crew', 'muster_message_agent', 'muster_reply_note'].includes(message.params?.tool)) {
           this.approvals.set(String(message.id), { id: message.id, method: message.method, ...message.params,
-            reason: 'Send this message to the Captain: ' + (message.params.arguments?.text || '') }); this.changed();
+            reason: (message.params.tool === 'muster_message_agent' ? 'Send this message to ' + message.params.arguments?.to + ': ' : message.params.tool === 'muster_reply_note' ? 'Reply on bulletin-board note ' + message.params.arguments?.note + ': ' : message.params.tool === 'muster_message_crew' ? 'Post this message to crew chat (everyone): ' : 'Send this message to the Captain: ') + (message.params.arguments?.text || '') }); this.changed();
         } else void this.callTool(message.id, message.params);
       } else if (['item/commandExecution/requestApproval', 'item/fileChange/requestApproval'].includes(message.method)) {
-        this.approvals.set(String(message.id), { id: message.id, method: message.method, ...message.params }); this.changed();
+        if (this.allowSessionActions) this.write({ id: message.id, result: { decision: 'accept' } });
+        else { this.approvals.set(String(message.id), { id: message.id, method: message.method, ...message.params }); this.changed(); }
       } else if (message.method === 'item/permissions/requestApproval') {
         this.write({ id: message.id, result: { permissions: {}, scope: 'turn' } });
       } else if (message.method === 'mcpServer/elicitation/request') {
@@ -71,6 +72,15 @@ class CodexSession extends EventEmitter {
     }
     const p = message.params || {};
     if (p.threadId && this.threadId && p.threadId !== this.threadId) return;
+    if (message.method === 'account/rateLimits/updated') {
+      const limits = p.rateLimitsByLimitId?.codex || p.rateLimits;
+      if (limits && (!limits.limitId || limits.limitId === 'codex')) {
+        this.rateLimits = limits; this.changed();
+      }
+    } else if (message.method === 'account/updated') {
+      // Sent at startup too, sometimes after the first usage read: read again rather than wipe what was just shown.
+      void this.refreshUsage();
+    }
     this.emit('notify', message);
     if (message.method === 'item/agentMessage/delta') {
       let item = this.messages.find(m => m.id === p.itemId);
@@ -89,9 +99,27 @@ class CodexSession extends EventEmitter {
     } else if (message.method === 'serverRequest/resolved') { this.approvals.delete(String(p.requestId)); this.changed(); }
     else if (message.method === 'error') { this.error = p.error?.message || 'Codex reported an error'; this.changed(); }
   }
-  async connect() {
-    if (this.ready) return this.ready;
-    this.ready = (async () => {
+  setSessionActions(enabled) {
+    if (typeof enabled !== 'boolean') throw new Error('Invalid session approval setting.');
+    if (this.busy) throw new Error('Stop the current response before changing session approvals.');
+    this.allowSessionActions = enabled; this.changed(); return this.snapshot();
+  }
+  async refreshUsage() {
+    if (this.usageRequest) return this.usageRequest;
+    this.usageRequest = (async () => {
+      try {
+        await this.start(); // usage needs the app server, not a conversation
+        const result = await this.request('account/rateLimits/read', {}, 10000);
+        this.rateLimits = result?.rateLimitsByLimitId?.codex || result?.rateLimits || null;
+      } catch { this.rateLimits = null; } // Usage failures must not interrupt the conversation.
+      this.changed(); return this.snapshot();
+    })().finally(() => { this.usageRequest = null; });
+    return this.usageRequest;
+  }
+  // The app server process and handshake; a conversation is opened separately by connect().
+  start() {
+    if (this.started) return this.started;
+    this.started = (async () => {
       const env = { ...process.env };
       for (const key of Object.keys(env)) if (key.startsWith('MUSTER_') || key.startsWith('ELECTRON_')) delete env[key];
       this.process = (this.options.spawn || spawn)((this.options.executable || executable)(), ['app-server', '--listen', 'stdio://'],
@@ -106,18 +134,37 @@ class CodexSession extends EventEmitter {
       this.lines.on('line', line => { try { this.receive(JSON.parse(line)); } catch { /* ignore non-protocol output */ } });
       await this.request('initialize', { clientInfo: { name: 'muster', title: 'Muster', version: '0.1.0' }, capabilities: { experimentalApi: true } });
       this.write({ method: 'initialized', params: {} });
-      const params = { cwd: this.root, approvalPolicy: 'on-request', sandbox: 'read-only' };
-      const result = await this.request(this.threadId ? 'thread/resume' : 'thread/start',
-        this.threadId ? { ...params, threadId: this.threadId } : { ...params, dynamicTools: this.options.tools || [] });
-      this.threadId = result.thread.id; this.changed();
     })().catch(e => {
       const child = this.process; this.process = null; child?.kill(); this.lines?.close();
+      this.fail(e); throw e;
+    });
+    return this.started;
+  }
+  async connect() {
+    if (this.ready) return this.ready;
+    this.ready = (async () => {
+      await this.start();
+      const params = { cwd: this.root, approvalPolicy: 'on-request', sandbox: 'read-only' };
+      const fresh = () => this.request('thread/start', { ...params, dynamicTools: this.options.tools || [] });
+      let result;
+      if (!this.threadId) result = await fresh();
+      else {
+        try { result = await this.request('thread/resume', { ...params, threadId: this.threadId }); }
+        catch (e) {
+          // Codex keeps a conversation on disk only after its first turn; one that never got there can't be resumed.
+          if (!/no rollout found/i.test(e.message)) throw e;
+          result = await fresh();
+        }
+      }
+      this.threadId = result.thread.id; this.changed();
+    })().catch(e => {
+      if (this.started) { const child = this.process; this.process = null; child?.kill(); this.lines?.close(); }
       this.fail(e); throw e;
     });
     return this.ready;
   }
   fail(error) {
-    this.ready = null;
+    this.started = null; this.ready = null; this.rateLimits = null; this.allowSessionActions = false;
     this.error = error.message; this.busy = false; this.approvals.clear();
     for (const p of this.pending.values()) { clearTimeout(p.timer); p.reject(error); }
     this.pending.clear(); this.changed();
@@ -130,6 +177,8 @@ class CodexSession extends EventEmitter {
       await this.connect();
       this.messages.push({ id: `user-${Date.now()}`, role: 'user', text }); this.changed();
       const result = await this.request('turn/start', { threadId: this.threadId,
+        approvalPolicy: this.allowSessionActions ? 'never' : 'on-request',
+        sandboxPolicy: { type: this.allowSessionActions ? 'dangerFullAccess' : 'readOnly' },
         input: [{ type: 'text', text: context ? `${context}\n\nUser request:\n${text}` : text }] });
       const turnId = result?.turn?.id;
       if (!turnId) throw new Error('Codex did not start a turn.');

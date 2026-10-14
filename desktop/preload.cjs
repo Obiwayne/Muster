@@ -20,6 +20,8 @@ if (location.protocol === 'file:') contextBridge.exposeInMainWorld('muster', {
 if (location.protocol === 'http:' && (location.hostname === '127.0.0.1' || location.hostname === 'localhost')) {
   contextBridge.exposeInMainWorld('musterApp', {
     codexState: () => ipcRenderer.invoke('app:codexState'),
+    codexUsage: () => ipcRenderer.invoke('app:codexUsage'),
+    codexSessionActions: enabled => ipcRenderer.invoke('app:codexSessionActions', { enabled }),
     codexSend: (text, context) => ipcRenderer.invoke('app:codexSend', { text, context }),
     codexStop: () => ipcRenderer.invoke('app:codexStop'),
     codexNew: () => ipcRenderer.invoke('app:codexNew'),

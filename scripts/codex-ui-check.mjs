@@ -20,7 +20,9 @@ try {
       projects: async () => ({ current: '/work/acme-app', projects: [] }),
       updateStatus: async () => 'current',
       onCodexState: fn => { listener = fn; window.codexTestEmit = next => { state = next; fn(next); }; return () => {}; },
+      codexSessionActions: async enabled => { state = { ...state, allowSessionActions: enabled }; listener(state); return state; },
       codexState: async () => state,
+      codexUsage: async () => { state = { ...state, rateLimits: { primary: { usedPercent: 28, windowDurationMins: 300, resetsAt: 2000000000 }, secondary: { usedPercent: 16, windowDurationMins: 10080, resetsAt: 2000000000 } } }; return state; },
       codexSend: async text => {
         state = { ...state, messages: [...state.messages, { id: 'u1', role: 'user', text }, { id: 'a1', role: 'assistant', text: 'The invite flow is ready for review.' }] };
         listener(state);
@@ -34,6 +36,14 @@ try {
   await page.getByRole('button', { name: 'Open Codex chat', exact: true }).click();
   const pane = page.getByRole('complementary', { name: 'Codex chat' });
   await pane.waitFor({ state: 'visible' });
+  await pane.getByText('5-hour: 72% remaining', { exact: true }).waitFor();
+  assert.equal(await pane.getByText('Weekly: 84% remaining', { exact: true }).count(), 1);
+  assert.match(await pane.getByText('5-hour: 72% remaining', { exact: true }).getAttribute('title'), /^Resets /);
+  await pane.getByRole('button', { name: 'Allow actions for this session', exact: true }).click();
+  await pane.getByRole('button', { name: 'Session actions allowed - Turn off', exact: true }).waitFor();
+  assert.equal(await pane.getByRole('button', { name: 'Session actions allowed - Turn off', exact: true }).getAttribute('aria-pressed'), 'true');
+  await pane.getByRole('button', { name: 'Session actions allowed - Turn off', exact: true }).click();
+  await pane.getByRole('button', { name: 'Allow actions for this session', exact: true }).waitFor();
   await page.getByRole('textbox', { name: 'Message Codex' }).fill('Review the invite flow.');
   await page.getByRole('button', { name: 'Send message', exact: true }).click();
   await page.getByText('The invite flow is ready for review.', { exact: true }).waitFor();
@@ -51,10 +61,21 @@ try {
   await page.evaluate(() => window.codexTestEmit({ messages: [{ id: 'u1', role: 'user', text: 'Review the invite flow and help me coordinate with the Captain.' },
     { id: 'a1', role: 'assistant', text: 'The API is ready for review. Crew-3 is blocked on the invite token format, so that is the next thing to resolve.\n\nI can inspect the sharing screen in Vellum and draft a clear handoff for the Captain.' }], busy: false, approvals: [], error: null }));
   await page.getByText('The API is ready for review.', { exact: false }).waitFor();
-  await mkdir('../../outputs', { recursive: true });
-  await page.screenshot({ path: '../../outputs/Muster-Codex-panel.png' });
+  await page.evaluate(() => window.codexTestEmit({ messages: [], busy: false, approvals: [], rateLimits: null }));
+  await pane.getByText('5-hour: Usage unavailable', { exact: true }).waitFor();
+  assert.equal(await pane.getByText('Weekly: Usage unavailable', { exact: true }).count(), 1);
+  await page.evaluate(() => window.codexTestEmit({ messages: [], busy: false, approvals: [], rateLimits: { primary: { usedPercent: 28, windowDurationMins: 300, resetsAt: 2000000000 }, secondary: { usedPercent: 16, windowDurationMins: 10080, resetsAt: 2000000000 } } }));
+  await pane.getByText('5-hour: 72% remaining', { exact: true }).waitFor();
+  await mkdir('.muster/qa', { recursive: true });
+  await page.screenshot({ path: '.muster/qa/codex-usage-header.png' });
   await page.setViewportSize({ width: 1100, height: 800 });
   assert.ok((await pane.boundingBox()).x >= 0);
+  await page.evaluate(() => localStorage.setItem('muster.codexWidth', '320'));
+  await page.reload();
+  await page.getByRole('button', { name: 'Open Codex chat', exact: true }).click();
+  await pane.getByText('Weekly: 84% remaining', { exact: true }).waitFor();
+  const headerFits = await page.locator('.codex-head').evaluate(el => el.scrollWidth <= el.clientWidth);
+  assert.ok(headerFits, 'Header fits at minimum panel width');
   await page.keyboard.press('Escape');
   await pane.waitFor({ state: 'hidden' });
   console.log('UI checks passed: open, send, close/reopen, resize, Captain approval, narrow viewport, Escape.');
