@@ -6,7 +6,7 @@ import type { Agent, AgentStatus, IntelJob, MusterConfig, Role, Task, TokenCount
 import { captainOf, closeNoteIfOpen, feedEvent, findAgent, HUMAN, inboxFor, isCaptain, nowIso, nudgeText, postNote, requireAgent, SYSTEM, addInbox } from '../core/board.js';
 import { AUTO_MODEL, launchArgs, modelFor, modelSetting, ptyEnv, rolePrompt, spawnCommand, trustPromptKeys, writeAgentFiles, type LaunchOptions } from '../core/claude.js';
 import { EVIDENCE_DIR } from '../core/evidence.js';
-import { boardHandoff, handoffRequest, latestHandoff, reloadPrompt, saveHandoff, type Handoff } from '../core/handoff.js';
+import { boardHandoff, handoffRequest, latestHandoff, reloadPrompt, saveHandoff, takeReload, type Handoff } from '../core/handoff.js';
 import { addCounts, formatTokens } from '../core/transcript.js';
 import { badRequest, conflict, forbidden } from '../core/errors.js';
 import * as gitOps from '../core/git.js';
@@ -369,8 +369,10 @@ export class AgentManager {
     }
     await this.ensureWorktree(agent);
     if (this.runtimes.has(id)) return agent;
-    const fresh = this.freshPrompt.get(id);
+    let fresh = this.freshPrompt.get(id);
     this.freshPrompt.delete(id);
+    // `muster recycle` ran while Muster was down: the Captain starts its new session from the handoff.
+    if (!fresh && agent.role === 'captain' && takeReload(this.o.paths)) fresh = reloadPrompt(id, latestHandoff(this.o.paths));
     const resume = !fresh && existsSync(this.resumableMarker(id));
     this.spawn(agent, { resume, inlinePrompt: this.inlinePrompt ? '' : undefined }, fresh ?? (resume ? this.resumePromptFor(agent) : this.firstPromptFor(agent)));
     return agent;

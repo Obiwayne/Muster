@@ -4,7 +4,7 @@ import { DEFAULT_CONFIG, type MusterConfig } from '../types.js';
 import { ensureDirs, musterPaths } from '../core/paths.js';
 import { Store } from '../core/store.js';
 import { createTask } from '../core/tasks.js';
-import { latestHandoff } from '../core/handoff.js';
+import { latestHandoff, markReload, saveHandoff } from '../core/handoff.js';
 import { tempRepo } from '../core/testutil.js';
 import { AgentManager, type Timings } from './agents.js';
 import type { PtyLauncher } from './terminal.js';
@@ -30,7 +30,7 @@ interface Launch {
   written: string[];
 }
 
-async function rig(timings: Partial<Timings> = {}, configPatch: Partial<MusterConfig> = {}) {
+async function rig(timings: Partial<Timings> = {}, configPatch: Partial<MusterConfig> = {}, before?: (paths: ReturnType<typeof musterPaths>) => void) {
   const launches: Launch[] = [];
   const launcher: PtyLauncher = (_f, args) => {
     const l: Launch = { args, written: [] };
@@ -41,6 +41,7 @@ async function rig(timings: Partial<Timings> = {}, configPatch: Partial<MusterCo
   const repo = tempRepo();
   const paths = musterPaths(repo);
   ensureDirs(paths);
+  before?.(paths);
   const store = new Store(paths);
   const config = { ...DEFAULT_CONFIG, claudePath: 'claude.exe', captainRecycleTokens: 40_000, ...configPatch };
   const agents = new AgentManager({
@@ -206,5 +207,17 @@ describe('watchdog digest', () => {
     for (const a of crew) expect(digests[0].text).toContain(a.id);
     expect(store.state.inbox.filter((i) => i.agentId === captain.id && i.kind === 'note')).toHaveLength(0);
     expect(store.state.notes.filter((n) => n.type === 'stuck')).toHaveLength(3); // still on the board for you
+  });
+});
+
+describe('reload marked by `muster recycle`', () => {
+  it('the Captain starts on a fresh session from the handoff', async () => {
+    const { launches, typed } = await rig({}, {}, (paths) => {
+      saveHandoff(paths, 'muster', 'T7 is at review; Obi owes us the logo.');
+      markReload(paths);
+    });
+    expect(launches[0].args).not.toContain('--resume');
+    await until(() => typed(0).includes('fresh session'));
+    expect(typed(0)).toContain('Obi owes us the logo');
   });
 });

@@ -7,6 +7,7 @@ import { attach, chat } from './live.js';
 import { inspectFolder } from './setup.js';
 import { newApp } from './newapp.js';
 import { down, ui, up } from './lifecycle.js';
+import { recycle } from './recycle.js';
 
 function int(v: string): number {
   const n = Number(v);
@@ -102,6 +103,11 @@ export function buildProgram(ctx: Ctx): Command {
     .command('start <agent>')
     .description('restart a stopped agent')
     .action((agent: string) => cmd.startAgent(ctx, agent));
+
+  program
+    .command('recycle')
+    .description("give the Captain a fresh session that starts from a handoff note (works while Muster is down too)")
+    .action(() => recycle(ctx));
 
   program
     .command('ui')
