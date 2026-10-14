@@ -5,6 +5,7 @@ import { readFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { musterFetch } from '../client.js';
 import { secretsBase } from '../core/tokens.js';
+import { transcriptUsage } from '../core/transcript.js';
 import { ASK_NOT_CAPTAIN, ASK_TOOL, askSentReason, decide, denyOutput, realNearest, SHELL_TOOLS, type GuardEnv, type PreToolInput } from './guard.js';
 
 const EVENTS = new Set(['prompt', 'stop', 'notification', 'session-start']);
@@ -111,6 +112,15 @@ async function main(): Promise<void> {
     if (!agent) return;
     const body: Record<string, unknown> = { event, detail: eventDetail(event, input), cwd: input.cwd };
     if (event === 'notification' && typeof input.notification_type === 'string') body.kind = input.notification_type;
+    // End of a turn: report the context size and the session's token totals (the Captain is recycled on size).
+    if (event === 'stop' && typeof input.transcript_path === 'string') {
+      try {
+        const usage = transcriptUsage(readFileSync(input.transcript_path, 'utf8'));
+        if (usage) body.tokens = { ...usage, sessionId: input.session_id };
+      } catch {
+        /* no transcript: report the event alone */
+      }
+    }
     await musterFetch(`/api/agents/${encodeURIComponent(agent)}/event`, { method: 'POST', body, timeoutMs: 3000 });
   }
 }

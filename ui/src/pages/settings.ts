@@ -236,6 +236,19 @@ export function createSettings(): Page {
       },
     }, 'Rename folder to match name'));
     rows.push(row('Folder', p.root, folderBtns.length ? h('div.ctl', { style: 'width:auto;gap:8px' }, folderBtns) : null, true));
+    const recycle = c.captainRecycleTokens ?? 120_000;
+    rows.push(
+      row('Captain fresh session at', recycle ? `Past ${Math.round(recycle / 1000)}k tokens of context the Captain writes a handoff and restarts on a fresh session. 0 = never` : 'Never: the Captain keeps one session for the whole goal',
+        ctl(numInput(Math.round(recycle / 1000), 0, 1000, (v) => save({ captainRecycleTokens: v === 0 ? 0 : Math.max(20, v) * 1000 }), 'k tokens'), 160)),
+      row('Watchdog messages', 'The Captain hears about idle agents and waiting reviews at most once per this many minutes',
+        ctl(numInput(c.watchdogDigestMinutes ?? 10, 1, 120, (v) => save({ watchdogDigestMinutes: v }), 'min'), 160)),
+      row('Captain tools', c.captainMcp === 'muster'
+        ? `Only Muster's tools${c.captainMcpKeep?.length ? ` plus ${c.captainMcpKeep.join(', ')}` : ''}: no claude.ai connectors, no Chrome. Applies from the Captain's next session`
+        : 'Every MCP server you have (Paper, Vellum, Resolve, Chrome, Gmail, Drive…). Their tool lists are sent on every turn',
+        toggle(c.captainMcp === 'muster', (v) => save({ captainMcp: v ? 'muster' : 'all' }))),
+    );
+    if (c.captainMcp === 'muster') rows.push(row('Keep these servers', 'Names of your own MCP servers the Captain still gets, comma separated (e.g. vellum)',
+      ctl(textInput((c.captainMcpKeep ?? []).join(', '), (v) => save({ captainMcpKeep: v.split(',').map((x) => x.trim()).filter(Boolean) }), { mono: true, width: 200 }), 200)));
     return panel('Project', ...rows);
   }
 

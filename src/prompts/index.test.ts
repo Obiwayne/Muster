@@ -24,7 +24,9 @@ describe('captainPrompt', () => {
     expect(p).toMatch(/merge_task/);
     expect(p).toMatch(/Escalate only/i);
     expect(p).toMatch(/Crew-first answering/);
-    expect(p).toMatch(/watchdog reports an idle agent/);
+    expect(p).toMatch(/reports an idle agent/);
+    expect(p).toContain('handoff(text)');
+    expect(p).toMatch(/mode: "files"/);
     expect(p).toContain('request_review');
     expect(p).toContain('get_diff');
     expect(p).toContain('run_tests');

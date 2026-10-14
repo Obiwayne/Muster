@@ -148,7 +148,9 @@ export function researchEnv(env: Record<string, string>, venv = RESEARCH_VENV): 
 export function ptyEnv(agent: Agent, ctx: LaunchContext, base: NodeJS.ProcessEnv = process.env): Record<string, string> {
   const env: Record<string, string> = {};
   for (const [k, v] of Object.entries(base)) if (v !== undefined && !k.startsWith('MUSTER_') && !PARENT_SESSION_ENV.test(k)) env[k] = v;
-  return { ...env, ...researchEnv(env), ...agentEnv(agent, ctx), FORCE_COLOR: '1' };
+  // A trimmed Captain gets no claude.ai connectors (Gmail, Drive…): their tool definitions ride along on every turn.
+  const trim: Record<string, string> = trimmedCaptain(agent, ctx.config) ? { ENABLE_CLAUDEAI_MCP_SERVERS: 'false' } : {};
+  return { ...env, ...researchEnv(env), ...agentEnv(agent, ctx), ...trim, FORCE_COLOR: '1' };
 }
 
 export function rolePrompt(agent: Agent, ctx: LaunchContext): string {
@@ -190,6 +192,28 @@ export function vellumServer(config: MusterConfig, defaultEntry = DEFAULT_VELLUM
   return existsSync(defaultEntry) ? { command: posix(process.execPath), args: [defaultEntry] } : undefined;
 }
 
+/** config.captainMcp 'muster': the Captain starts with Muster's tools plus captainMcpKeep, nothing else. */
+export const trimmedCaptain = (agent: Pick<Agent, 'role'>, config: MusterConfig) => agent.role === 'captain' && config.captainMcp === 'muster';
+
+/**
+ * Your own MCP servers by name, as Claude Code would load them for the repo: user scope and this project's local scope
+ * (~/.claude.json), then the repo's .mcp.json. A trimmed Captain gets the ones in captainMcpKeep from here.
+ */
+export function ownMcpServers(repoRoot: string, claudeJson = join(homedir(), '.claude.json')): Record<string, unknown> {
+  const read = (file: string): Record<string, unknown> => {
+    try {
+      return JSON.parse(readFileSync(file, 'utf8')) as Record<string, unknown>;
+    } catch {
+      return {};
+    }
+  };
+  const servers = (o: unknown) => (o && typeof o === 'object' && !Array.isArray(o) ? (o as Record<string, unknown>) : {});
+  const user = read(claudeJson);
+  const projects = servers(user.projects);
+  const key = Object.keys(projects).find((k) => posix(k).toLowerCase() === posix(repoRoot).toLowerCase());
+  return { ...servers(user.mcpServers), ...servers(key ? servers(projects[key]).mcpServers : undefined), ...servers(read(join(repoRoot, '.mcp.json')).mcpServers) };
+}
+
 export function mcpConfig(agent: Agent, ctx: LaunchContext): object {
   const env = agentEnv(agent, ctx);
   const servers: Record<string, unknown> = {
@@ -198,6 +222,10 @@ export function mcpConfig(agent: Agent, ctx: LaunchContext): object {
   const vellum = agent.role === 'design' || (agent.role === 'media' && ctx.config.vellumFile?.trim()) ? vellumServer(ctx.config) : undefined;
   // herald exports post images into .muster/media (VELLUM_EXPORT_ROOTS lets Vellum write there).
   if (vellum) servers.vellum = agent.role === 'media' ? { ...vellum, env: { ...vellum.env, VELLUM_EXPORT_ROOTS: join(ctx.repoRoot, '.muster', 'media') } } : vellum;
+  if (trimmedCaptain(agent, ctx.config)) {
+    const own = ownMcpServers(ctx.repoRoot);
+    for (const name of ctx.config.captainMcpKeep ?? []) if (own[name] && name !== 'muster') servers[name] = own[name];
+  }
   return { mcpServers: servers };
 }
 
@@ -282,6 +310,8 @@ export function launchArgs(agent: Agent, config: MusterConfig, files: AgentFiles
     '--model', agent.model,
     '--permission-mode', config.permissionMode,
     '--mcp-config', files.mcp,
+    // Trimmed Captain: only the servers in its mcp.json, and no Claude in Chrome.
+    ...(trimmedCaptain(agent, config) ? ['--strict-mcp-config', '--no-chrome'] : []),
     '--settings', files.settings,
     // Only user settings files (plus --settings above): a project's .claude/settings(.local).json in the
     // worktree can't loosen the agent's permissions or drop its hooks.

@@ -65,6 +65,8 @@ export interface NoteInput {
   taskId?: string;
   to?: string;
   topic?: Note['topic'];
+  /** Don't queue it for the Captain (the watchdog reports it in its digest instead). */
+  skipCaptain?: boolean;
 }
 
 export function postNote(state: MusterState, input: NoteInput): Note {
@@ -92,7 +94,7 @@ export function postNote(state: MusterState, input: NoteInput): Note {
   const captainId = captainOf(state)?.id;
   const deliver = (agentId: string) =>
     addInbox(state, { agentId, from, kind: 'note', text: `${note.type} ${note.id} from ${from}: ${note.text}`, noteId: note.id, taskId, feedId });
-  if (captainId && (note.type === 'stuck' || note.type === 'question' || note.type === 'waiting')) deliver(captainId);
+  if (captainId && !input.skipCaptain && (note.type === 'stuck' || note.type === 'question' || note.type === 'waiting')) deliver(captainId);
   if (note.to && note.to !== captainId) deliver(note.to);
   return note;
 }

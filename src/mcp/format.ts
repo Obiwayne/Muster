@@ -1,4 +1,5 @@
 // Pure formatting helpers for muster-mcp tool results. Agents read these, so keep them short.
+import { formatTokens } from '../core/transcript.js';
 import { formatEvidence } from '../core/evidence.js';
 import { INTEL_CHECK_AREAS } from '../types.js';
 import type { Agent, IdeaEvidence, InboxItem, IntelCheck, IntelJob, IntelStore, Note, NoteType, ResearchIdea, Roadmap, RoadmapHealth, RoadmapProgress, Task } from '../types.js';
@@ -86,6 +87,7 @@ export function boardQuery(filter: BoardFilter | undefined, me: string): string 
 export function formatAgentLine(a: Agent): string {
   const parts = [`${a.id} (${a.role})`, a.status, a.branch];
   if (a.taskId) parts.push(`task ${a.taskId}`);
+  if (a.contextTokens) parts.push(`context ${formatTokens(a.contextTokens)}`);
   if (a.costUsd) parts.push(`$${a.costUsd.toFixed(2)}`);
   return parts.join(' · ');
 }
@@ -145,11 +147,12 @@ export function truncateHead(text: string, maxChars: number): string {
   return text.slice(0, maxChars) + `\n… (${text.length - maxChars} more chars; ask the crew or use git locally for the rest)`;
 }
 
-export function formatDiff(d: { branch?: string; base?: string; stat?: string; diff?: string }, maxChars = 24000): string {
+export function formatDiff(d: { branch?: string; base?: string; mode?: string; stat?: string; diff?: string }, maxChars = 24000): string {
   const head = `${d.branch ?? '?'} vs ${d.base ?? '?'}`;
   const stat = (d.stat ?? '').trim();
   const diff = (d.diff ?? '').trim();
   if (!stat && !diff) return `${head}: no changes.`;
+  if (d.mode === 'stat') return [head, stat, '', 'Stat only. Read the files that need it with mode "files" and files: [...], or mode "full" for the whole patch.'].join('\n');
   return [head, stat, '', truncateHead(diff, maxChars)].join('\n').trim();
 }
 

@@ -61,6 +61,7 @@ const HUMAN_ONLY: [string, RegExp, string][] = [
   ['POST', /^\/api\/notes\/[^/]+\/dismiss$/, 'dismiss notes'],
   ['POST', /^\/api\/notes\/[^/]+\/answer$/, "answer the Captain's questions"],
   ['POST', /^\/api\/usage\/weekly-alert$/, 'change the weekly usage alert'],
+  ['POST', /^\/api\/captain\/recycle$/, 'give the Captain a fresh session'],
   ['POST', /^\/api\/intel\/competitors$/, 'add competitors'],
   ['PATCH', /^\/api\/intel\/competitors\/[^/]+$/, 'change competitors'],
   ['DELETE', /^\/api\/intel\/competitors\/[^/]+$/, 'remove competitors'],
