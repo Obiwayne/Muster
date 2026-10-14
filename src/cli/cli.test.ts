@@ -355,6 +355,8 @@ const repo = process.argv[process.argv.indexOf('--repo') + 1];
 const file = join(repo, '.muster', 'server.json');
 const token = 'b'.repeat(32);
 console.log('fake orchestrator for', repo);
+// it runs detached, so nothing reaps it if the test run dies before \`down\`
+setTimeout(() => process.exit(0), 60_000);
 const srv = createServer((req, res) => {
   if (req.url === '/api/health') return res.end(JSON.stringify({ ok: true }));
   if (req.headers['x-muster-token'] !== token) { res.statusCode = 401; return res.end('{"error":"token"}'); }
@@ -374,22 +376,29 @@ describe('muster up / down', () => {
     writeFileSync(entry, FAKE_ORCH);
     const { up, down } = await import('./lifecycle.js');
     const c = ctx(d);
-    await up(c, { entry, ui: true });
-    const text = out.join('\n');
-    expect(text).toContain('Muster is up.');
-    expect(text).toMatch(/Dashboard: http:\/\/127\.0\.0\.1:\d+\//);
-    expect(text).toContain('Captain: captain · idle · main');
-    expect(opened[0]).toMatch(/^http:\/\/127\.0\.0\.1:\d+\/$/);
-    expect(readFileSync(join(d, '.git', 'info', 'exclude'), 'utf8')).toContain('.muster/');
-    expect(readFileSync(join(d, '.muster', 'logs', 'orchestrator.log'), 'utf8')).toContain('fake orchestrator for');
+    let pid: number | undefined;
+    try {
+      await up(c, { entry, ui: true });
+      pid = JSON.parse(readFileSync(join(d, '.muster', 'server.json'), 'utf8')).pid;
+      const text = out.join('\n');
+      expect(text).toContain('Muster is up.');
+      expect(text).toMatch(/Dashboard: http:\/\/127\.0\.0\.1:\d+\//);
+      expect(text).toContain('Captain: captain · idle · main');
+      expect(opened[0]).toMatch(/^http:\/\/127\.0\.0\.1:\d+\/$/);
+      expect(readFileSync(join(d, '.git', 'info', 'exclude'), 'utf8')).toContain('.muster/');
+      expect(readFileSync(join(d, '.muster', 'logs', 'orchestrator.log'), 'utf8')).toContain('fake orchestrator for');
 
-    out = [];
-    await up(c, { entry, ui: false });
-    expect(out.join('\n')).toContain('already running');
+      out = [];
+      await up(c, { entry, ui: false });
+      expect(out.join('\n')).toContain('already running');
 
-    out = [];
-    await down(c, { waitMs: 5000 });
-    expect(out.join('\n')).toContain('Muster is down.');
-    expect(existsSync(join(d, '.muster', 'server.json'))).toBe(false);
+      out = [];
+      await down(c, { waitMs: 5000 });
+      expect(out.join('\n')).toContain('Muster is down.');
+      expect(existsSync(join(d, '.muster', 'server.json'))).toBe(false);
+    } finally {
+      // a failed assertion above would otherwise leave the detached fake running
+      if (pid) try { process.kill(pid); } catch { /* already exited */ }
+    }
   }, 20000);
 });
