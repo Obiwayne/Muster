@@ -71,3 +71,23 @@ export function formatTokens(v: number): string {
   if (v >= 1000) return `${Math.round(v / 1000)}k`;
   return String(v);
 }
+
+/** The text of the last assistant message in a transcript (the Captain's last status line), or undefined. */
+export function lastAssistantText(jsonl: string): string | undefined {
+  const lines = jsonl.split('\n');
+  for (let i = lines.length - 1; i >= 0; i--) {
+    if (!lines[i].includes('"assistant"')) continue;
+    try {
+      const e = JSON.parse(lines[i]) as { type?: string; isSidechain?: boolean; message?: { content?: unknown } };
+      if (e.type !== 'assistant' || e.isSidechain || !Array.isArray(e.message?.content)) continue;
+      const text = (e.message!.content as { type?: string; text?: string }[]).filter((c) => c.type === 'text' && c.text).map((c) => c.text).join('\n').trim();
+      if (text) return text;
+    } catch {
+      /* a line still being written */
+    }
+  }
+  return undefined;
+}
+
+/** Where Claude Code keeps a session's transcript for a working folder. */
+export const transcriptPath = (home: string, cwd: string, sessionId: string) => `${home}/.claude/projects/${cwd.replace(/[^a-zA-Z0-9]/g, '-')}/${sessionId}.jsonl`;
