@@ -2,7 +2,7 @@ import { beforeEach, describe, expect, it } from 'vitest';
 import { DEFAULT_CONFIG, type MusterState } from '../types.js';
 import { inboxFor, listNotes, postNote } from './board.js';
 import { emptyState } from './store.js';
-import { approveTask, rejectTask, assignTask, cancelTask, claimTask, createTask, doneTask, handoffTask, hasReportedDone, markMerged, MERGE_CONFLICT, recomputeReadiness, requestReview, sendBack, setSize, untake } from './tasks.js';
+import { approveTask, rejectTask, assignTask, cancelTask, claimTask, createTask, doneTask, handoffTask, hasReportedDone, markMerged, MERGE_CONFLICT, qaSummary, recomputeReadiness, requestReview, sendBack, setSize, untake } from './tasks.js';
 import { makeAgent } from './testutil.js';
 
 let s: MusterState;
@@ -346,5 +346,17 @@ describe('task size', () => {
     expect(() => setSize(state, t.id, 'large', 'ada')).toThrow(/Only the Captain or you/);
     expect(setSize(state, t.id, 'large', 'captain').size).toBe('large');
     expect(t.history.at(-1)).toMatchObject({ agentId: 'captain', kind: 'note', text: 'sized large' });
+  });
+});
+
+describe('qaSummary', () => {
+  const rubric = { correct: 5, tested: 5, clean: 4, scoped: 5, safe: 5 };
+  it('names the files qa flagged, so the Captain opens only those', () => {
+    const task = { id: 'T3', qa: { round: 1, history: [], last: { score: 4, at: '', rubric, findings: [{ file: 'src/a.ts', problem: 'p', fix: 'f' }, { file: 'src/a.ts', problem: 'q', fix: 'g' }, { file: 'src/b.ts', problem: 'p', fix: 'f' }] } } } as never;
+    expect(qaSummary(task)).toBe(' QA 4/5, flagged src/a.ts, src/b.ts: open those with get_diff(task: "T3", mode: "files", files: [...]).');
+  });
+  it('says when nothing was flagged, and is empty without a QA pass', () => {
+    expect(qaSummary({ id: 'T3', qa: { round: 1, history: [], last: { score: 5, at: '', rubric, findings: [] } } } as never)).toMatch(/QA 5\/5, nothing flagged/);
+    expect(qaSummary({ id: 'T3' } as never)).toBe('');
   });
 });

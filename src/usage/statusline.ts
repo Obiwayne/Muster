@@ -12,6 +12,7 @@ export interface StatusInput {
   model?: { id?: string; display_name?: string };
   cost?: { total_cost_usd?: number };
   rate_limits?: { five_hour?: StatusWindow; seven_day?: StatusWindow };
+  context_window?: { current_usage?: { input_tokens?: number; cache_creation_input_tokens?: number; cache_read_input_tokens?: number } | null };
 }
 
 function pct(w: StatusWindow | undefined): string | undefined {
@@ -63,7 +64,7 @@ async function main(): Promise<void> {
     try {
       await musterFetch('/api/usage', {
         method: 'POST',
-        body: { agentId: agent, rate_limits: input.rate_limits, cost: input.cost, model: input.model },
+        body: { agentId: agent, rate_limits: input.rate_limits, cost: input.cost, model: input.model, context_window: input.context_window },
         timeoutMs: 1500,
       });
     } catch {

@@ -179,7 +179,7 @@ describe('AgentManager watchdog', () => {
   }
   const stuckNotes = (store: Store) => store.state.notes.filter((n) => n.from === SYS && n.type === 'stuck' && n.text.startsWith('crew-'));
 
-  it('re-nudges an idle agent holding a task, then posts one stuck note, a Captain inbox item and a toast', async () => {
+  it('re-nudges an idle agent holding a task, then posts one stuck note, a Captain watchdog digest and a toast', async () => {
     const { store, agents, captain, crew, task, stucks, ptys, nudges } = await rig();
     ptys.get(crew.id)!.show('❯ ');
     await sleep(60);
@@ -192,7 +192,12 @@ describe('AgentManager watchdog', () => {
     agents.watchQuietTerminals();
     const [note] = stuckNotes(store);
     expect(note.text).toMatch(new RegExp(`^${crew.id} has been idle [0-9]+ min holding ${task.id} \\(Build it\\); nudged twice$`));
-    expect(store.state.inbox.filter((i) => i.agentId === captain.id && i.noteId === note.id)).toHaveLength(1);
+    // The Captain hears about it in the watchdog digest, not as an inbox item per note.
+    expect(store.state.inbox.filter((i) => i.agentId === captain.id && i.noteId === note.id)).toHaveLength(0);
+    const digest = store.state.inbox.filter((i) => i.agentId === captain.id && i.text.startsWith('Watchdog:'));
+    expect(digest).toHaveLength(1);
+    expect(digest[0].text).toContain(`${crew.id} idle`);
+    expect(digest[0].text).toContain(note.id);
     expect(stucks).toEqual([note.text]);
     // No repeats while nothing happens.
     for (let i = 0; i < 3; i++) {

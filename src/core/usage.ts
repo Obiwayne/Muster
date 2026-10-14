@@ -2,6 +2,7 @@
 import type { MusterConfig, MusterState, RateWindow, UsageState } from '../types.js';
 import { addFeed, closeNoteIfOpen, dismissNote, findAgent, HUMAN, nowIso, postNote, requireNote, SYSTEM } from './board.js';
 import { badRequest, conflict, forbidden } from './errors.js';
+import { contextOf } from './transcript.js';
 
 interface RawWindow {
   used_percentage?: number | string;
@@ -13,6 +14,7 @@ export interface RawUsage {
   rate_limits?: { five_hour?: RawWindow; seven_day?: RawWindow };
   cost?: { total_cost_usd?: number };
   model?: { id?: string; display_name?: string };
+  context_window?: { current_usage?: Parameters<typeof contextOf>[0] | null };
 }
 
 /** resets_at arrives as unix seconds, unix milliseconds, a numeric string or an ISO string. */
@@ -62,6 +64,15 @@ export function applyUsage(state: MusterState, config: MusterConfig, raw: RawUsa
   if (raw.agentId && live) {
     const agent = findAgent(state, raw.agentId);
     if (agent) agent.liveModel = live;
+  }
+  // Live context size between turns' Stop hooks (newer Claude Code builds send context_window.current_usage).
+  const context = contextOf(raw.context_window?.current_usage ?? undefined);
+  if (raw.agentId && context > 0) {
+    const agent = findAgent(state, raw.agentId);
+    if (agent) {
+      agent.contextTokens = context;
+      agent.contextAt = nowIso();
+    }
   }
   return refreshGuard(state, config, now);
 }

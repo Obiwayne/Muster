@@ -119,7 +119,7 @@ describe('muster-mcp calls', () => {
           : { id: 'T1', branch: 'crew-2/fix' },
     );
     await call('get_diff', { task: 't1' });
-    expect(calls[1].path).toBe('/api/agents/captain/diff?branch=crew-2%2Ffix');
+    expect(calls[1].path).toBe('/api/agents/captain/diff?branch=crew-2%2Ffix&mode=stat');
     const r = await call('request_review', { task: 'T1', summary: 'looks good' });
     expect(calls.at(-1)).toEqual({ path: '/api/tasks/T1/review', method: 'POST', body: { actor: 'captain', summary: 'looks good' } });
     expect(r.text).toBe('T1 is ready for merge (crew-2/fix). The user has been notified.');

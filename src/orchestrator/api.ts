@@ -23,7 +23,8 @@ import { readPartial } from '../core/config.js';
 import { ghStatus, realGh, validRepoName, type GhRunner } from '../core/github.js';
 import { createVellumChecker, type VellumCall } from '../core/vellum.js';
 import { applyUsage, refreshGuard, setWeeklyAlert, type RawUsage } from '../core/usage.js';
-import type { AgentManager } from './agents.js';
+import type { AgentManager, TokenReport } from './agents.js';
+import { latestHandoff } from '../core/handoff.js';
 import { applyIdentity, forbiddenReason, type Caller } from './auth.js';
 import { registerIntelRoutes, type IntelRuntime } from './intelapi.js';
 import { registerMediaRoutes, type MediaRuntime } from './mediaapi.js';
@@ -89,7 +90,7 @@ const MAX_BODY = 2 * 1024 * 1024;
 const CONFIG_KEYS = new Set<string>([
   'port', 'captainModel', 'crewModel', 'designModel', 'maxCrew', 'pauseAtFiveHourPct', 'warnAtWeeklyPct', 'shutdownIdleCrew',
   'defaultStations', 'testCommand', 'baseBranch', 'permissionMode', 'claudePath', 'vellum', 'notify', 'allowedTools', 'projectName', 'userName', 'vellumFile', 'vellumEdit', 'defaultLine', 'lines', 'githubOffer', 'crewNames', 'requireEvidence', 'weeklyAlerts',
-  'researchBrowser', 'intel',
+  'researchBrowser', 'intel', 'captainRecycleTokens', 'watchdogDigestMinutes', 'captainMcp', 'captainMcpKeep',
 ]);
 const DOMAIN_RE = /^(?=.{1,253}$)([a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?\.)+[a-z]{2,63}$/;
 
@@ -111,6 +112,20 @@ function checkResearchBrowser(v: unknown): void {
     } else if (k === 'maxPagesPerJob') {
       if (!Number.isInteger(x) || (x as number) < 1 || (x as number) > 1000) throw badRequest('researchBrowser.maxPagesPerJob must be a whole number from 1 to 1000');
     } else throw badRequest(`researchBrowser has no setting "${k}"`);
+  }
+}
+
+/** PATCH /api/config: the Captain's recycle threshold, the watchdog digest interval and which MCP servers the Captain starts with. */
+function checkCaptainConfig(patch: ConfigPatch): void {
+  const t = patch.captainRecycleTokens;
+  if (t !== undefined && t !== null && (!Number.isInteger(t) || (t !== 0 && (t < 20_000 || t > 1_000_000)))) throw badRequest('captainRecycleTokens must be 0 (never) or a whole number of tokens from 20000 to 1000000');
+  const m = patch.watchdogDigestMinutes;
+  if (m !== undefined && m !== null && (!Number.isInteger(m) || m < 1 || m > 120)) throw badRequest('watchdogDigestMinutes must be a whole number of minutes from 1 to 120');
+  if (patch.captainMcp !== undefined && patch.captainMcp !== null && !['all', 'muster'].includes(patch.captainMcp)) throw badRequest('captainMcp must be "all" or "muster"');
+  const keep = patch.captainMcpKeep;
+  if (keep !== undefined && keep !== null) {
+    if (!Array.isArray(keep) || keep.some((k) => typeof k !== 'string' || !/^[\w.-]{1,64}$/.test(k.trim()))) throw badRequest('captainMcpKeep must be a list of MCP server names');
+    patch.captainMcpKeep = [...new Set(keep.map((k) => k.trim()))];
   }
 }
 
@@ -264,7 +279,7 @@ ${block}`;
     return { lines: lines.listLines(config), defaultLine: lines.defaultLineName(config) };
   });
   route('GET', '/api/health', () => ({ ok: true, version: ctx.version, build: ctx.build }));
-  route('GET', '/api/state', () => ({ state: state(), config: ctx.config(), paused: state().usage.paused }));
+  route('GET', '/api/state', () => ({ state: state(), config: ctx.config(), paused: state().usage.paused, recycle: agents.recycleStatus() }));
   route('GET', '/api/config', () => ctx.config());
   route('PATCH', '/api/config', ({ body }) => {
     const patch = Object.fromEntries(Object.entries(body).filter(([k]) => CONFIG_KEYS.has(k))) as ConfigPatch;
@@ -303,6 +318,7 @@ ${block}`;
       }
     }
     checkIntelConfig(patch.intel);
+    checkCaptainConfig(patch);
     lineEdits(patch);
     const before = ctx.config().userName;
     const beforeEdit = ctx.config().vellumEdit;
@@ -383,13 +399,26 @@ ${block}`;
     if (requested) await requireBranch(requested);
     const branch = requested || agent.branch;
     if (!requested && agent.role === 'captain') return { branch, base, stat: '', diff: '' };
-    const d = await gitOps.diff(ctx.paths.root, base, branch);
-    return { branch, base, stat: d.stat, diff: flag(query, 'stat') ? '' : d.diff };
+    // mode: stat (files and line counts), files (the patch of the named files only) or full. ?stat=1 is the old spelling of stat.
+    const mode = query.get('mode') ?? (flag(query, 'stat') ? 'stat' : 'full');
+    if (!['stat', 'files', 'full'].includes(mode)) throw badRequest('mode must be stat, files or full');
+    const files = query.getAll('file').map((f) => f.trim()).filter(Boolean);
+    if (mode === 'files' && !files.length) throw badRequest('mode files needs at least one file');
+    const d = await gitOps.diff(ctx.paths.root, base, branch, mode === 'stat' ? 'stat' : files.length && mode === 'files' ? files : undefined);
+    return { branch, base, mode, stat: d.stat, diff: d.diff };
   });
   route('POST', '/api/agents/:id/tests', ({ params }) => gitOps.runTests(agentOf(params.id).worktree, ctx.config().testCommand, TEST_TIMEOUT_MS));
   route('POST', '/api/agents/:id/event', ({ params, body }) => {
-    agents.handleEvent(agentOf(params.id).id, str(body.event, 'event'), typeof body.detail === 'string' ? body.detail : '', body.kind);
+    const tokens = body.tokens && typeof body.tokens === 'object' ? (body.tokens as TokenReport) : undefined;
+    agents.handleEvent(agentOf(params.id).id, str(body.event, 'event'), typeof body.detail === 'string' ? body.detail : '', body.kind, tokens);
     return { ok: true };
+  });
+  // The Captain's handoff note (src/core/handoff.ts): saved by its handoff tool, read by the next session.
+  route('POST', '/api/handoff', ({ body }) => agents.saveHandoff(str(body.actor, 'actor'), str(body.text, 'text')));
+  route('GET', '/api/handoff', () => latestHandoff(ctx.paths) ?? null);
+  route('POST', '/api/captain/recycle', () => {
+    agents.requestRecycle();
+    return { ok: true, recycle: agents.recycleStatus() };
   });
   route('POST', '/api/agents/:id/merge', async ({ params, body }) => {
     if (body.actor !== board.HUMAN) throw forbidden('Only you can merge');
@@ -411,7 +440,9 @@ ${block}`;
   });
 
   /** Merges a task's reviewed commit into the base branch; `push` also pushes the base branch to origin (when there is one). */
-  const mergeTask = async (task: Task | undefined, branch: string, actor: string, force: boolean, push = false) => {
+  // The Captain is never recycled while a merge runs (agents.duringMerge).
+  const mergeTask = (task: Task | undefined, branch: string, actor: string, force: boolean, push = false) => agents.duringMerge(() => mergeTaskNow(task, branch, actor, force, push));
+  const mergeTaskNow = async (task: Task | undefined, branch: string, actor: string, force: boolean, push = false) => {
     const s = state();
     const base = ctx.config().baseBranch;
     // Merge exactly the commit the Captain reviewed; a branch that moved since needs a new review.
@@ -525,13 +556,13 @@ ${pushed ? `Pushed ${base} to origin.` : `Push to origin failed: ${(r.stderr || 
     const via = remoteVia(body);
     const captain = board.captainOf(state());
     if (!captain) throw conflict('There is no Captain');
-    if (!agents.isRunning(captain.id)) throw conflict(`${captain.id} is not running (muster start ${captain.id})`);
+    if (!agents.isRunning(captain.id) && !agents.recycleStatus()) throw conflict(`${captain.id} is not running (muster start ${captain.id})`);
     mutate(() => {
       state().goal = { text, at: board.nowIso() };
       board.addFeed(state(), { kind: 'message', from: board.HUMAN, to: captain.id, text, ...(via ? { via } : {}) });
     });
-    await agents.type(captain.id, text, true);
-    return { ok: true };
+    const queued = await agents.sendToCaptain(text);
+    return { ok: true, ...(queued ? { queued } : {}) };
   });
 
   // ------------------------------------------------------------------ notes (core/jots.ts; the Notes page)
@@ -550,14 +581,14 @@ ${pushed ? `Pushed ${base} to origin.` : `Push to origin failed: ${(r.stderr || 
     const jot = jots.requireJot(state(), params.id);
     const captain = board.captainOf(state());
     if (!captain) throw conflict('There is no Captain');
-    if (!agents.isRunning(captain.id)) throw conflict(`${captain.id} is not running (muster start ${captain.id})`);
+    if (!agents.isRunning(captain.id) && !agents.recycleStatus()) throw conflict(`${captain.id} is not running (muster start ${captain.id})`);
     const text = jots.jotGoal(jot);
     const sent = mutate(() => {
       state().goal = { text, at: board.nowIso() };
       board.addFeed(state(), { kind: 'message', from: board.HUMAN, to: captain.id, text });
       return jots.markJotSent(state(), jot.id);
     });
-    await agents.type(captain.id, text, true);
+    await agents.sendToCaptain(text);
     return sent;
   });
 

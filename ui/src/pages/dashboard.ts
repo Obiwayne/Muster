@@ -44,6 +44,16 @@ export function modelLabel(a: Pick<Agent, 'model' | 'liveModel'>): string {
   return a.model ? a.model.charAt(0).toUpperCase() + a.model.slice(1) : '';
 }
 
+/** "ctx 84k" for a tile: the context on the agent's latest request; the Captain's also against its recycle limit. */
+export function contextLabel(a: Pick<Agent, 'role' | 'contextTokens'>, limit?: number): { text: string; title: string; warn: boolean } {
+  const n = a.contextTokens ?? 0;
+  if (!n) return { text: '', title: '', warn: false };
+  const k = (v: number) => (v >= 1_000_000 ? `${(v / 1_000_000).toFixed(1)}M` : `${Math.round(v / 1000)}k`);
+  const captain = a.role === 'captain' && !!limit;
+  const title = `Context: ${n.toLocaleString()} tokens on the latest request.${captain ? ` At ${limit!.toLocaleString()} the Captain writes a handoff and starts a fresh session.` : ''}`;
+  return { text: captain ? `ctx ${k(n)}/${k(limit!)}` : `ctx ${k(n)}`, title, warn: captain && n >= limit! * 0.8 };
+}
+
 class Tile {
   el: HTMLElement;
   private badge = h('span.badge');
@@ -59,13 +69,14 @@ class Tile {
   private caret = h('span.caret', null, '›');
   private input = h('input', { spellcheck: false, autocomplete: 'off' }) as HTMLInputElement;
   private model = h('span.tile-model');
+  private ctx = h('span.tile-model.tile-ctx');
   private term: TermView | null = null;
   agent: Agent;
 
   constructor(agent: Agent, private getState: () => MusterState | null) {
     this.agent = agent;
     const head = h('div.tile-head', null, this.badge, this.name, this.branch, this.openBadge, this.status, this.more);
-    const prompt = h('div.prompt', null, this.caret, this.input, this.model, h('span.hint', null, 'Enter'));
+    const prompt = h('div.prompt', null, this.caret, this.input, this.ctx, this.model, h('span.hint', null, 'Enter'));
     this.el = h('section.tile', null, head, h('div', { style: 'flex:1;min-height:0;display:flex;position:relative' }, this.host, this.overlay), prompt);
     this.more.onclick = (e: MouseEvent) => {
       const r = this.more.getBoundingClientRect();
@@ -91,7 +102,7 @@ class Tile {
     this.term = new TermView(this.host, agent.id);
   }
 
-  update(state: MusterState, a: Agent): void {
+  update(state: MusterState, a: Agent, recycleAt?: number): void {
     this.agent = a;
     // Not `className =`: that would wipe the transient `flash` class and cut its animation short on every snapshot.
     for (const c of Array.from(this.el.classList)) if (c.startsWith('r-') && c !== `r-${a.role}`) this.el.classList.remove(c);
@@ -120,6 +131,10 @@ class Tile {
     const model = modelLabel(a);
     put(this.model, 'textContent', size ? `${model} · ${size}` : model);
     put(this.model, 'title', `Model: ${a.liveModel ?? a.model}${size ? ` (task size ${size})` : ''}`);
+    const ctx = contextLabel(a, recycleAt);
+    put(this.ctx, 'textContent', ctx.text);
+    put(this.ctx, 'title', ctx.title);
+    flag(this.ctx, 'warn', ctx.warn);
     put(this.input, 'placeholder', a.role === 'captain' ? 'Tell the Captain what to build…' : `Message ${a.id}…`);
     put(this.input, 'disabled', a.status === 'stopped');
     put(this.overlay, 'hidden', a.status !== 'stopped');
@@ -143,6 +158,9 @@ class Tile {
       scout
         ? { label: 'Open research', tone: 'muted', onClick: () => { location.hash = '#/roadmap/research'; } }
         : { label: 'View diff', tone: 'muted', disabled: a.role === 'captain', onClick: () => showDiffModal(a.id, a.branch) },
+      ...(a.role === 'captain' && a.status !== 'stopped'
+        ? [{ label: 'Fresh session (after a handoff)', tone: 'muted' as const, onClick: () => run(api.recycleCaptain(), 'The Captain writes its handoff at its next rest, then starts a fresh session') }]
+        : []),
       a.status === 'stopped'
         ? { label: 'Restart', tone: 'muted', onClick: () => run(api.startAgent(a.id), `Restarting ${a.id}…`) }
         : { label: 'Stop', tone: 'muted', onClick: () => run(api.stopAgent(a.id), `Stopped ${a.id}`) },
@@ -230,7 +248,7 @@ export function createDashboard(): Page {
     for (const a of visible) {
       let t = tiles.get(a.id);
       if (!t) { t = new Tile(a, () => snap?.state ?? null); tiles.set(a.id, t); }
-      t.update(state, a);
+      t.update(state, a, snap?.config.captainRecycleTokens || undefined);
     }
     const layout = visible.map((a) => a.id).join(',');
     if (layout !== lastLayout) {
