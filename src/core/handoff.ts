@@ -76,3 +76,18 @@ export function reloadPrompt(agentId: string, h: Handoff | undefined): string {
   const note = h ? `Handoff from the previous session (${h.by}, ${h.at}): ${h.text}` : 'There is no handoff note.';
   return `[muster] You are ${agentId}, the Captain, on a fresh session: Muster restarted you to keep your context small. ${note} Now call read_board, roadmap and read_inbox, then carry on with the same goal without asking the user anything the handoff or the board already answers.`;
 }
+
+const reloadMarker = (p: MusterPaths) => join(dirOf(p), 'reload');
+
+/** The Captain's next start is a fresh session that starts from the latest handoff (set by `muster recycle` while Muster is down). */
+export function markReload(p: MusterPaths): void {
+  mkdirSync(dirOf(p), { recursive: true });
+  writeFileSync(reloadMarker(p), new Date().toISOString());
+}
+
+/** True once if a reload was marked; clears the mark. */
+export function takeReload(p: MusterPaths): boolean {
+  if (!existsSync(reloadMarker(p))) return false;
+  rmSync(reloadMarker(p), { force: true });
+  return true;
+}
