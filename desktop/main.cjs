@@ -12,6 +12,7 @@ const SETTINGS = () => path.join(app.getPath('userData'), 'settings.json');
 const { updateStatus } = require('./update.cjs');
 const APP_STARTED_AT = Date.now();
 const { CodexSession } = require('./codex.cjs');
+const { tools: codexTools, commandForTool } = require('./codextools.cjs');
 const { CodexBridge, orchestratorApi } = require('./codexbridge.cjs');
 const { createHash } = require('node:crypto');
 let codexBridge = null;
@@ -37,17 +38,8 @@ function codexSession() {
   if (codexSessions.has(root)) return codexSessions.get(root);
   let saved = {};
   try { saved = JSON.parse(fs.readFileSync(codexFile(root), 'utf8')); } catch { /* first conversation */ }
-  const tools = [
-    { type: 'function', name: 'muster_status', description: 'Read Muster project status, tasks or bulletin board.', inputSchema: {
-      type: 'object', properties: { section: { type: 'string', enum: ['status', 'tasks', 'board'] } }, required: ['section'], additionalProperties: false } },
-    { type: 'function', name: 'muster_message_captain', description: 'Send a message to the project Captain after the user approves the text.', inputSchema: {
-      type: 'object', properties: { text: { type: 'string' } }, required: ['text'], additionalProperties: false } },
-  ];
-  const session = new CodexSession(root, { ...saved, tools, toolCall: async (name, args) => {
-    let command;
-    if (name === 'muster_status' && ['status', 'tasks', 'board'].includes(args?.section)) command = [args.section];
-    else if (name === 'muster_message_captain' && typeof args?.text === 'string' && args.text.trim() && args.text.length <= 8000) command = ['say', 'captain', args.text];
-    else throw new Error('Invalid Muster tool call.');
+  const session = new CodexSession(root, { ...saved, tools: codexTools, toolCall: async (name, args) => {
+    const command = commandForTool(name, args);
     const result = await cli(command, root);
     if (!result.ok) throw new Error(result.out || 'Muster tool failed.');
     return result.out;
@@ -78,6 +70,8 @@ function codexHandle(channel, action) {
   });
 }
 codexHandle('app:codexState', session => session.snapshot());
+codexHandle('app:codexUsage', session => session.refreshUsage());
+codexHandle('app:codexSessionActions', (session, payload) => session.setSessionActions(payload?.enabled));
 codexHandle('app:codexSend', (session, payload) => {
   if (typeof payload?.context !== 'string' || payload.context.length > 16000) throw new Error('Invalid project context');
   return session.send(payload.text, payload.context);

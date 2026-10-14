@@ -2,13 +2,18 @@ import { h, icon } from './dom';
 import { renderMarkdown } from './markdown';
 import './codexpanel.css';
 
+interface UsageWindow { usedPercent: number; windowDurationMins?: number | null; resetsAt?: number | null }
 interface State {
+  allowSessionActions?: boolean;
+  rateLimits?: { primary?: UsageWindow | null; secondary?: UsageWindow | null } | null;
   messages: { id: string; role: string; text: string }[];
   busy: boolean; error?: string | null;
   approvals: { id: string | number; method: string; reason?: string; command?: string; grantRoot?: string }[];
 }
 interface Bridge {
   codexState(): Promise<State>;
+  codexUsage(): Promise<State>;
+  codexSessionActions(enabled: boolean): Promise<State>;
   codexSend(text: string, context: string): Promise<{ error?: string } | undefined>;
   codexStop(): Promise<{ error?: string } | undefined>;
   codexNew(): Promise<State>;
@@ -23,6 +28,7 @@ export function createCodexPanel() {
   const toggle = h('button.icon-btn.codex-toggle', { title: 'Open Codex chat', 'aria-label': 'Open Codex chat', 'aria-expanded': 'false', 'aria-controls': 'codex-panel' }, icon('code', 20));
   const pane = h('aside.codex-panel', { id: 'codex-panel', hidden: true, 'aria-label': 'Codex chat' });
   const title = h('div.codex-title', null, icon('code', 20), 'Codex');
+  const usage = h('div.codex-usage', { 'aria-label': 'Codex usage limits' });
   const close = h('button.icon-btn', { title: 'Close Codex chat', 'aria-label': 'Close Codex chat' }, icon('x', 18));
   const fresh = h('button.icon-btn', { title: 'New conversation', 'aria-label': 'New conversation' }, icon('plus', 18));
   const projectLabel = h('div.codex-project');
@@ -34,13 +40,15 @@ export function createCodexPanel() {
   const stop = h('button.btn.secondary', { hidden: true }, 'Stop');
   const attach = h('button.btn.sm.secondary', { title: 'Include selected page text in the next message' }, 'Attach selection');
   const captain = h('button.btn.sm.secondary', null, 'Mention Captain');
+  const sessionActions = h('button.btn.sm.secondary', { title: 'Allow commands, file changes and network access for this conversation. Captain messages still require approval.', 'aria-pressed': 'false' }, 'Allow actions for this session');
+  const permissionHint = h('div.codex-hint', null, 'Codex - Writes require approval');
   const attached = h('div.codex-attached', { hidden: true });
   const footer = h('div.codex-composer', null, errors, approvals,
-    h('div.codex-tools', null, attach, captain), attached,
+    h('div.codex-tools', null, attach, captain), sessionActions, attached,
     h('div.codex-input', null, input, h('div.codex-input-actions', null,
-      h('span.flex1', null, 'Codex · Writes require approval'), stop, send)),
+      permissionHint, stop, send)),
     h('div.codex-hint', null, 'Enter to send · Shift + Enter for a new line'));
-  pane.append(h('div.codex-head', null, title, fresh, close),
+  pane.append(h('div.codex-head', null, title, usage, fresh, close),
     h('div.codex-context', null, h('div.codex-hint', null, 'PROJECT CONTEXT'), projectLabel,
       h('div.codex-hint', null, 'Current project and page are included')), log, footer);
   const resize = h('div.codex-resize', { role: 'separator', tabindex: '0', 'aria-orientation': 'vertical', 'aria-label': 'Resize Codex chat' });
@@ -64,19 +72,43 @@ export function createCodexPanel() {
     }
   };
 
+  async function refreshUsage() {
+    if (!bridge?.codexUsage) return;
+    try { render(await bridge.codexUsage()); }
+    catch { state.rateLimits = null; renderUsage(); }
+  }
+  // Poll only while visible; server notifications also update the header during turns.
+  setInterval(() => { if (!pane.hidden) void refreshUsage(); }, 60000);
+  function renderUsage() {
+    const windows = [state.rateLimits?.primary, state.rateLimits?.secondary];
+    usage.replaceChildren();
+    for (const [label, minutes] of [['5-hour', 300], ['Weekly', 10080]] as const) {
+      const window = windows.find(w => w?.windowDurationMins === minutes);
+      const valid = window && Number.isFinite(window.usedPercent) && window.usedPercent >= 0 && window.usedPercent <= 100 &&
+        !(typeof window.resetsAt === 'number' && window.resetsAt * 1000 <= Date.now());
+      const text = valid ? label + ': ' + Math.round(100 - window.usedPercent) + '% remaining' : label + ': Usage unavailable';
+      const reset = valid && typeof window.resetsAt === 'number' && Number.isFinite(window.resetsAt)
+        ? 'Resets ' + new Date(window.resetsAt * 1000).toLocaleString() : 'Reset time unavailable';
+      usage.append(h('span.codex-usage-window', { title: valid ? reset : 'Live usage could not be retrieved', tabindex: '0', 'aria-label': text + '. ' + (valid ? reset : '') }, text));
+    }
+  }
   function show(open: boolean) {
     pane.hidden = !open; toggle.classList.toggle('active', open);
     pane.closest('.app')?.classList.toggle('codex-open', open);
     toggle.setAttribute('aria-expanded', String(open));
     toggle.setAttribute('aria-label', open ? 'Close Codex chat' : 'Open Codex chat');
     toggle.title = open ? 'Close Codex chat' : 'Open Codex chat';
-    if (open) { input.focus(); if (bridge?.codexState) void bridge.codexState().then(render).catch(showError); }
+    if (open) { void refreshUsage(); input.focus(); if (bridge?.codexState) void bridge.codexState().then(render).catch(showError); }
     else toggle.focus();
   }
   function showError(error: unknown) { errors.textContent = error instanceof Error ? error.message : String(error); errors.hidden = false; }
   function render(next: State) {
     if (!next.messages) { if (next.error) showError(next.error); return; }
-    state = next;
+    state = next; renderUsage();
+    sessionActions.textContent = state.allowSessionActions ? 'Session actions allowed - Turn off' : 'Allow actions for this session';
+    sessionActions.setAttribute('aria-pressed', String(!!state.allowSessionActions));
+    sessionActions.toggleAttribute('disabled', state.busy || !bridge?.codexSessionActions);
+    permissionHint.textContent = state.allowSessionActions ? 'Codex - Session actions allowed' : 'Codex - Writes require approval';
     const bottom = log.scrollHeight - log.scrollTop - log.clientHeight < 80;
     const oldScroll = log.scrollTop;
     log.replaceChildren();
@@ -99,7 +131,7 @@ export function createCodexPanel() {
         try { const result = await bridge!.codexApprove(request.id, decision); if (result?.error) showError(result.error); } catch (e) { showError(e); }
       };
       approvals.append(h('div.codex-approval', null,
-        h('strong', null, request.method === 'item/tool/call' ? 'Send to the Captain?' : request.method.includes('commandExecution') ? 'Run this command?' : 'Allow file changes?'),
+        h('strong', null, request.method === 'item/tool/call' ? 'Send this team message?' : request.method.includes('commandExecution') ? 'Run this command?' : 'Allow file changes?'),
         h('pre', null, request.command || request.reason || request.grantRoot || 'Codex requests permission.'),
         h('div.codex-tools', null, h('button.btn.sm.primary', { onclick: () => void decide('accept') }, 'Allow once'),
           h('button.btn.sm.secondary', { onclick: () => void decide('decline') }, 'Decline'))));
@@ -116,6 +148,12 @@ export function createCodexPanel() {
     } catch (e) { input.value = text; showError(e); }
     finally { if (bridge.codexState) void bridge.codexState().then(render).catch(showError); }
   }
+  sessionActions.onclick = async () => {
+    try {
+      const next = await bridge!.codexSessionActions(!state.allowSessionActions);
+      if (!next.messages && next.error) showError(next.error); else render(next);
+    } catch (e) { showError(e); }
+  };
   toggle.onclick = () => show(pane.hidden);
   close.onclick = () => show(false);
   document.addEventListener('keydown', e => {
