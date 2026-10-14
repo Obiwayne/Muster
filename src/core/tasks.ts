@@ -225,7 +225,16 @@ export function toReview(state: MusterState, task: Task, from: string, text: str
   task.stationIndex = task.stations.length - 1;
   task.status = 'review';
   task.assignee = captain?.id;
-  if (captain) addInbox(state, { agentId: captain.id, from, kind: 'review', taskId: task.id, text });
+  if (captain) addInbox(state, { agentId: captain.id, from, kind: 'review', taskId: task.id, text: text + qaSummary(task) });
+}
+
+/** The QA verdict a review notification carries, so the Captain opens only the files qa flagged. */
+export function qaSummary(task: Task): string {
+  const v = task.qa?.last;
+  if (!v) return '';
+  const files = [...new Set(v.findings.map((f) => f.file).filter(Boolean))];
+  if (!files.length) return ` QA ${v.score}/5, nothing flagged: get_diff(task: "${task.id}") (stat) is enough unless something looks off.`;
+  return ` QA ${v.score}/5, flagged ${files.join(', ')}: open those with get_diff(task: "${task.id}", mode: "files", files: [...]).`;
 }
 
 /** Tell free agents of the station's role, so the task doesn't wait for the Captain to route it. */

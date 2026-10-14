@@ -43,6 +43,17 @@ describe('git', () => {
     expect(await commitsAhead(repo, 'main', 'crew-2/share-dialog-2')).toBe(1);
   });
 
+  it('diffs in stat mode (no patch) and for named files only', async () => {
+    commitFile(wt('crew-2'), 'other.ts', 'export const y = 2;\n');
+    const stat = await diff(repo, 'main', 'crew-2/share-dialog-2', 'stat');
+    expect(stat.stat).toMatch(/dialog\.ts[\s\S]*other\.ts/);
+    expect(stat.diff).toBe('');
+    const one = await diff(repo, 'main', 'crew-2/share-dialog-2', ['other.ts']);
+    expect(one.diff).toMatch(/\+export const y = 2;/);
+    expect(one.diff).not.toMatch(/dialog\.ts/);
+    expect(one.stat).not.toMatch(/dialog\.ts/);
+  });
+
   it('merges a sender branch into a receiver worktree, aborting on conflict', async () => {
     await addWorktree(repo, wt('crew-3'), 'crew-3/work', 'main');
     const ok = await mergeInto(wt('crew-3'), 'crew-2/share-dialog-2');

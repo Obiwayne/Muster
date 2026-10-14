@@ -135,10 +135,12 @@ export async function renameBranch(worktree: string, from: string, to: string): 
   return name;
 }
 
-export async function diff(repoRoot: string, base: string, branch: string): Promise<{ stat: string; diff: string }> {
+/** `branch` against `base`: the stat, plus the patch (all of it, only `only`'s files, or none with 'stat'). */
+export async function diff(repoRoot: string, base: string, branch: string, only?: 'stat' | string[]): Promise<{ stat: string; diff: string }> {
   const range = `${base}...${branch}`;
-  const [stat, full] = await Promise.all([out(repoRoot, ['diff', '--stat', range]), git(repoRoot, ['diff', range])]);
-  return { stat, diff: full.stdout };
+  const paths = Array.isArray(only) ? ['--', ...only] : [];
+  const [stat, full] = await Promise.all([out(repoRoot, ['diff', '--stat', range, ...paths]), only === 'stat' ? undefined : git(repoRoot, ['diff', range, ...paths])]);
+  return { stat, diff: full?.stdout ?? '' };
 }
 
 /**

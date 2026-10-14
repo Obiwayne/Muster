@@ -1,11 +1,13 @@
 // AgentManager: agent records, their claude processes in PTYs, status from hook events, and inbox nudges.
 import { randomUUID } from 'node:crypto';
-import { createWriteStream, existsSync, writeFileSync, type WriteStream } from 'node:fs';
+import { createWriteStream, existsSync, rmSync, writeFileSync, type WriteStream } from 'node:fs';
 import { join } from 'node:path';
-import type { Agent, AgentStatus, IntelJob, MusterConfig, Role, Task } from '../types.js';
-import { captainOf, closeNoteIfOpen, feedEvent, findAgent, HUMAN, inboxFor, isCaptain, noteFeedId, nowIso, nudgeText, postNote, requireAgent, SYSTEM, addInbox } from '../core/board.js';
+import type { Agent, AgentStatus, IntelJob, MusterConfig, Role, Task, TokenCounts } from '../types.js';
+import { captainOf, closeNoteIfOpen, feedEvent, findAgent, HUMAN, inboxFor, isCaptain, nowIso, nudgeText, postNote, requireAgent, SYSTEM, addInbox } from '../core/board.js';
 import { AUTO_MODEL, launchArgs, modelFor, modelSetting, ptyEnv, rolePrompt, spawnCommand, trustPromptKeys, writeAgentFiles, type LaunchOptions } from '../core/claude.js';
 import { EVIDENCE_DIR } from '../core/evidence.js';
+import { boardHandoff, handoffRequest, latestHandoff, reloadPrompt, saveHandoff, type Handoff } from '../core/handoff.js';
+import { addCounts, formatTokens } from '../core/transcript.js';
 import { badRequest, conflict, forbidden } from '../core/errors.js';
 import * as gitOps from '../core/git.js';
 import type { MusterPaths } from '../core/paths.js';
@@ -34,6 +36,8 @@ export interface Timings {
   watchdogEscalateMs: number; // still not active this long after the re-nudge: stuck note, Captain inbox item, toast
   heraldIdleMs: number; // herald idle at its prompt with Media work waiting this long gets its work prompt again (it missed it, e.g. typed while it restarted)
   scoutStopDelayMs: number; // after finish_research, let scout read the tool result before it is stopped
+  handoffTimeoutMs: number; // the Captain was asked for its handoff and rests this long without one: Muster writes it from the board and recycles
+  digestMs?: number; // watchdog digest interval; unset = config.watchdogDigestMinutes
 }
 
 export const DEFAULT_TIMINGS: Timings = {
@@ -52,7 +56,25 @@ export const DEFAULT_TIMINGS: Timings = {
   watchdogEscalateMs: 5 * 60_000,
   heraldIdleMs: 60_000,
   scoutStopDelayMs: 3000,
+  handoffTimeoutMs: 3 * 60_000,
 };
+
+/** A fresh session must grow at least this much past its first turn before its size can trigger another recycle. */
+const RECYCLE_MIN_GROWTH = 10_000;
+
+/** Token report from the Stop hook (src/hooks/hook.ts): the context on the latest request and the session's totals. */
+export interface TokenReport {
+  context?: number;
+  totals?: TokenCounts;
+  sessionId?: string;
+}
+
+/** The Captain's recycle: wanted → asked (handoff requested) → written (handoff saved) → restarting. */
+interface Recycle {
+  reason: string;
+  phase: 'wanted' | 'asked' | 'written' | 'restarting';
+  askedAt?: number;
+}
 
 export interface AgentManagerOptions {
   store: Store;
@@ -185,6 +207,14 @@ export class AgentManager {
   private idleTimer: NodeJS.Timeout;
   private watchdogTimer: NodeJS.Timeout;
   private inlinePrompt = false; // set if this claude build rejects --append-system-prompt-file
+  private recycle?: Recycle; // the Captain's recycle in progress
+  private merging = 0; // merge_task / merge routes running: never recycle in the middle of one
+  private freshPrompt = new Map<string, string>(); // agent id → first prompt of the fresh session it starts on next
+  private sessionBaseline = new Map<string, number>(); // agent id → context after the first turn of its current session
+  private doneGoals: Set<string>;
+  private digestIdle = new Map<string, string>(); // watchdog digest: agent id → what it is stuck on
+  private digestReviewed = new Set<string>(); // tasks at review the digest already listed ('T3@<updatedAt>')
+  private lastDigestAt = 0;
   private log: (msg: string) => void;
 
   constructor(private o: AgentManagerOptions) {
@@ -192,7 +222,11 @@ export class AgentManager {
     this.log = o.log ?? (() => {});
     this.isAlive = o.isAlive ?? defaultIsAlive;
     this.killPid = o.killPid ?? gitOps.killTree;
-    o.store.on('change', () => this.scheduleNudges());
+    this.doneGoals = new Set((o.store.state.roadmap?.goals ?? []).filter((g) => g.status === 'done').map((g) => g.id));
+    o.store.on('change', () => {
+      this.noticeGoalsDone();
+      this.scheduleNudges();
+    });
     this.idleTimer = setInterval(() => this.shutdownIdleCrew(), Math.min(30_000, this.timings.idleShutdownMs)).unref();
     this.watchdogTimer = setInterval(() => this.watchQuietTerminals(), Math.max(1000, this.timings.quietMs / 2)).unref();
   }
@@ -335,8 +369,10 @@ export class AgentManager {
     }
     await this.ensureWorktree(agent);
     if (this.runtimes.has(id)) return agent;
-    const resume = existsSync(this.resumableMarker(id));
-    this.spawn(agent, { resume, inlinePrompt: this.inlinePrompt ? '' : undefined }, resume ? this.resumePromptFor(agent) : this.firstPromptFor(agent));
+    const fresh = this.freshPrompt.get(id);
+    this.freshPrompt.delete(id);
+    const resume = !fresh && existsSync(this.resumableMarker(id));
+    this.spawn(agent, { resume, inlinePrompt: this.inlinePrompt ? '' : undefined }, fresh ?? (resume ? this.resumePromptFor(agent) : this.firstPromptFor(agent)));
     return agent;
   }
 
@@ -1199,7 +1235,7 @@ export class AgentManager {
 
   // ---------------------------------------------------------------- hook events
 
-  handleEvent(id: string, event: string, detail = '', kind?: string): void {
+  handleEvent(id: string, event: string, detail = '', kind?: string, tokens?: TokenReport): void {
     const agent = requireAgent(this.state, id);
     const rt = this.runtimes.get(id);
     agent.lastActivityAt = nowIso();
@@ -1218,6 +1254,8 @@ export class AgentManager {
       case 'stop':
         this.clearPermissionWait(agent, rt);
         this.setResting(agent, rt);
+        if (tokens) this.recordTokens(agent, tokens);
+        if (isCaptain(this.state, id)) this.tickRecycle();
         break;
       case 'notification':
       case 'permission':
@@ -1270,6 +1308,8 @@ export class AgentManager {
     for (const agent of this.state.agents) {
       const rt = this.runtimes.get(agent.id);
       if (!rt || !RESTING.includes(agent.status) || rt.firstPrompt || rt.permissionNoteId) continue;
+      // Being recycled: what arrives now waits for the fresh session (its first prompt says read_inbox).
+      if (this.recycle && this.recycle.phase !== 'wanted' && isCaptain(this.state, agent.id)) continue;
       if (rt.pendingModel) {
         const hold = this.humanHoldLeft(agent.id);
         if (hold > 0) {
@@ -1356,6 +1396,8 @@ export class AgentManager {
       changed = true;
     }
     if (this.watchStuckAgents()) changed = true;
+    if (this.flushDigest()) changed = true;
+    this.tickRecycle();
     if (changed) this.o.store.commit();
   }
 
@@ -1367,7 +1409,8 @@ export class AgentManager {
     if (this.flaggedStopped.has(key)) return false;
     this.flaggedStopped.add(key);
     const text = `${agent.id} is stopped holding ${task.id} (${task.title}); restart it to finish the task`;
-    postNote(this.state, { actor: SYSTEM, type: 'stuck', text, taskId: task.id });
+    postNote(this.state, { actor: SYSTEM, type: 'stuck', text, taskId: task.id, skipCaptain: true });
+    this.digestIdle.set(agent.id, `${agent.id} stopped holding ${task.id}`);
     this.log(text);
     this.o.onStuck?.(text);
     return true;
@@ -1435,20 +1478,192 @@ export class AgentManager {
         const mins = Math.max(1, Math.round((now - wd.since) / 60_000));
         const held = task ? `${task.id} (${task.title})` : `${unread.length} unread inbox item(s)`;
         const text = `${agent.id} has been ${starting ? "stuck at 'starting'" : 'idle'} ${mins} min holding ${held}; nudged twice`;
-        const note = postNote(this.state, { actor: SYSTEM, type: 'stuck', text, taskId: task?.id });
-        if (!isCaptain(this.state, agent.id)) {
-          const captain = captainOf(this.state);
-          // postNote already queues stuck notes for the Captain; make sure it is there even without one running.
-          if (captain && !this.state.inbox.some((i) => i.noteId === note.id && i.agentId === captain.id)) {
-            addInbox(this.state, { agentId: captain.id, from: SYSTEM, kind: 'note', text: `stuck ${note.id} from ${SYSTEM}: ${text}`, noteId: note.id, taskId: task?.id, feedId: noteFeedId(this.state, note.id) });
-          }
-        }
+        // The note is for the board; the Captain hears about it in the next watchdog digest (one message per interval).
+        const note = postNote(this.state, { actor: SYSTEM, type: 'stuck', text, taskId: task?.id, skipCaptain: true });
+        if (!isCaptain(this.state, agent.id)) this.digestIdle.set(agent.id, `${agent.id} ${starting ? "stuck at 'starting'" : 'idle'} ${mins} min holding ${held} (${note.id})`);
         this.log(text);
         this.o.onStuck?.(text);
         changed = true;
       }
     }
     return changed;
+  }
+
+  // ---------------------------------------------------------------- context size and the Captain's recycle
+
+  /** A Stop hook's token report: the agent's context size now and its session's totals (reports from an old session are dropped). */
+  private recordTokens(agent: Agent, t: TokenReport): void {
+    if (t.sessionId && t.sessionId !== agent.sessionId) return;
+    if (typeof t.context === 'number' && t.context > 0) {
+      agent.contextTokens = t.context;
+      agent.contextAt = nowIso();
+      if (!this.sessionBaseline.has(agent.id)) this.sessionBaseline.set(agent.id, t.context);
+    }
+    if (t.totals) agent.sessionTokens = t.totals;
+  }
+
+  /** Every token the agent's sessions used, the current one included. */
+  tokensUsed(id: string): TokenCounts {
+    const a = requireAgent(this.state, id);
+    return addCounts(a.pastTokens, a.sessionTokens);
+  }
+
+  /** A roadmap goal finished: the Captain is recycled at its next rest, whatever its size. */
+  private noticeGoalsDone(): void {
+    for (const g of this.state.roadmap?.goals ?? []) {
+      if (g.status !== 'done' || this.doneGoals.has(g.id)) continue;
+      this.doneGoals.add(g.id);
+      const captain = captainOf(this.state);
+      if (captain && this.runtimes.has(captain.id) && !this.recycle) this.recycle = { reason: `Goal ${g.id} ${g.title} is done.`, phase: 'wanted' };
+    }
+  }
+
+  /** merge_task and the merge routes run inside this: the Captain is never recycled in the middle of a merge. */
+  async duringMerge<T>(fn: () => Promise<T>): Promise<T> {
+    this.merging++;
+    try {
+      return await fn();
+    } finally {
+      this.merging--;
+    }
+  }
+
+  /** Where the Captain's recycle stands (the dashboard shows it). */
+  recycleStatus(): { phase: Recycle['phase']; reason: string } | undefined {
+    return this.recycle ? { phase: this.recycle.phase, reason: this.recycle.reason } : undefined;
+  }
+
+  /** Recycle the Captain at its next rest (the dashboard's "Fresh session" menu item). */
+  requestRecycle(reason = 'You asked for a fresh session.'): void {
+    const captain = captainOf(this.state);
+    if (!captain || !this.runtimes.has(captain.id)) throw conflict('The Captain is not running');
+    this.recycle ??= { reason, phase: 'wanted' };
+    this.tickRecycle();
+  }
+
+  /** The Captain's handoff(text) tool. During a recycle this is what lets the restart go ahead. */
+  saveHandoff(actor: string, text: string): Handoff {
+    if (!isCaptain(this.state, actor)) throw forbidden('Only the Captain writes the handoff');
+    const h = saveHandoff(this.o.paths, actor, text);
+    if (this.recycle && (this.recycle.phase === 'wanted' || this.recycle.phase === 'asked')) this.recycle.phase = 'written';
+    feedEvent(this.state, actor, 'wrote a handoff note');
+    this.o.store.commit();
+    return h;
+  }
+
+  /**
+   * Text for the Captain from you (a goal, a note sent to it). Typed straight in normally; while the Captain is being
+   * recycled it is queued in its inbox instead, so the fresh session gets it after the reload. Returns whether it was queued.
+   */
+  async sendToCaptain(text: string): Promise<boolean> {
+    const captain = captainOf(this.state);
+    if (!captain) throw conflict('There is no Captain');
+    if (this.recycle && this.recycle.phase !== 'wanted') {
+      addInbox(this.state, { agentId: captain.id, from: HUMAN, kind: 'message', text });
+      this.o.store.commit();
+      return true;
+    }
+    if (!this.runtimes.has(captain.id)) throw conflict(`${captain.id} is not running (muster start ${captain.id})`);
+    await this.type(captain.id, text, true);
+    return false;
+  }
+
+  /**
+   * Runs on the Captain's Stop hook and every watchdog tick. Only acts while the Captain rests between turns, never
+   * during a merge or right after a human typed into its terminal: past the size threshold it is asked for a handoff;
+   * once the handoff is saved (or Muster wrote one from the board after handoffTimeoutMs) its session is replaced.
+   */
+  private tickRecycle(now = Date.now()): void {
+    const captain = captainOf(this.state);
+    const rt = captain && this.runtimes.get(captain.id);
+    if (!captain || !rt || rt.stopping || this.starting.has(captain.id)) return;
+    if (this.recycle?.phase === 'restarting') return;
+    const resting = RESTING.includes(captain.status) && !rt.firstPrompt && !rt.permissionNoteId;
+    if (!resting || this.merging > 0 || this.humanHoldLeft(captain.id) > 0) return;
+    if (!this.recycle) {
+      const limit = this.o.config().captainRecycleTokens;
+      const size = captain.contextTokens ?? 0;
+      // A fresh session whose first turn is already past the limit would be recycled forever: it has to grow first.
+      const grew = size - (this.sessionBaseline.get(captain.id) ?? 0) >= RECYCLE_MIN_GROWTH;
+      if (!(limit > 0 && size >= limit && grew)) return;
+      this.recycle = { reason: `Your context is ${formatTokens(size)} tokens (the limit is ${formatTokens(limit)}).`, phase: 'wanted' };
+    }
+    const r = this.recycle;
+    if (r.phase === 'wanted') {
+      r.phase = 'asked';
+      r.askedAt = now;
+      this.log(`${captain.id}: asking for a handoff (${r.reason})`);
+      feedEvent(this.state, SYSTEM, `asked ${captain.id} for a handoff before a fresh session: ${r.reason}`);
+      this.o.store.commit();
+      void this.type(captain.id, handoffRequest(r.reason)).catch(() => {});
+      return;
+    }
+    if (r.phase === 'asked') {
+      if (now - (r.askedAt ?? now) < this.timings.handoffTimeoutMs) return;
+      this.log(`${captain.id}: no handoff ${Math.round(this.timings.handoffTimeoutMs / 1000)} s after asking; writing one from the board`);
+      saveHandoff(this.o.paths, SYSTEM, boardHandoff(this.state));
+      r.phase = 'written';
+    }
+    void this.recycleNow(captain);
+  }
+
+  /** Ends the Captain's session and starts it on a fresh one, in the same checkout, with the latest handoff as its first prompt. */
+  private async recycleNow(captain: Agent): Promise<void> {
+    const r = this.recycle;
+    if (!r) return;
+    r.phase = 'restarting';
+    const size = captain.contextTokens ?? 0;
+    try {
+      await this.stop(captain.id);
+      captain.pastTokens = addCounts(captain.pastTokens, captain.sessionTokens);
+      captain.sessionTokens = undefined;
+      captain.contextTokens = undefined;
+      captain.contextAt = undefined;
+      captain.sessionId = randomUUID();
+      this.sessionBaseline.delete(captain.id);
+      rmSync(this.resumableMarker(captain.id), { force: true });
+      this.freshPrompt.set(captain.id, reloadPrompt(captain.id, latestHandoff(this.o.paths)));
+      feedEvent(this.state, SYSTEM, `recycled ${captain.id} onto a fresh session (${formatTokens(size)} tokens of context): ${r.reason}`);
+      this.o.store.commit();
+      await this.start(captain.id);
+    } catch (e) {
+      this.log(`${captain.id}: recycle failed: ${errText(e)}`);
+      feedEvent(this.state, SYSTEM, `could not recycle ${captain.id}: ${errText(e)}`);
+      this.freshPrompt.delete(captain.id);
+      if (!this.runtimes.has(captain.id)) await this.start(captain.id).catch(() => {});
+    } finally {
+      this.recycle = undefined;
+      this.o.store.commit();
+      this.scheduleNudges();
+    }
+  }
+
+  // ---------------------------------------------------------------- watchdog digest
+
+  private digestIntervalMs(): number {
+    return this.timings.digestMs ?? Math.max(1, this.o.config().watchdogDigestMinutes ?? 10) * 60_000;
+  }
+
+  /**
+   * One Captain message per interval: every idle or stopped agent the watchdog gave up on since the last one, plus
+   * every task at review (listed when the message goes out anyway, or once a task has waited a whole interval).
+   * Nothing new, no message. Returns true if it queued one.
+   */
+  private flushDigest(now = Date.now()): boolean {
+    const captain = captainOf(this.state);
+    const interval = this.digestIntervalMs();
+    if (!captain || now - this.lastDigestAt < interval) return false;
+    const atReview = this.state.tasks.filter((t) => t.status === 'review');
+    const waited = atReview.filter((t) => now - Date.parse(t.updatedAt) >= interval && !this.digestReviewed.has(`${t.id}@${t.updatedAt}`));
+    if (!this.digestIdle.size && !waited.length) return false;
+    const parts: string[] = [];
+    if (this.digestIdle.size) parts.push(`Idle: ${[...this.digestIdle.values()].join('; ')}.`);
+    if (atReview.length) parts.push(`At review: ${atReview.map((t) => `${t.id} (${Math.max(1, Math.round((now - Date.parse(t.updatedAt)) / 60_000))} min)`).join(', ')}.`);
+    for (const t of atReview) this.digestReviewed.add(`${t.id}@${t.updatedAt}`);
+    this.digestIdle.clear();
+    this.lastDigestAt = now;
+    addInbox(this.state, { agentId: captain.id, from: SYSTEM, kind: 'system', text: `Watchdog: ${parts.join(' ')}` });
+    return true;
   }
 
   dispose(): void {

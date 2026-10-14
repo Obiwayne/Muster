@@ -120,6 +120,7 @@ export const api = {
   setRole: (id: string, role: Role) => req<Agent>('POST', `/api/agents/${enc(id)}/role`, { role, actor: YOU }),
   stopAgent: (id: string) => req<Agent>('POST', `/api/agents/${enc(id)}/stop`, { actor: YOU }),
   startAgent: (id: string) => req<Agent>('POST', `/api/agents/${enc(id)}/start`, { actor: YOU }),
+  recycleCaptain: () => req<{ ok: boolean }>('POST', '/api/captain/recycle', { actor: YOU }),
   removeAgent: (id: string, removeWorktree = false) => req<{ ok: boolean }>('DELETE', `/api/agents/${enc(id)}${removeWorktree ? '?removeWorktree=1' : ''}`),
   input: (id: string, text: string, submit = true) => req<{ ok: boolean }>('POST', `/api/agents/${enc(id)}/input`, { text, submit }),
   output: (id: string, lines = 80) => req<{ text: string }>('GET', `/api/agents/${enc(id)}/output?lines=${lines}`),

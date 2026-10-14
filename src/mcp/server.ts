@@ -66,7 +66,7 @@ function draftNote(r: Roadmap | null | undefined): string {
 
 export const CAPTAIN_TOOLS = [
   'spawn_crew', 'post_task', 'size_task', 'assign', 'list_agents', 'list_tasks', 'read_board', 'reply', 'message',
-  'read_inbox', 'read_output', 'get_diff', 'run_tests', 'request_review', 'merge_task', 'send_back', 'cancel_task', 'close_crew', 'escalate',
+  'read_inbox', 'read_output', 'get_diff', 'run_tests', 'request_review', 'merge_task', 'handoff', 'send_back', 'cancel_task', 'close_crew', 'escalate',
   'add_evidence', 'get_evidence',
   'roadmap', 'set_roadmap', 'update_stage', 'check_criterion', 'complete_stage', 'add_goal', 'update_goal', 'link_tasks', 'roadmap_status',
   'list_ideas', 'get_idea', 'advise_idea', 'react',
@@ -395,16 +395,24 @@ export function createMusterServer(opts: MusterServerOptions): McpServer {
 
     tool(
       'get_diff',
-      "Show a branch's diff against the base branch (stat + patch). Pass task (works even after its builder is gone) or agent.",
-      { task: z.string().optional(), agent: z.string().optional() },
-      async ({ task, agent }) => {
+      "Show a branch's diff against the base branch. Pass task (works even after its builder is gone) or agent. mode: stat (default; files and line counts only), files (the patch of the files you name in files, e.g. the ones qa flagged) or full (the whole patch). Start with stat and open only what you need.",
+      {
+        task: z.string().optional(),
+        agent: z.string().optional(),
+        mode: z.enum(['stat', 'files', 'full']).optional(),
+        files: z.array(z.string().min(1)).max(50).optional().describe('Paths as the stat shows them; for mode "files"'),
+      },
+      async ({ task, agent, mode, files }) => {
+        const m = mode ?? (files?.length ? 'files' : 'stat');
+        if (m === 'files' && !files?.length) throw new Error('mode "files" needs files: [...] (paths from the stat).');
+        const q = `mode=${m}${m === 'files' ? files!.map((f) => `&file=${enc(f)}`).join('') : ''}`;
         if (task) {
           const t = await findTask(task);
           if (!t.branch) throw new Error(`${t.id} has no branch yet.`);
-          return formatDiff(await api(`/api/agents/${enc(me)}/diff?branch=${enc(t.branch)}`));
+          return formatDiff(await api(`/api/agents/${enc(me)}/diff?branch=${enc(t.branch)}&${q}`));
         }
         if (!agent) throw new Error('Pass task or agent.');
-        return formatDiff(await api(`/api/agents/${enc(agent)}/diff`));
+        return formatDiff(await api(`/api/agents/${enc(agent)}/diff?${q}`));
       },
     );
 
@@ -445,6 +453,16 @@ export function createMusterServer(opts: MusterServerOptions): McpServer {
         const push = r.pushed === undefined ? ' No GitHub remote, so nothing was pushed.' : r.pushed ? ' Pushed to GitHub.' : ' The push to GitHub failed; tell the user.';
         return `Merged ${t.id} (${t.branch}).${push}
 ${r.output}`;
+      },
+    );
+
+    tool(
+      'handoff',
+      'Save your handoff note for the next Captain session: the current goal, tasks in flight (who has what), reviews pending, decisions waiting on the user, and what you were about to do. The newest note replaces the last. Muster asks for it when your context gets big or a goal is done, then restarts you on a fresh session that starts from this note.',
+      { text: z.string().min(1).max(8000) },
+      async ({ text }) => {
+        const h = await api<{ at: string }>('/api/handoff', { method: 'POST', body: { actor: me, text } });
+        return `Handoff saved (${h.at}). If Muster asked for it, end your turn now: you will be restarted on a fresh session that starts from this note.`;
       },
     );
 

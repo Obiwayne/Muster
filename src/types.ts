@@ -27,6 +27,19 @@ export interface Agent {
   lastPromptAt?: string; // ISO time of the last UserPromptSubmit hook
   costUsd: number; // latest cost.total_cost_usd reported by this agent's status line
   liveModel?: string; // model.display_name from this agent's status line ("Haiku 5.5"): what the session is really on
+  contextTokens?: number; // tokens in the context on the latest request: input + cache write + cache read (Stop hook, status line)
+  contextAt?: string; // ISO time contextTokens was reported
+  sessionTokens?: TokenCounts; // every request of the current session, summed (from its transcript)
+  pastTokens?: TokenCounts; // earlier sessions of this agent (the Captain's recycles), summed
+}
+
+/** Token counts from Claude Code's usage records. Context = input + cacheWrite + cacheRead of one request. */
+export interface TokenCounts {
+  input: number;
+  cacheWrite: number;
+  cacheRead: number;
+  output: number;
+  requests: number;
 }
 
 export type TaskStatus =
@@ -312,6 +325,10 @@ export interface MusterConfig {
   userName?: string; // what agents call the person running Muster; stored per OS user (core/user.ts), not in config.json
   researchBrowser: ResearchBrowserConfig; // how scout browses (src/browser); loadConfig deep-merges it over the default
   intel: IntelConfig; // competitive intelligence settings; loadConfig deep-merges it over the default
+  captainRecycleTokens: number; // default 120000: past this context size the Captain writes a handoff and restarts on a fresh session; 0 = never
+  watchdogDigestMinutes: number; // default 10: the watchdog tells the Captain about idle agents and waiting reviews at most once per this many minutes
+  captainMcp: 'all' | 'muster'; // default 'all'; 'muster' starts the Captain with only Muster's tools plus captainMcpKeep (no claude.ai connectors, no Chrome)
+  captainMcpKeep: string[]; // with captainMcp 'muster': your own MCP servers the Captain still gets, by name (e.g. "vellum")
 }
 
 export interface MusterState {
@@ -446,6 +463,10 @@ export const DEFAULT_CONFIG: MusterConfig = {
   weeklyAlerts: true,
   researchBrowser: { mode: 'profile', channel: 'chrome', operaAllow: [], minDelayMs: 3000, maxPagesPerJob: 150, visibleSites: [] },
   intel: { recheck: 'weekly', checkMaxAgeDays: 14 },
+  captainRecycleTokens: 120_000,
+  watchdogDigestMinutes: 10,
+  captainMcp: 'all',
+  captainMcpKeep: [],
   allowedTools: [
     'Bash(npm *)', // no Bash(node *) / Bash(npx *): either runs arbitrary code without a prompt
     'Bash(git status*)',
