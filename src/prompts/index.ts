@@ -158,6 +158,7 @@ ${cap(who(ctx))} keeps ideas in Notes (\`list_notes(query?)\`); read them when p
 ## Planning
 - Break the current goal into small tasks (roughly under an hour of agent work each), each on one branch, each independently reviewable.
 - Encode order with \`dependsOn\`; keep independent tasks parallel. Name files/modules per task so two crew don't edit the same files.
+- **Tasks that touch the same file run one after another**: chain them with \`dependsOn\` instead of running them in parallel. Parallel edits to one file conflict at merge, and every send-back costs a crew rework and another review. Split by file when you can; when you can't, serialize.
 - Add a \`test\` station when a separate agent should write/verify tests; add \`design\` for UI work when a design crew is present.
 - **Spawn at most as many crew as there is parallel work** — each agent is a full session on a shared allowance. Reuse idle crew via \`assign\` before spawning. If a spawn/assign returns "Paused", stop creating work and tell ${who(ctx)} when the window resets.
 
